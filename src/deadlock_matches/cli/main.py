@@ -94,7 +94,8 @@ def build_parser(config: str | Path | None = None) -> argparse.ArgumentParser:
     it.add_argument(
         "--hero",
         default=None,
-        help="hero display name, like Mirage; omit to print just the stat card",
+        help="analyze the item on this hero: your win rate with it built vs not, top "
+        "players' damage with it, and its public win rate. Omit for just the stat card",
     )
     it.add_argument(
         "--account",
@@ -203,7 +204,7 @@ def build_parser(config: str | Path | None = None) -> argparse.ArgumentParser:
     )
     f.add_argument("--hero", required=True, help="hero display name, like Mirage")
     f.add_argument("--players", type=int, default=6, help="top mains to track")
-    f.add_argument("--games", type=int, default=10, help="recent ranked games per player")
+    f.add_argument("--games", type=int, default=5, help="recent ranked games per player")
     f.add_argument("--out", default=str(players.PARQUET_DIR), help="players parquet directory")
 
     de = sub.add_parser("deaths", help="how you die: when, to whom, alone or ganked")
