@@ -133,6 +133,7 @@ Lobby average: The Hidden King Ascendant 3, The Archmother Ascendant 3
 - `deadlock match 12345678 --hero Wraith`: another player from the match (any archived match works, including ones you only viewed)
 - `deadlock match --hero Abrams`: the Abrams in your most **recent** match
 - `--interval 10`: 10-minute intervals instead of 5
+- `--souls`: souls by source per interval, like the in-game souls graph, then a block grouping them into lane (troopers and denies), roaming (jungle and breakables), combat, objectives (bosses and urn), and catch-up. The Total row is gross souls earned, net worth adds starting souls and subtracts souls lost to deaths
 - `--damage`: damage to heroes by source per interval, like the in-game source graph. Its data is sampled about every 3 minutes, so an interval can differ from the Damage column above while the totals still match
 - the block under the total groups the sources: your gun, your abilities (melee counts as one), and item procs split into ones that ride on bullets and ones from spirit items
 - `--healing`: the same by-source view for your healing, plus a second table for the healing your anti-heal items prevented. The game never shows either per source, and the totals match the Healing and Prevented columns
@@ -154,6 +155,33 @@ Final: 9/3/20, 53,558 souls, 49,231 damage, 34,356 taken, 18,894 healing, 4,807 
   30-35m     11,119  2,224   4/0/3    8,941   6,524    9,233    4,173        808         2        0       0
   35-40m      9,037  1,807   0/0/2    2,825   1,340        0      886        197        16        6       0
   40-41m      3,334  4,168   1/0/3    4,760   3,508    2,144    3,281        320         3        0       0
+```
+
+With `--souls`, the same intervals split by income source, matching the game's souls breakdown, then grouped into lane, roaming, combat, and objectives:
+
+```
+Match 12345678: Mirage, win, 2026-07-07 11:49, 32:48
+Souls by source, 5-minute intervals
+
+  Source                  0-5m    5-10m   10-15m   15-20m   20-25m   25-30m   30-35m   35-40m   40-41m    Total      %
+  Troopers                 942    3,043    4,145    2,562    4,361    1,431    1,699    4,522      606   23,311    44%
+  Enemy Kills                0        7      815      843       18    1,219    2,986        9    1,740    7,637    14%
+  Neutral Enemies          123        0      210      267      691      396    2,655    1,653        0    5,995    11%
+  Kill Assists             164        0      382      360      299    1,860      480      472      888    4,905     9%
+  Objectives                 0        0      333      641      350      816    2,046        0      100    4,286     8%
+  Urn                        0        0      247        0        0      728      987    1,209        0    3,171     6%
+  Breakable Pickups          0      102      320      360      276      613      266    1,172        0    3,109     6%
+  Team Catch-Up              0       62      301        0       15        0        0        0        0      378     1%
+  Denies                    76      139        0        0        0        0        0        0        0      215     0%
+  Total                  1,305    3,353    6,753    5,033    6,010    7,063   11,119    9,037    3,334   53,007
+
+  Lane                   1,018    3,182    4,145    2,562    4,361    1,431    1,699    4,522      606   23,526    44%
+  Roaming                  123      102      530      627      967    1,009    2,921    2,825        0    9,104    17%
+  Combat                   164        7    1,197    1,203      317    3,079    3,466      481    2,628   12,542    24%
+  Objectives                 0        0      580      641      350    1,544    3,033    1,209      100    7,457    14%
+  Catch-Up                   0       62      301        0       15        0        0        0        0      378     1%
+
+  Total is gross souls earned by source, the in-game souls breakdown. Net worth (53,558) adds starting souls and subtracts souls lost to deaths.
 ```
 
 With `--damage`, the same intervals split by source instead, matching the game's damage graph:
