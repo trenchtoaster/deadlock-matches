@@ -1,0 +1,471 @@
+import bz2
+import json
+
+import polars as pl
+from google.protobuf import json_format
+
+from deadlock_matches import export, extract
+from deadlock_matches.extract import pb
+
+EE = 3005970438
+
+
+def build_match(match_id=100, winning_team=pb.k_ECitadelLobbyTeam_Team1):
+    info = pb.CMsgMatchMetaDataContents().match_info
+    info.match_id = match_id
+    info.start_time = 1783000000
+    info.duration_s = 1800
+    info.winning_team = winning_team
+    info.match_mode = pb.k_ECitadelMatchMode_Unranked
+
+    a = info.players.add()
+    a.account_id = 42
+    a.hero_id = 52
+    a.team = pb.k_ECitadelLobbyTeam_Team1
+    a.player_slot = 5
+    a.kills = 7
+    a.mvp_rank = 1
+
+    b = info.players.add()
+    b.account_id = 43
+    b.hero_id = 1
+    b.team = pb.k_ECitadelLobbyTeam_Team0
+    b.player_slot = 6
+
+    s = a.stats.add()
+    s.time_stamp_s = 180
+    s.net_worth = 3000
+    s.gold_player = 500
+    s.gold_denied = 40
+    g = s.gold_sources.add()
+    g.source = 2
+    g.gold = 700
+    g.gold_orbs = 300
+    g = s.gold_sources.add()
+    g.source = 12
+    g.gold = 90
+
+    it = a.items.add()
+    it.item_id = EE
+    it.game_time_s = 1200
+    it.flags = 0
+
+    it2 = a.items.add()
+    it2.item_id = 999999999
+    it2.game_time_s = 60
+    it2.sold_time_s = 300
+    it2.flags = 1
+
+    mb = info.mid_boss.add()
+    mb.destroyed_time_s = 1300
+    mb.team_killed = pb.k_ECitadelLobbyTeam_Team1
+    mb.team_claimed = pb.k_ECitadelLobbyTeam_Team0
+
+    mb2 = info.mid_boss.add()
+    mb2.destroyed_time_s = 1700
+    mb2.team_killed = pb.k_ECitadelLobbyTeam_Team1
+    mb2.team_claimed = pb.k_ECitadelLobbyTeam_Team1
+
+    o = info.objectives.add()
+    o.team = pb.k_ECitadelLobbyTeam_Team0
+    o.team_objective_id = pb.k_eCitadelTeamObjective_Tier1_Lane1
+    o.destroyed_time_s = 660
+    o.first_damage_time_s = 120
+    o.player_damage = 4000
+    o.creep_damage = 800
+
+    o2 = info.objectives.add()
+    o2.team = pb.k_ECitadelLobbyTeam_Team1
+    o2.team_objective_id = pb.k_eCitadelTeamObjective_Titan
+    o2.player_damage = 500
+
+    d = a.death_details.add()
+    d.game_time_s = 2
+    d.time_to_kill_s = 1.5
+    d.death_duration_s = 20
+    d.killer_player_slot = 6
+    d.death_pos.x = 1000.0
+    d.death_pos.y = 500.0
+    d.death_pos.z = 128.0
+    d.killer_pos.x = 900.0
+    d.killer_pos.y = 450.0
+    d.killer_pos.z = 128.0
+
+    mp = info.match_paths
+    mp.interval_s = 1.0
+    mp.x_resolution = 100
+    mp.y_resolution = 100
+    path = mp.paths.add()
+    path.player_slot = 5
+    path.x_min = -1000.0
+    path.x_max = 1000.0
+    path.y_min = 0.0
+    path.y_max = 500.0
+    path.x_pos.extend([0, 50, 100])
+    path.y_pos.extend([0, 50, 100])
+    path.health.extend([100, 40, 0])
+    path.combat_type.extend([0, 1, 2])
+    path.move_type.extend([0, 4, 8])
+
+    dm = info.damage_matrix
+    dm.sample_time_s.extend([600, 1200])
+    dm.source_details.source_name.append("upgrade_escalating_exposure")
+    dm.source_details.stat_type.append(0)
+
+    d = dm.damage_dealers.add()
+    d.dealer_player_slot = 5
+    src = d.damage_sources.add()
+    src.source_details_index = 0
+    t = src.damage_to_players.add()
+    t.target_player_slot = 6
+    t.damage.extend([100, 809])
+
+    return info
+
+
+def test_from_api_json_matches_local_decode():
+    info = build_match()
+    as_json = json_format.MessageToDict(info, preserving_proto_field_name=True)
+
+    assert extract.from_api_json(as_json) == info
+
+
+def test_from_api_json_ignores_unknown_fields():
+    info = build_match()
+    as_json = json_format.MessageToDict(info, preserving_proto_field_name=True)
+    as_json["some_future_field"] = 7
+
+    assert extract.from_api_json(as_json) == info
+
+
+def test_tables_have_expected_rows():
+    tables = export.build_tables([build_match()])
+
+    assert len(tables["matches"]) == 1
+    assert len(tables["players"]) == 2
+    assert len(tables["stats"]) == 1
+    assert len(tables["soul_sources"]) == 2
+    assert len(tables["item_events"]) == 2
+    assert len(tables["damage"]) == 1
+    assert len(tables["damage_sources"]) == 2
+    assert len(tables["mid_boss"]) == 2
+    assert len(tables["objectives"]) == 2
+    assert len(tables["movement"]) == 3
+    assert len(tables["deaths"]) == 1
+
+
+def test_players_lane_columns():
+    info = build_match()
+    info.players[0].assigned_lane = 1
+    info.players[1].assigned_lane = 6
+    players = export.build_tables([info])["players"]
+
+    assert players["assigned_lane"].to_list() == [1, 6]
+    assert players["lane"].to_list() == ["yellow", "green"]
+
+
+def test_damage_sources_cumulative_matches_damage_total():
+    tables = export.build_tables([build_match()])
+    ds = tables["damage_sources"]
+
+    assert ds["time_stamp_s"].to_list() == [600, 1200]
+    assert ds["damage"].to_list() == [100, 809]
+    assert ds["vs_heroes"].to_list() == [True, True]
+    assert ds["damage"][-1] == tables["damage"]["damage"][0]
+
+
+def test_damage_sources_right_aligned_and_split_by_target():
+    info = build_match()
+    src = info.damage_matrix.damage_dealers[0].damage_sources[0]
+
+    late = src.damage_to_players.add()
+    late.target_player_slot = 6
+    late.damage.extend([70])
+
+    creep = src.damage_to_players.add()
+    creep.target_player_slot = 0
+    creep.damage.extend([500, 900])
+
+    ds = export.build_tables([info])["damage_sources"]
+    hero_rows = ds.filter(pl.col("vs_heroes"))
+    creep_rows = ds.filter(~pl.col("vs_heroes"))
+
+    assert hero_rows["damage"].to_list() == [100, 879]
+    assert creep_rows["time_stamp_s"].to_list() == [600, 1200]
+    assert creep_rows["damage"].to_list() == [500, 900]
+
+
+def test_damage_sources_empty_without_sample_times():
+    info = build_match()
+    del info.damage_matrix.sample_time_s[:]
+
+    assert export.build_tables([info])["damage_sources"].is_empty()
+
+
+def test_exclude_skips_movement():
+    tables = export.build_tables([build_match()], exclude=("movement",))
+
+    assert "movement" not in tables
+    assert len(tables["deaths"]) == 1
+
+
+def test_matches_average_badges():
+    info = build_match()
+    info.average_badge_team0 = 76
+    info.average_badge_team1 = 83
+    matches = export.build_tables([info])["matches"]
+
+    assert matches["average_badge_team0"][0] == 76
+    assert matches["average_badge_team1"][0] == 83
+
+
+def test_matches_average_badges_null_when_unset():
+    matches = export.build_tables([build_match()])["matches"]
+
+    assert matches["average_badge_team0"][0] is None
+    assert matches["average_badge_team1"][0] is None
+
+
+def test_gold_fields_renamed_to_souls():
+    stats = export.build_tables([build_match()])["stats"]
+
+    assert "souls_player" in stats.columns
+    assert "souls_denied" in stats.columns
+    assert not any(c.startswith("gold") for c in stats.columns)
+    assert stats["souls_player"][0] == 500
+
+
+def test_soul_sources_named():
+    src = export.build_tables([build_match()])["soul_sources"]
+    named = dict(zip(src["source_name"], src["souls"], strict=True))
+
+    assert named == {"troopers": 700, "breakables": 90}
+
+
+def test_players_won_flag():
+    players = export.build_tables([build_match(winning_team=pb.k_ECitadelLobbyTeam_Team1)])[
+        "players"
+    ]
+    won = dict(zip(players["account_id"], players["won"], strict=True))
+
+    assert won == {42: True, 43: False}
+
+
+def test_players_mvp_rank():
+    players = export.build_tables([build_match()])["players"]
+    ranks = dict(zip(players["account_id"], players["mvp_rank"], strict=True))
+
+    assert ranks == {42: 1, 43: 0}
+
+
+def test_item_events_denormalized():
+    events = export.build_tables([build_match()])["item_events"]
+
+    ee = events.filter(pl.col("item_id") == EE)
+
+    assert ee["item"][0] == "Escalating Exposure"
+    assert ee["cost"][0] == 6400
+
+    unknown = events.filter(pl.col("item_id") == 999999999)
+
+    assert unknown["item"][0] is None
+    assert unknown["flags"][0] == 1
+
+
+def test_item_events_assets_date_null_without_history():
+    events = export.build_tables([build_match()])["item_events"]
+
+    assert events["assets_date"].null_count() == len(events)
+
+
+def test_item_events_priced_from_history_snapshot(tmp_path):
+    folder = tmp_path / "2026-01-01"
+    folder.mkdir()
+    old_ee = {
+        "id": EE,
+        "name": "Escalating Exposure",
+        "class_name": "upgrade_escalating_exposure",
+        "cost": 4800,
+        "slot": "spirit",
+        "tier": 4,
+        "is_active": False,
+    }
+    (folder / "items.json").write_text(json.dumps([old_ee]))
+
+    events = export.build_tables([build_match()], assets_history=tmp_path)["item_events"]
+    ee = events.filter(pl.col("item_id") == EE)
+
+    assert ee["cost"][0] == 4800
+    assert str(ee["assets_date"][0]) == "2026-01-01"
+
+
+def test_damage_maps_slots_to_accounts():
+    dmg = export.build_tables([build_match()])["damage"]
+
+    assert dmg["dealer_account_id"][0] == 42
+    assert dmg["target_account_id"][0] == 43
+    assert dmg["damage"][0] == 809
+    assert dmg["stat"][0] == "damage"
+
+
+def test_stat_names_from_proto_enum():
+    assert export.STAT_NAMES[0] == "damage"
+    assert export.STAT_NAMES[1] == "healing"
+    assert export.STAT_NAMES[2] == "heal_prevented"
+    assert export.STAT_NAMES[3] == "mitigated"
+    assert export.STAT_NAMES[4] == "lethal_damage"
+
+
+def test_damage_source_names_resolved():
+    dmg = export.build_tables([build_match()])["damage"]
+
+    assert dmg["source_name"][0] == "Escalating Exposure"
+    assert dmg["source_class"][0] == "upgrade_escalating_exposure"
+    assert dmg["category"][0] == "item"
+
+
+def test_damage_categories():
+    assert export._damage_category("Bullet") == "total"
+    assert export._damage_category("Ability") == "total"
+    assert export._damage_category("Melee") == "total"
+    assert export._damage_category("UnknownAbility") == "total"
+    assert export._damage_category("citadel_weapon_mirage_set") == "gun"
+    assert export._damage_category("upgrade_escalating_exposure") == "item"
+    assert export._damage_category("mirage_tornado") == "ability"
+    assert export._damage_category("ability_blood_bomb_bloodspill") == "ability"
+
+
+def test_item_attribution():
+    events = export.build_tables([build_match()])["item_events"]
+
+    ee = events.filter(pl.col("item_id") == EE)
+
+    assert ee["attribution"][0] == "proc"
+
+    unknown = events.filter(pl.col("item_id") == 999999999)
+
+    assert unknown["attribution"][0] == "stat"
+
+
+def test_damage_delivery():
+    assert export._delivery("Bullet") is None
+    assert export._delivery("Ability") is None
+    assert export._delivery("citadel_weapon_mirage_set") == "gun"
+    assert export._delivery("citadel_weapon_mirage_set_crit") == "gun"
+    assert export._delivery("upgrade_crackshot") == "gun_proc"
+    assert export._delivery("upgrade_headhunter") == "gun_proc"
+    assert export._delivery("upgrade_toxic_bullets") == "gun_proc"
+    assert export._delivery("upgrade_ethereal_bullets") == "gun_proc"
+    assert export._delivery("upgrade_quick_silver") == "gun_proc"
+    assert export._delivery("upgrade_siphon_bullets") == "gun_proc"
+    assert export._delivery("upgrade_escalating_exposure") == "spirit_proc"
+    assert export._delivery("mirage_tornado") == "ability"
+    assert export._delivery("upgrade_nonexistent_item") == "spirit_proc"
+
+
+def test_damage_delivery_column():
+    dmg = export.build_tables([build_match()])["damage"]
+
+    assert dmg["delivery"][0] == "spirit_proc"
+
+
+def test_mid_boss_rows():
+    mb = export.build_tables([build_match()])["mid_boss"]
+
+    assert mb["destroyed_time_s"].to_list() == [1300, 1700]
+    assert mb["team_killed"].to_list() == [1, 1]
+    assert mb["team_claimed"].to_list() == [0, 1]
+    assert mb["match_id"].to_list() == [100, 100]
+
+
+def test_objectives_rows():
+    obj = export.build_tables([build_match()])["objectives"]
+
+    assert obj["objective"].to_list() == ["Guardian", "Patron"]
+    assert obj["lane"].to_list() == ["yellow", None]
+    assert obj["team"].to_list() == [0, 1]
+    assert obj["destroyed_time_s"].to_list() == [660, None]
+    assert obj["first_damage_time_s"].to_list() == [120, None]
+    assert obj["player_damage"].to_list() == [4000, 500]
+    assert obj["creep_damage"].to_list() == [800, 0]
+
+
+def test_movement_positions_decoded():
+    movement = export.build_tables([build_match()])["movement"]
+
+    assert movement["account_id"].to_list() == [42, 42, 42]
+    assert movement["game_time_s"].to_list() == [0, 1, 2]
+    assert movement["x"].to_list() == [-1000.0, 0.0, 1000.0]
+    assert movement["y"].to_list() == [0.0, 250.0, 500.0]
+
+
+def test_movement_enum_names():
+    movement = export.build_tables([build_match()])["movement"]
+
+    assert movement["health_percent"].to_list() == [100, 40, 0]
+    assert movement["combat_type"].to_list() == ["out", "player", "enemy_npc"]
+    assert movement["move_type"].to_list() == ["normal", "slide", "air_dash"]
+
+
+def test_movement_drops_samples_past_match_end():
+    info = build_match()
+    info.duration_s = 1
+    movement = export.build_tables([info])["movement"]
+
+    assert movement["game_time_s"].to_list() == [0, 1]
+
+
+def test_move_names_from_proto_enum():
+    assert export.MOVE_NAMES[0] == "normal"
+    assert export.MOVE_NAMES[3] == "ground_dash"
+    assert export.MOVE_NAMES[5] == "rope_climbing"
+    assert export.MOVE_NAMES[7] == "in_air"
+    assert export.MOVE_NAMES[8] == "air_dash"
+    assert export.COMBAT_NAMES[0] == "out"
+    assert export.COMBAT_NAMES[2] == "enemy_npc"
+
+
+def test_deaths_rows():
+    deaths = export.build_tables([build_match()])["deaths"]
+
+    assert deaths["account_id"][0] == 42
+    assert deaths["game_time_s"][0] == 2
+    assert deaths["time_to_kill_s"][0] == 1.5
+    assert deaths["death_duration_s"][0] == 20
+    assert deaths["killer_account_id"][0] == 43
+    assert deaths["x"][0] == 1000.0
+    assert deaths["y"][0] == 500.0
+    assert deaths["z"][0] == 128.0
+    assert deaths["killer_x"][0] == 900.0
+    assert deaths["killer_y"][0] == 450.0
+    assert deaths["killer_z"][0] == 128.0
+
+
+def test_export_all_writes_parquet(tmp_path):
+    raw = build_match(match_id=7)
+    contents = pb.CMsgMatchMetaDataContents()
+    contents.match_info.CopyFrom(raw)
+    meta_msg = pb.CMsgMatchMetaData()
+    meta_msg.match_details = contents.SerializeToString()
+
+    arc = tmp_path / "arc"
+    arc.mkdir()
+    header = b"replay1.valve.net\x00/1422450/7_1.meta.bz2\x00"
+    (arc / "7_1.bin").write_bytes(header + bz2.compress(meta_msg.SerializeToString()))
+
+    out = tmp_path / "pq"
+    counts = export.export_all(arc, out)
+
+    assert counts["matches"] == 1
+    assert counts["players"] == 2
+    assert counts["movement"] == 3
+    assert (out / "movement.parquet").exists()
+
+    df = pl.read_parquet(out / "players.parquet")
+
+    assert df.filter(pl.col("account_id") == 42)["hero"][0] == "Mirage"
+
+    counts = export.export_all(arc, out, exclude=("movement",))
+
+    assert "movement" not in counts
+    assert not (out / "movement.parquet").exists()
