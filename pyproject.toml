@@ -1,0 +1,126 @@
+[project]
+name = "deadlock-matches"
+version = "0.1.0"
+description = "Analyze your Deadlock match data locally"
+readme = "README.md"
+license = "MIT"
+license-files = ["LICENSE"]
+requires-python = ">=3.14"
+dependencies = [
+  "polars>=1.42",
+  "protobuf>=6,<7",
+  "tzdata; sys_platform == 'win32'",
+]
+
+[project.scripts]
+deadlock = "deadlock_matches.cli:main"
+
+[build-system]
+requires = ["setuptools", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools]
+package-dir = { "" = "src" }
+packages = { find = { where = ["src"], include = ["deadlock_matches*"] } }
+
+[tool.setuptools.package-data]
+deadlock_matches = ["data/*.json", "gen/**/*.py", "gen/**/*.pyi"]
+
+[dependency-groups]
+dev = [
+  "grpcio-tools>=1.81.1",
+  "pytest>=9.1.1",
+]
+lint = [
+  "ruff",
+  "ty",
+]
+
+[tool.ruff]
+fix = true
+src = ["src"]
+line-length = 100
+target-version = "py314"
+include = ["pyproject.toml", "src/**/*.py", "tests/**/*.py"]
+exclude = [".venv", "src/deadlock_matches/gen"]
+
+[tool.ruff.lint]
+preview = true
+select = [
+  "ANN",    # Type annotations
+  "B",      # Bugbear
+  "C4",     # Comprehensions
+  "D",      # Docstrings
+  "E",      # Pycodestyle errors
+  "EM",     # Errmsg
+  "ERA",    # Commented-out code
+  "F",      # Pyflakes
+  "FA",     # Future annotations
+  "FBT001", # Boolean trap
+  "I",      # Import sorting
+  "ICN",    # Import conventions
+  "PERF",   # Performance
+  "PIE",    # Pie
+  "PT",     # Pytest
+  "PTH",    # Path handling
+  "PYI",    # Typing stubs
+  "RUF",    # Ruff-specific rules
+  "SIM",    # Simplify
+  "TID",    # Tidy imports
+  "TRY",    # Exception handling
+  "UP",     # Pyupgrade
+  "W",      # Pycodestyle warnings
+]
+ignore = [
+  "D100",   # Missing docstring in public module
+  "D104",   # Missing docstring in public package
+  "D105",   # Missing docstring in magic method
+  "ANN401", # Dynamically typed expressions
+  "D401",   # First line should be imperative
+  "E501",   # Line too long
+  "PT011",  # pytest.raises() without match
+  "RUF001", # Ambiguous unicode (player names are Cyrillic)
+  "RUF005", # Consider iterable unpacking
+  "SIM102", # Use a single if statement
+  "SIM108", # Use ternary operator
+  "TRY003", # Avoid specifying long messages outside exception class
+  "TID252", # Relative imports from parent modules
+  "TRY301", # Abstract `raise` to an inner function
+]
+pydocstyle.convention = "google"
+flake8-type-checking.strict = true
+
+[tool.ruff.lint.per-file-ignores]
+"tests/*" = [
+  "D",      # Docstrings
+  "ANN",    # Type annotations
+  "B010",   # setattr with literal (frozen-dataclass raise tests)
+  "EM",     # Errmsg (test stubs raise with literal messages)
+  "RUF069", # Float equality (fixture values are exact)
+]
+"notebooks/*" = [
+  "D",      # Docstrings
+  "ANN",    # Type annotations (marimo cell functions are untyped)
+  "B018",   # Useless expression (a cell's last expression is its output)
+  "RUF052", # Underscore-prefixed names (marimo's private cell variables)
+]
+
+[tool.ruff.format]
+quote-style = "double"
+docstring-code-format = true
+
+[tool.ty.environment]
+extra-paths = ["src", "src/deadlock_matches/gen"]
+python-version = "3.14"
+
+[tool.ty.src]
+exclude = [
+  ".venv/",
+  "__pycache__/",
+  "notebooks/",
+  "src/deadlock_matches/gen/",
+]
+
+[tool.pytest.ini_options]
+pythonpath = ["src"]
+testpaths = ["tests"]

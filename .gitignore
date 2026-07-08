@@ -1,0 +1,30 @@
+# Python-generated files
+__pycache__/
+*.py[oc]
+build/
+dist/
+wheels/
+*.egg-info
+
+# Virtual environments
+.venv
+
+# Tool caches
+.pytest_cache/
+.ruff_cache/
+
+# Per-machine account config
+config.toml
+config.json
+
+# Ad-hoc analysis snapshots (regenerable from the api)
+/data/
+
+# Marimo session state (holds rendered outputs from real data)
+notebooks/__marimo__/
+
+# Local CLI sweep, resolves real account and match ids at runtime
+tests/cli_sweep.sh
+
+# Claude Code local permissions
+.claude/settings.local.json
