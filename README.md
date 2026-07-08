@@ -74,6 +74,9 @@ The commands in this section read your own local match archive and parquet table
 
 A few flags repeat across commands:
 
+- `--help` is by far the most important flag since it describes all the options
+  - `uv run deadlock --help` prints the full help
+  - `uv run deadlock <command> --help` prints the help for that command
 - `--account` picks which of your accounts count, by ID or a name from `config.toml`, comma-separated for several (`--account main` or `--account "main, alt1"`). Every command that reads your games takes it and defaults to all accounts in the config
 - `--days N` filters your last N days of games (`--days 7`)
 - `--since YYYY-MM-DD` filters for data since a date (`--since 2026-07-01`)
@@ -103,21 +106,23 @@ alt1 = 123456789
 ### `uv run deadlock history`
 
 - your recent matches, one row per player with the numbers from the match screen
-- the `account` column is where you find other players' IDs, for the `[players]` tables in `config.toml`
+- your accounts are listed once up top and your hero is marked with a `*`
 - shows your last day of games, `--days` and `--since` reach further back
 - matches you only viewed in game stay hidden unless you name their players with `--account`
 
 ```
+You (marked * below): main
+
 Match 12345678: 2731s, The Hidden King won, 2026-07-03 20:28
 Lobby average: The Hidden King Ascendant 3, The Archmother Ascendant 3
 
-  Team             Hero                    Account      K/D/A    Net worth   Damage Obj damage  Healing Prevented Last hits Denies
-  The Hidden King  Seven          1 (MVP)  234567891    7/4/24      59,402   62,667     20,579    8,058         0       247      1
-  The Hidden King  Mirage         2 (Key)  111222333    10/5/15     58,210   57,784      8,062   24,004     4,231       160      0
-  The Hidden King  Infernus                345678912    9/8/13      57,501   31,022      7,470   14,849         0       292      2
-  The Archmother   Venator        3 (Key)  456789123    13/3/6      62,965   61,977     10,163   29,043     1,268       327      4
-  The Archmother   The Doorman             567891234    3/6/15      55,408   18,387      1,629    6,032         0       180      6
-  The Archmother   Dynamo                  678912345    6/6/11      48,292   22,678      7,528   15,098       620       204      9
+  Team             Hero                    K/D/A    Net worth   Damage Obj damage  Healing Prevented Last hits Denies
+  The Hidden King  Seven          1 (MVP)  7/4/24      59,402   62,667     20,579    8,058         0       247      1
+  The Hidden King  Mirage *       2 (Key)  10/5/15     58,210   57,784      8,062   24,004     4,231       160      0
+  The Hidden King  Infernus                9/8/13      57,501   31,022      7,470   14,849         0       292      2
+  The Archmother   Venator        3 (Key)  13/3/6      62,965   61,977     10,163   29,043     1,268       327      4
+  The Archmother   The Doorman             3/6/15      55,408   18,387      1,629    6,032         0       180      6
+  The Archmother   Dynamo                  6/6/11      48,292   22,678      7,528   15,098       620       204      9
 ```
 
 ### `uv run deadlock match`
@@ -286,6 +291,8 @@ These commands read the cached hero, ability, and item data instead of your matc
 ### `uv run deadlock hero Pocket`
 
 - base gun, melee, health, and movement stats plus what each boon adds
+- heroes with a second firing mode get an alt fire block under the gun
+- ends with the ability names to feed `deadlock ability`
 
 ```
 Pocket
@@ -310,6 +317,12 @@ Pocket
 
   stamina                 3
   stamina cooldown      4.5
+
+abilities
+  Flying Cloak
+  Enchanter's Satchel
+  Barrage
+  Affliction
 
 Each boon adds (35 boons to level 36 at 48,600 souls):
   bullet damage    +0.14
@@ -338,6 +351,7 @@ Seven at level 30
 ### `uv run deadlock ability "Fire Scarabs" --souls 50000`
 
 - base numbers, spirit scaling, and the values each upgrade tier changes
+- `deadlock hero <name>` lists a hero's ability names to feed this command
 - `--hero` picks whose when the name is on several heroes
 - `--souls` (or `--level`) updates the values using the scaling the hero has at that point
   - in the example below, the ability is level 36 at 48,600 souls, so the scaling is based on 38.5 spirit power that Mirage has at that point (no items)
