@@ -334,6 +334,26 @@ def test_history_account_filter(capsys, tmp_path):
     assert "No match metadata found" in capsys.readouterr().out
 
 
+def test_history_marks_your_rows_and_hides_ids(capsys, tmp_path):
+    cache = tmp_path / "cache"
+    cache.mkdir()
+    write_cache_entry(cache, match_id=100, stats=[(300, 3000), (600, 5000)])
+
+    cfg = tmp_path / "config.toml"
+    cfg.write_text('timezone = "America/Chicago"\n[accounts]\nmain = 42\n')
+
+    base = ["--cache", str(cache), "--archive", str(tmp_path / "arc")]
+    base += ["--parquet", str(tmp_path / "pq")]
+    main([*base, "history"], config=cfg)
+
+    out = capsys.readouterr().out
+
+    assert "You (marked * below): main (42)" in out
+    assert "Account" not in out
+    assert re.search(r"Mirage\s+\*\s+5/2/8", out)
+    assert "77" not in out
+
+
 def test_match_prints_interval_table(capsys, tmp_path):
     cache = tmp_path / "cache"
     cache.mkdir()

@@ -105,8 +105,7 @@ exclude = ["movement"]
 # matches group into local days in this zone
 timezone = "{_detect_timezone()}"
 
-# your Steam32 account IDs. `deadlock accounts` lists the ones on this PC,
-# they also show up in the account column of `deadlock history`.
+# your Steam32 account IDs. `deadlock accounts` lists the ones on this PC.
 # the name is yours to pick and works anywhere --account does, like --account main
 [accounts]
 # main = 111222333

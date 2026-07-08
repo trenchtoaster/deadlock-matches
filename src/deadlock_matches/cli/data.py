@@ -46,8 +46,11 @@ TEAMS = {0: "The Hidden King", 1: "The Archmother"}
 MVP_LABELS = {1: "1 (MVP)", 2: "2 (Key)", 3: "3 (Key)"}
 
 
-def _print_match(match: dict[str, Any], rows: list[dict[str, Any]]) -> None:
-    """Print the match header and a table with one row per player."""
+def _print_match(match: dict[str, Any], rows: list[dict[str, Any]], you: set[int]) -> None:
+    """Print the match header and a table with one row per player.
+
+    you is the set of your account IDs, whose hero names get a trailing star.
+    """
     when = match["start_local"].strftime("%Y-%m-%d %H:%M")
     winner = TEAMS.get(match["winning_team"], match["winning_team"])
     print(f"Match {match['match_id']}: {match['duration_s']}s, {winner} won, {when}")
@@ -62,16 +65,17 @@ def _print_match(match: dict[str, Any], rows: list[dict[str, Any]]) -> None:
 
     print()
     print(
-        f"  {'Team':<16} {'Hero':<14} {'':<8} {'Account':<12} {'K/D/A':<8} {'Net worth':>9} "
+        f"  {'Team':<16} {'Hero':<14} {'':<8} {'K/D/A':<8} {'Net worth':>9} "
         f"{'Damage':>8} {'Obj damage':>10} {'Healing':>8} {'Prevented':>9} "
         f"{'Last hits':>9} {'Denies':>6}"
     )
 
     for p in sorted(rows, key=lambda r: (r["team"], -r["net_worth"])):
         kda = f"{p['kills']}/{p['deaths']}/{p['assists']}"
+        hero = f"{p['hero']} *" if p["account_id"] in you else p["hero"]
         print(
-            f"  {TEAMS.get(p['team'], p['team']):<16} {p['hero']:<14} "
-            f"{MVP_LABELS.get(p['mvp_rank'], ''):<8} {p['account_id']:<12} {kda:<8} {p['net_worth']:>9,} "
+            f"  {TEAMS.get(p['team'], p['team']):<16} {hero:<14} "
+            f"{MVP_LABELS.get(p['mvp_rank'], ''):<8} {kda:<8} {p['net_worth']:>9,} "
             f"{p['player_damage']:>8,} {p['boss_damage']:>10,} {p['player_healing']:>8,} "
             f"{p['heal_prevented']:>9,} {p['last_hits']:>9,} {p['denies']:>6}"
         )
@@ -174,8 +178,15 @@ def match_history(args: argparse.Namespace, config: str | Path | None = None) ->
     )
     by_match = {k[0]: part for k, part in rows.partition_by(["match_id"], as_dict=True).items()}
 
+    names = {account_id: name for name, account_id in config_account_names(config).items()}
+    you = set(accounts)
+
+    if you:
+        legend = ", ".join(f"{names[a]} ({a})" if a in names else str(a) for a in accounts)
+        print(f"You (marked * below): {legend}\n")
+
     for m in matches.iter_rows(named=True):
-        _print_match(m, by_match[m["match_id"]].to_dicts())
+        _print_match(m, by_match[m["match_id"]].to_dicts(), you)
 
 
 def _archived_games(parquet_dir: str | Path, ids: list[int]) -> dict[int, int] | None:
@@ -220,7 +231,7 @@ def list_accounts(args: argparse.Namespace, config: str | Path | None = None) ->
 
     if not found:
         print(f"No Steam accounts with Deadlock found next to the cache at {_tilde(args.cache)}")
-        print("Your IDs also show up in the account column of `deadlock history`")
+        print("Your Steam32 ID is the folder name under Steam's userdata/ directory")
         return
 
     games = _archived_games(args.parquet, [a.account_id for a in found])
