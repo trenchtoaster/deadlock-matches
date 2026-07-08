@@ -1,0 +1,250 @@
+import bz2
+
+import pytest
+
+from deadlock_matches import extract
+from deadlock_matches.extract import pb
+
+
+def build_meta_bytes(match_id=12345, account_id=42, kills=5):
+    contents = pb.CMsgMatchMetaDataContents()
+    info = contents.match_info
+    info.match_id = match_id
+    info.duration_s = 1800
+
+    p = info.players.add()
+    p.account_id = account_id
+    p.kills = kills
+
+    meta = pb.CMsgMatchMetaData()
+    meta.version = 1
+    meta.match_id = match_id
+    meta.match_details = contents.SerializeToString()
+
+    return meta.SerializeToString()
+
+
+def write_cache_file(tmp_path, match_id=12345, salt=678, raw=None):
+    raw = raw if raw is not None else build_meta_bytes(match_id)
+    header = b"replay999.valve.net\x00" + f"/1422450/{match_id}_{salt}.meta.bz2".encode() + b"\x00"
+
+    f = tmp_path / "fakecache"
+    f.write_bytes(header + bz2.compress(raw))
+
+    return f
+
+
+def test_parse_cache_file_extracts_ids(tmp_path):
+    f = write_cache_file(tmp_path, match_id=99, salt=777)
+
+    parsed = extract.parse_cache_file(f)
+
+    assert parsed.match_id == 99
+    assert parsed.replay_salt == 777
+    assert parsed.url == "replay999.valve.net/1422450/99_777.meta.bz2"
+    assert parsed.raw == build_meta_bytes(99)
+
+
+def test_decode_returns_matchinfo(tmp_path):
+    raw = build_meta_bytes(match_id=555, account_id=1001, kills=12)
+
+    info = extract.decode(raw)
+
+    assert info.match_id == 555
+    assert info.duration_s == 1800
+    assert len(info.players) == 1
+    assert info.players[0].account_id == 1001
+    assert info.players[0].kills == 12
+
+
+def test_load_end_to_end(tmp_path):
+    f = write_cache_file(tmp_path, match_id=321)
+
+    info = extract.load(f)
+
+    assert info.match_id == 321
+
+
+def test_parse_rejects_non_meta_file(tmp_path):
+    f = tmp_path / "junk"
+    f.write_bytes(b"avatars.steamstatic.com\x00not a meta")
+
+    with pytest.raises(ValueError, match="not a deadlock meta"):
+        extract.parse_cache_file(f)
+
+
+def test_parse_rejects_missing_bzip(tmp_path):
+    f = tmp_path / "nobz"
+    f.write_bytes(b"replay1.valve.net\x00/1422450/1_2.meta.bz2\x00no body here")
+
+    with pytest.raises(ValueError, match="no bzip2 body"):
+        extract.parse_cache_file(f)
+
+
+def test_iter_meta_files_finds_written(tmp_path):
+    shard = tmp_path / "ab"
+    shard.mkdir()
+    write_cache_file(shard, match_id=7)
+    (tmp_path / "cd").mkdir()
+    (tmp_path / "cd" / "avatar").write_bytes(b"avatars.steamstatic.com\x00junk")
+
+    found = list(extract.iter_meta_files(tmp_path))
+
+    assert len(found) == 1
+    assert found[0].parent.name == "ab"
+
+
+def test_default_cache_picks_first_existing(tmp_path):
+    missing = tmp_path / "native"
+    flatpak = tmp_path / "flatpak"
+    flatpak.mkdir()
+
+    assert extract.default_cache((missing, flatpak)) == flatpak
+
+
+def test_default_cache_prefers_earlier_candidate(tmp_path):
+    native = tmp_path / "native"
+    flatpak = tmp_path / "flatpak"
+    native.mkdir()
+    flatpak.mkdir()
+
+    assert extract.default_cache((native, flatpak)) == native
+
+
+def test_default_cache_falls_back_when_none_exist(tmp_path):
+    a = tmp_path / "a"
+    b = tmp_path / "b"
+
+    assert extract.default_cache((a, b)) == a
+
+
+def test_archive_copies_new_entries(tmp_path):
+    cache = tmp_path / "cache"
+    cache.mkdir()
+    write_cache_file(cache, match_id=100, salt=1)
+    arc = tmp_path / "arc"
+
+    assert extract.archive(cache, arc) == 1
+    assert (arc / "100_1.bin").exists()
+    assert extract.archive(cache, arc) == 0
+
+
+def test_archived_file_still_parses(tmp_path):
+    cache = tmp_path / "cache"
+    cache.mkdir()
+    write_cache_file(cache, match_id=55, salt=9)
+    arc = tmp_path / "arc"
+
+    extract.archive(cache, arc)
+
+    info = extract.load(arc / "55_9.bin")
+
+    assert info.match_id == 55
+
+
+def test_iter_matches_survives_cache_eviction(tmp_path):
+    cache = tmp_path / "cache"
+    cache.mkdir()
+    old = write_cache_file(cache, match_id=1, salt=1)
+    arc = tmp_path / "arc"
+
+    extract.archive(cache, arc)
+    old.unlink()
+    write_cache_file(cache, match_id=2, salt=2)
+
+    found = [p.name for p in extract.iter_matches(cache, arc)]
+
+    assert found == ["2_2.bin", "1_1.bin"]
+
+
+def test_iter_matches_orders_numerically(tmp_path):
+    cache = tmp_path / "cache"
+    for shard, mid in (("aa", 9), ("bb", 100)):
+        d = cache / shard
+        d.mkdir(parents=True)
+        write_cache_file(d, match_id=mid, salt=1)
+    arc = tmp_path / "arc"
+
+    found = [p.name for p in extract.iter_matches(cache, arc)]
+
+    assert found == ["100_1.bin", "9_1.bin"]
+
+
+def write_steam_tree(tmp_path, deadlock=(42, 43), other=(), vdf=None):
+    root = tmp_path / "Steam"
+    (root / "appcache/httpcache").mkdir(parents=True)
+
+    for account_id in deadlock:
+        (root / f"userdata/{account_id}/1422450").mkdir(parents=True)
+
+    for account_id in other:
+        (root / f"userdata/{account_id}").mkdir(parents=True)
+
+    if vdf is not None:
+        (root / "config").mkdir(exist_ok=True)
+        (root / "config/loginusers.vdf").write_text(vdf)
+
+    return root / "appcache/httpcache"
+
+
+def vdf_block(steam32, login, persona, timestamp):
+    return (
+        f'\t"{steam32 + extract.STEAM64_BASE}"\n\t{{\n'
+        f'\t\t"AccountName"\t\t"{login}"\n'
+        f'\t\t"PersonaName"\t\t"{persona}"\n'
+        f'\t\t"Timestamp"\t\t"{timestamp}"\n'
+        "\t}\n"
+    )
+
+
+def test_steam_accounts_reads_userdata_and_names(tmp_path):
+    vdf = '"users"\n{\n' + vdf_block(42, "mainlogin", "Main Guy", 200) + "}\n"
+    cache = write_steam_tree(tmp_path, deadlock=(42, 43), vdf=vdf)
+
+    found = extract.steam_accounts(cache)
+
+    assert [a.account_id for a in found] == [42, 43]
+    assert found[0].login == "mainlogin"
+    assert found[0].persona == "Main Guy"
+    assert found[0].last_login == 200
+    assert found[1].login is None
+    assert found[1].persona is None
+    assert found[1].last_login == 0
+
+
+def test_steam_accounts_skips_non_deadlock_and_junk_folders(tmp_path):
+    cache = write_steam_tree(tmp_path, deadlock=(42, 0), other=(99, "anonymous"))
+
+    found = extract.steam_accounts(cache)
+
+    assert [a.account_id for a in found] == [42]
+
+
+def test_steam_accounts_sorts_newest_login_first(tmp_path):
+    vdf = (
+        '"users"\n{\n'
+        + vdf_block(42, "older", "older", 100)
+        + vdf_block(43, "newer", "newer", 300)
+        + "}\n"
+    )
+    cache = write_steam_tree(tmp_path, deadlock=(42, 43, 44), vdf=vdf)
+
+    found = extract.steam_accounts(cache)
+
+    assert [a.account_id for a in found] == [43, 42, 44]
+
+
+def test_steam_accounts_without_userdata(tmp_path):
+    root = tmp_path / "Steam"
+    cache = root / "appcache/httpcache"
+    cache.mkdir(parents=True)
+
+    assert extract.steam_accounts(cache) == []
+
+
+def test_steam_accounts_without_loginusers(tmp_path):
+    cache = write_steam_tree(tmp_path, deadlock=(42,))
+
+    found = extract.steam_accounts(cache)
+
+    assert found[0].login is None
