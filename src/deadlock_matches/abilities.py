@@ -1,0 +1,178 @@
+"""Maps ability and weapon class names to display names and base numbers from the assets API data."""
+
+from __future__ import annotations
+
+import functools
+import json
+from dataclasses import dataclass, field
+from pathlib import Path
+from typing import TYPE_CHECKING, Any
+
+if TYPE_CHECKING:
+    from collections.abc import Iterator
+
+from deadlock_matches import heroes, items
+
+ABILITIES_JSON = Path(__file__).parent / "data" / "abilities.json"
+
+
+@dataclass(frozen=True, slots=True)
+class Ability:
+    """One hero ability or gun.
+
+    - properties: base numbers ({damage: 65, ability_cooldown: 36})
+    - scaling: which stat a property scales with ({damage: {stat: tech_power, scale: 0.3}})
+    - upgrades: bonus entries per tier, type add_to_scale means it changes scaling not the base
+    - tier_descriptions: the tier texts the game shows, aligned with upgrades
+    """
+
+    id: int
+    name: str
+    class_name: str
+    hero: int | None
+    kind: str
+    description: str | None = None
+    weapon: dict[str, Any] = field(default_factory=dict)
+    properties: dict[str, Any] = field(default_factory=dict)
+    scaling: dict[str, Any] = field(default_factory=dict)
+    upgrades: tuple[tuple[dict[str, Any], ...], ...] = ()
+    tier_descriptions: tuple[str | None, ...] = ()
+
+    @classmethod
+    def from_record(cls, rec: dict[str, Any]) -> Ability:
+        """Build an Ability from one abilities.json record."""
+        return cls(
+            id=rec["id"],
+            name=rec["name"],
+            class_name=rec["class_name"],
+            hero=rec.get("hero"),
+            kind=rec.get("kind") or "ability",
+            description=rec.get("description"),
+            weapon=dict(rec.get("weapon") or {}),
+            properties=dict(rec.get("properties") or {}),
+            scaling=dict(rec.get("scaling") or {}),
+            upgrades=tuple(tuple(dict(up) for up in tier) for tier in rec.get("upgrades") or []),
+            tier_descriptions=tuple(rec.get("tier_descriptions") or ()),
+        )
+
+    def stat(self, name: str, tier: int = 0) -> float:
+        """Applies flat upgrade bonuses to a property's base value through a tier."""
+        value = float(self.properties.get(name, 0.0))
+
+        for up in self._tier_upgrades(tier):
+            if up["property"] != name:
+                continue
+
+            kind = up.get("type", "add_to_base")
+
+            if kind == "add_to_base":
+                value += up["bonus"]
+            elif kind == "multiply_base":
+                value *= up["bonus"]
+
+        return value
+
+    def scaling_at(self, name: str, tier: int = 0) -> dict[str, float]:
+        """Applies scale upgrades to a property's scaling ({tech_power: 0.3}) through a tier.
+
+        An upgrade with no stat of its own applies to the property's scaling
+        stat, tech_power when it has none.
+        """
+        info = self.scaling.get(name)
+        default_stat = info["stat"] if info else "tech_power"
+        out = {info["stat"]: float(info["scale"])} if info else {}
+
+        for up in self._tier_upgrades(tier):
+            if up["property"] != name:
+                continue
+
+            kind = up.get("type")
+            stat = up.get("stat", default_stat)
+
+            if kind == "add_to_scale":
+                out[stat] = out.get(stat, 0.0) + up["bonus"]
+            elif kind == "multiply_scale":
+                out[stat] = out.get(stat, 0.0) * up["bonus"]
+
+        return {stat: scale for stat, scale in out.items() if scale}
+
+    def spirit_scale(self, name: str, tier: int = 0) -> float:
+        """Reads the spirit power multiplier on a property at an upgrade tier."""
+        return self.scaling_at(name, tier).get("tech_power", 0.0)
+
+    def _tier_upgrades(self, tier: int) -> Iterator[dict[str, Any]]:
+        """Yields the upgrade entries through a tier."""
+        for entries in self.upgrades[:tier]:
+            yield from entries
+
+
+@functools.cache
+def ability_map(path: Path = ABILITIES_JSON) -> dict[str, Ability]:
+    """Load abilities.json into {class_name: Ability}, cached per path."""
+    records = json.loads(Path(path).read_text(encoding="utf-8"))
+
+    return {rec["class_name"]: Ability.from_record(rec) for rec in records}
+
+
+def ability_by_name(
+    name: str, hero_id: int | None = None, path: Path = ABILITIES_JSON
+) -> Ability | None:
+    """Finds an ability or gun by display name ("Dust Devil", "djinns mark").
+
+    Pass hero_id when the name exists on several heroes, without it an
+    ambiguous name raises ValueError.
+    """
+    wanted = heroes.normalize_name(name)
+    matches = [
+        a
+        for a in ability_map(path).values()
+        if heroes.normalize_name(a.name) == wanted and (hero_id is None or a.hero == hero_id)
+    ]
+    owners = sorted({heroes.hero_name(a.hero) for a in matches if a.hero})
+
+    if len(owners) > 1:
+        shown = ", ".join(owners[:8]) + (f" (+{len(owners) - 8} more)" if len(owners) > 8 else "")
+        msg = f"{name!r} is on several heroes: {shown}"
+        raise ValueError(msg)
+
+    return matches[0] if matches else None
+
+
+def for_hero(hero_id: int, path: Path = ABILITIES_JSON) -> tuple[Ability, ...]:
+    """Lists a hero's abilities."""
+    return tuple(a for a in ability_map(path).values() if a.hero == hero_id and a.kind == "ability")
+
+
+def hero_gun(hero_id: int, path: Path = ABILITIES_JSON) -> Ability | None:
+    """Finds the gun and weapon stats for a hero."""
+    for ability in ability_map(path).values():
+        if ability.hero == hero_id and ability.kind == "weapon":
+            return ability
+
+    return None
+
+
+def label(class_name: str, path: Path = ABILITIES_JSON) -> str:
+    """Display name for a damage source class_name, whether ability, gun, or item.
+
+    Gun headshot damage comes in as <gun class>_crit and resolves to
+    "<gun name> (crit)". Falls back to the raw class_name for engine
+    sources like "Bullet".
+    """
+    if class_name.endswith("_crit"):
+        base = label(class_name.removesuffix("_crit"), path)
+
+        if base != class_name.removesuffix("_crit"):
+            return f"{base} (crit)"
+
+        return class_name
+
+    ability = ability_map(path).get(class_name)
+    if ability:
+        return ability.name
+
+    item = items.item_by_class_name(class_name)
+    if item:
+        return item.name
+
+    return class_name

@@ -1,0 +1,116 @@
+"""Item metadata from the bundled items.json snapshot."""
+
+from __future__ import annotations
+
+import datetime as dt
+import functools
+import json
+from dataclasses import dataclass, field
+from pathlib import Path
+from typing import Any
+
+from deadlock_matches import paths
+
+ITEMS_JSON = Path(__file__).parent / "data" / "items.json"
+
+
+@dataclass(frozen=True, slots=True)
+class Item:
+    """A purchasable item, keeping just the fields the analysis code touches.
+
+    components holds the class_names of lower-tier items this one is built
+    from. An item vanishing into one of these in a build is an upgrade, not
+    a sell.
+    """
+
+    id: int
+    name: str
+    class_name: str | None
+    cost: int | None
+    slot: str | None
+    tier: int | None
+    is_active: bool
+    description: str | None = None
+    components: tuple[str, ...] = ()
+    properties: dict[str, Any] = field(default_factory=dict)
+    labels: dict[str, Any] = field(default_factory=dict)
+    sections: tuple[dict[str, Any], ...] = ()
+
+    @classmethod
+    def from_record(cls, rec: dict[str, Any]) -> Item:
+        """Parse a raw items.json record."""
+        return cls(
+            id=rec["id"],
+            name=rec["name"],
+            class_name=rec.get("class_name"),
+            cost=rec.get("cost"),
+            slot=rec.get("slot"),
+            tier=rec.get("tier"),
+            is_active=bool(rec.get("is_active")),
+            description=rec.get("description"),
+            components=tuple(rec.get("components") or ()),
+            properties=dict(rec.get("properties") or {}),
+            labels=dict(rec.get("labels") or {}),
+            sections=tuple(rec.get("sections") or ()),
+        )
+
+
+def snapshot_asof(
+    when: dt.datetime | dt.date, history_dir: Path | None = None
+) -> tuple[Path, str | None]:
+    """Finds the items.json path and snapshot date in effect at a moment.
+
+    - latest dated history folder on or before `when`
+    - moments older than all history get the earliest folder
+    - no history at all falls back to the bundled current snapshot (date None)
+    """
+    history_dir = paths.assets_history_dir() if history_dir is None else history_dir
+    day = when.date().isoformat() if isinstance(when, dt.datetime) else when.isoformat()
+    dates = sorted(
+        p.name for p in history_dir.glob("????-??-??") if (p / ITEMS_JSON.name).is_file()
+    )
+
+    if not dates:
+        return ITEMS_JSON, None
+
+    eligible = [d for d in dates if d <= day]
+    chosen = eligible[-1] if eligible else dates[0]
+
+    return history_dir / chosen / ITEMS_JSON.name, chosen
+
+
+@functools.cache
+def item_map(path: Path = ITEMS_JSON) -> dict[int, Item]:
+    """Cached load of items.json, keyed by item ID."""
+    records = json.loads(Path(path).read_text(encoding="utf-8"))
+
+    return {rec["id"]: Item.from_record(rec) for rec in records}
+
+
+def item_name(item_id: int, path: Path = ITEMS_JSON) -> str:
+    """Item display name, falling back to 'id<N>' for unknown IDs."""
+    item = item_map(path).get(item_id)
+
+    return item.name if item else f"id{item_id}"
+
+
+@functools.cache
+def item_by_name(name: str, path: Path = ITEMS_JSON) -> Item | None:
+    """Find an item by display name ignoring case, None if no match."""
+    low = name.lower()
+
+    for item in item_map(path).values():
+        if item.name.lower() == low:
+            return item
+
+    return None
+
+
+@functools.cache
+def item_by_class_name(class_name: str, path: Path = ITEMS_JSON) -> Item | None:
+    """Find an item by engine class_name, None if no match."""
+    for item in item_map(path).values():
+        if item.class_name == class_name:
+            return item
+
+    return None
