@@ -7,7 +7,7 @@ import zoneinfo
 import polars as pl
 import pytest
 
-from deadlock_matches import abilities, assets, heroes, items, players, schemas
+from deadlock_matches import abilities, assets, heroes, items, players, schemas, timeline
 from deadlock_matches.cli import cards, data, performance
 from deadlock_matches.cli import items as cli_items
 from deadlock_matches.cli import meta as cli_meta
@@ -25,6 +25,7 @@ def write_cache_entry(
     damage=(),
     ability_items=(),
     objectives=False,
+    gold_sources=(),
 ):
     contents = pb.CMsgMatchMetaDataContents()
     info = contents.match_info
@@ -52,10 +53,20 @@ def write_cache_entry(
         enemy.team = pb.k_ECitadelLobbyTeam_Team0
         enemy.net_worth = stats[-1][1] // 2
 
+    sources_at = {}
+    for t, source, gold, orbs in gold_sources:
+        sources_at.setdefault(t, []).append((source, gold, orbs))
+
     for t, worth in stats:
         s = p.stats.add()
         s.time_stamp_s = t
         s.net_worth = worth
+
+        for source, gold, orbs in sources_at.get(t, ()):
+            gs = s.gold_sources.add()
+            gs.source = source
+            gs.gold = gold
+            gs.gold_orbs = orbs
 
         es = enemy.stats.add()
         es.time_stamp_s = t
@@ -466,6 +477,52 @@ def test_match_abilities_flag_prints_upgrade_order(capsys, tmp_path):
     assert "cumulative AP spend" in out
 
 
+def test_match_souls_flag_prints_source_and_group_table(capsys, tmp_path):
+    cache = tmp_path / "cache"
+    cache.mkdir()
+    g = timeline.GoldSource
+    write_cache_entry(
+        cache,
+        match_id=100,
+        stats=[(300, 3000), (600, 5000)],
+        gold_sources=[
+            (300, g.LANE_CREEPS, 800, 200),
+            (600, g.LANE_CREEPS, 1600, 400),
+            (600, g.BOSSES, 800, 0),
+            (600, g.TREASURE, 200, 0),
+            (600, g.ABILITY_ASSASSINATE, 400, 0),
+            (600, g.ITEM_CULTIST_SACRIFICE, 600, 0),
+        ],
+    )
+
+    run_main(tmp_path, "match", "--account", "42", "--souls")
+
+    out = capsys.readouterr().out
+
+    assert "Souls by source, 5-minute intervals" in out
+    assert re.search(r"Troopers\s+1,000\s+1,000\s+2,000\s+50%", out)
+    assert re.search(r"Objectives\s+0\s+800\s+800\s+20%", out)
+    assert re.search(r"Urn\s+0\s+200\s+200\s+5%", out)
+    assert re.search(r"Bounty\s+0\s+400\s+400\s+10%", out)
+    assert re.search(r"Cultist Sacrifice\s+0\s+600\s+600\s+15%", out)
+    assert re.search(r"Total\s+1,000\s+3,000\s+4,000", out)
+    assert re.search(r"Lane\s+1,000\s+1,000\s+2,000\s+50%", out)
+    assert re.search(r"Objectives\s+0\s+1,000\s+1,000\s+25%", out)
+    assert re.search(r"Other\s+0\s+1,000\s+1,000\s+25%", out)
+    assert "gross souls earned by source" in out
+    assert "Assassinate" not in out
+
+
+def test_match_souls_flag_without_source_rows(capsys, tmp_path):
+    cache = tmp_path / "cache"
+    cache.mkdir()
+    write_cache_entry(cache, match_id=100, stats=[(300, 3000)])
+
+    run_main(tmp_path, "match", "--account", "42", "--souls")
+
+    assert "has no soul sources in match 100" in capsys.readouterr().out
+
+
 def test_match_id_not_found(capsys, tmp_path):
     cache = tmp_path / "cache"
     cache.mkdir()
@@ -569,6 +626,9 @@ def test_match_views_mutually_exclusive(tmp_path):
 
     with pytest.raises(SystemExit):
         build_parser(tmp_path / "config.toml").parse_args(["match", "--abilities", "--teams"])
+
+    with pytest.raises(SystemExit):
+        build_parser(tmp_path / "config.toml").parse_args(["match", "--souls", "--damage"])
 
 
 def test_winrate_prints_daily_table(capsys, tmp_path):

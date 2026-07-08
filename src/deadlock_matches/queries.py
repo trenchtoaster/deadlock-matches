@@ -1004,6 +1004,77 @@ def damage_intervals(
     )
 
 
+def soul_intervals(
+    match_id: int,
+    account_id: int,
+    interval_s: int = 300,
+    parquet_dir: str | Path | None = None,
+) -> pl.DataFrame:
+    """Split one player's souls into per-source gains per interval.
+
+    - value is souls + souls_orbs, the in-game per-source number
+    - soul_sources samples about every three minutes, so a gain lands in the
+      interval holding the sample that recorded it
+    - one row per source per interval, sources with any souls, ordered by total
+    """
+    duration = (
+        scan("matches", parquet_dir)
+        .filter(pl.col("match_id") == match_id)
+        .select("duration_s")
+        .collect()
+    )
+
+    if duration.is_empty():
+        msg = f"match {match_id} not in the tables"
+        raise ValueError(msg)
+
+    samples = (
+        scan("soul_sources", parquet_dir)
+        .filter(pl.col("match_id") == match_id, pl.col("account_id") == account_id)
+        .select(
+            "source_name", "time_stamp_s", (pl.col("souls") + pl.col("souls_orbs")).alias("souls")
+        )
+        .collect()
+    )
+
+    if samples.is_empty():
+        msg = f"account {account_id} has no soul sources in match {match_id}"
+        raise ValueError(msg)
+
+    duration_s = int(duration.item())
+    bucket = ((pl.col("time_stamp_s") - 1) // interval_s).clip(0).cast(pl.Int64).alias("interval")
+    cumulative = (
+        samples.with_columns(bucket).group_by("source_name", "interval").agg(pl.col("souls").max())
+    )
+
+    n = cumulative.select(pl.col("interval").max()).item() + 1
+    grid = (
+        samples.select("source_name")
+        .unique()
+        .join(pl.DataFrame({"interval": range(n)}, schema={"interval": pl.Int64}), how="cross")
+    )
+
+    gains = (
+        grid.join(cumulative, on=["source_name", "interval"], how="left")
+        .sort("source_name", "interval")
+        .with_columns(
+            pl.col("souls").fill_null(strategy="forward").fill_null(0).over("source_name")
+        )
+        .with_columns(pl.col("souls") - pl.col("souls").shift(1).fill_null(0).over("source_name"))
+        .with_columns(pl.col("souls").sum().over("source_name").alias("total"))
+    )
+
+    return (
+        gains.with_columns(
+            (pl.col("interval") * interval_s).alias("start_s"),
+            ((pl.col("interval") + 1) * interval_s).clip(upper_bound=duration_s).alias("end_s"),
+        )
+        .filter(pl.col("total") > 0)
+        .sort(["total", "source_name", "interval"], descending=[True, False, False])
+        .select("source_name", "start_s", "end_s", "souls", "total")
+    )
+
+
 def source_intervals(
     games: pl.DataFrame | pl.LazyFrame,
     interval_s: int = 300,

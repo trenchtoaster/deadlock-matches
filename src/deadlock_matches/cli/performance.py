@@ -38,6 +38,40 @@ DELIVERY_LABELS = {
     "spirit_proc": "Items (spirit)",
 }
 
+SOUL_LABELS = {
+    "troopers": "Troopers",
+    "denies": "Denies",
+    "jungle": "Neutral Enemies",
+    "breakables": "Breakable Pickups",
+    "players": "Enemy Kills",
+    "assists": "Kill Assists",
+    "bosses": "Objectives",
+    "treasure": "Urn",
+    "team_bonus": "Team Catch-Up",
+    "trophy_collector": "Trophy Collector",
+    "cultist_sacrifice": "Cultist Sacrifice",
+    "assassinate": "Bounty",
+    "goose_egg": "Goose Egg",
+}
+
+SOUL_GROUPS = {
+    "troopers": "Lane",
+    "denies": "Lane",
+    "jungle": "Roaming",
+    "breakables": "Roaming",
+    "players": "Combat",
+    "assists": "Combat",
+    "bosses": "Objectives",
+    "treasure": "Objectives",
+    "team_bonus": "Catch-Up",
+    "trophy_collector": "Other",
+    "cultist_sacrifice": "Other",
+    "assassinate": "Other",
+    "goose_egg": "Other",
+}
+
+SOUL_GROUP_ORDER = ("Lane", "Roaming", "Combat", "Objectives", "Catch-Up", "Other")
+
 SOURCE_ROWS = (
     "troopers",
     "jungle",
@@ -246,6 +280,10 @@ def match_report(args: argparse.Namespace, config: str | Path | None = None) -> 
 
     print(f"Match {row['match_id']}: {row['hero']}, {result}, {when}, {minutes}:{seconds:02d}")
 
+    if args.souls:
+        souls_report(row, args)
+        return
+
     if args.teams:
         teams_report(row, args)
         return
@@ -385,6 +423,73 @@ def abilities_report(row: dict[str, Any], args: argparse.Namespace) -> None:
         )
 
     print("\n  Req souls is the threshold for that unlock or cumulative AP spend.")
+
+
+def souls_report(row: dict[str, Any], args: argparse.Namespace) -> None:
+    """Print one player's souls by source per interval, then the farm grouping.
+
+    - source rows use the in-game souls-screen labels, ordered by match total
+    - the group block splits souls into lane, roaming, combat, objectives,
+      catch-up, and other, the way you earned them
+    """
+    if not queries.table_exists("soul_sources", args.parquet):
+        print("No soul_sources table yet, run `deadlock export`")
+        return
+
+    try:
+        df = queries.soul_intervals(
+            row["match_id"], row["account_id"], args.interval * 60, args.parquet
+        )
+    except ValueError as e:
+        print(e)
+        return
+
+    df = df.with_columns(
+        pl.col("source_name").replace(SOUL_LABELS).alias("label"),
+        pl.col("source_name").replace(SOUL_GROUPS).alias("group"),
+    )
+
+    spans = df.select("start_s", "end_s").unique().sort("start_s")
+    width = max(max(len(s) for s in df["label"]), 16) + 2
+    header = "".join(f"{_span(r):>9}" for r in spans.iter_rows(named=True))
+    total = int(df["souls"].sum())
+
+    print(f"Souls by source, {args.interval}-minute intervals")
+    print(f"\n  {'Source':<{width}}{header}{'Total':>9}{'%':>7}")
+
+    for (label,), g in df.group_by(["label"], maintain_order=True):
+        cells = "".join(f"{v:>9,}" for v in g.sort("start_s")["souls"])
+        source_total = int(g.item(0, "total"))
+        percent = f"{100 * source_total / total:.0f}%" if total else "-"
+
+        print(f"  {label:<{width}}{cells}{source_total:>9,}{percent:>7}")
+
+    sums = df.group_by("start_s").agg(pl.col("souls").sum()).sort("start_s")
+    cells = "".join(f"{v:>9,}" for v in sums["souls"])
+
+    print(f"  {'Total':<{width}}{cells}{total:>9,}")
+    print()
+
+    order = pl.DataFrame({"group": SOUL_GROUP_ORDER, "group_n": range(len(SOUL_GROUP_ORDER))})
+    grouped = (
+        df.group_by("group", "start_s")
+        .agg(pl.col("souls").sum())
+        .with_columns(pl.col("souls").sum().over("group").alias("total"))
+        .join(order, on="group")
+        .sort(["group_n", "start_s"])
+    )
+
+    for (group,), g in grouped.group_by(["group"], maintain_order=True):
+        cells = "".join(f"{v:>9,}" for v in g.sort("start_s")["souls"])
+        group_total = int(g.item(0, "total"))
+        percent = f"{100 * group_total / total:.0f}%" if total else "-"
+
+        print(f"  {group:<{width}}{cells}{group_total:>9,}{percent:>7}")
+
+    print(
+        f"\n  Total is gross souls earned by source, the in-game souls breakdown. "
+        f"Net worth ({row['net_worth']:,}) adds starting souls and subtracts souls lost to deaths."
+    )
 
 
 def damage_source_table(row: dict[str, Any], args: argparse.Namespace) -> None:

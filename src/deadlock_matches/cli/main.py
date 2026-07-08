@@ -171,6 +171,12 @@ def build_parser(config: str | Path | None = None) -> argparse.ArgumentParser:
     mt.add_argument("--interval", type=int, default=5, help="interval length in minutes")
     view = mt.add_mutually_exclusive_group()
     view.add_argument(
+        "--souls",
+        action="store_true",
+        help="souls by source per interval, like the in-game souls graph, grouped "
+        "into lane, roaming, combat, and objectives",
+    )
+    view.add_argument(
         "--damage",
         action="store_true",
         help="damage to heroes by source per interval, like the in-game source graph",
