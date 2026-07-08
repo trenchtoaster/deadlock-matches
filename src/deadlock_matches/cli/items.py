@@ -104,7 +104,7 @@ def item_report(args: argparse.Namespace, config: str | Path | None = None) -> N
                 f"across {top['builds']} builds{note} (deadlock-api.com)\n"
             )
     else:
-        print(f"Run `deadlock download --hero {args.hero}` to compare against top players\n")
+        print(f'Run `deadlock download --hero "{args.hero}"` to compare against top players\n')
 
     try:
         badge = meta.min_badge(args.min_rating)

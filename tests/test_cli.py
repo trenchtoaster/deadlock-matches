@@ -1222,6 +1222,42 @@ def test_item_command_header_uses_account_names(monkeypatch, capsys, tmp_path):
     assert "Your games (accounts main, 99, 1 found)" in capsys.readouterr().out
 
 
+def test_item_command_quotes_hero_in_download_hint(monkeypatch, capsys, tmp_path):
+    rows = pl.LazyFrame(
+        {
+            "match_id": [90111222],
+            "account_id": [42],
+            "hero": ["Lady Geist"],
+            "won": [True],
+            "duration_s": [1800],
+            "game_time_s": [900],
+            "owned_s": [900],
+            "damage": [1200],
+            "dealt_after_buy": [12000],
+        }
+    )
+    monkeypatch.setattr(cli_items.queries, "item_games", lambda *a, **kw: rows)
+    monkeypatch.setattr(cli_items.players, "PARQUET_DIR", tmp_path)
+
+    def no_api(*a, **kw):
+        raise ValueError("no api data")
+
+    monkeypatch.setattr(cli_items.meta, "get_item_stats", no_api)
+
+    args = argparse.Namespace(
+        item="Healbane",
+        hero="Lady Geist",
+        account=[42],
+        parquet=str(tmp_path),
+        top=10,
+        min_rating="Eternus",
+        since=None,
+    )
+    cli_items.item_report(args, tmp_path / "none.toml")
+
+    assert 'Run `deadlock download --hero "Lady Geist"`' in capsys.readouterr().out
+
+
 def test_item_card_renders_every_item(capsys):
     for it in items.item_map().values():
         cards.item_card(it)

@@ -868,6 +868,6 @@ def movement_report(args: argparse.Namespace, config: str | Path | None = None) 
 
     if top is None:
         print(
-            f"\nNo top player movement tables: run `deadlock download --hero {args.hero}` "
+            f'\nNo top player movement tables: run `deadlock download --hero "{args.hero}"` '
             'without "movement" in the config.toml exclude list'
         )
