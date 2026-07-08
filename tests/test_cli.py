@@ -966,6 +966,24 @@ def test_hero_command_base_card(capsys, tmp_path):
     assert "Each boon adds" in out
     assert "light / +" in out
     assert "gun dps" in out
+    assert "abilities" in out
+    assert "Fire Scarabs" in out
+    assert "Melee" not in out
+
+
+def test_hero_command_shows_alt_fire(capsys, tmp_path):
+    main(["hero", "Viscous"], config=tmp_path / "none.json")
+
+    out = capsys.readouterr().out
+
+    assert "alt fire" in out
+    assert out.index("alt fire") > out.index("gun dps")
+
+
+def test_hero_command_no_alt_fire_when_absent(capsys, tmp_path):
+    main(["hero", "Mirage"], config=tmp_path / "none.json")
+
+    assert "alt fire" not in capsys.readouterr().out
 
 
 def test_hero_command_unknown_hero(capsys, tmp_path):

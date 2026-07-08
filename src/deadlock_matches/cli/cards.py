@@ -42,6 +42,24 @@ def _gun_lines(hero_id: int, bullet_bonus: float) -> None:
     print(f"  gun dps          {dps:>8.1f}")
 
 
+def _alt_gun_lines(hero_id: int) -> None:
+    """Print the alt-fire weapon's damage for heroes with a second firing mode."""
+    gun = abilities.hero_alt_gun(hero_id)
+
+    if not gun or not gun.weapon.get("bullet_damage"):
+        return
+
+    w = gun.weapon
+    pellets = w.get("bullets", 1)
+
+    print()
+    print("  alt fire")
+    print(f"  bullet damage    {w['bullet_damage']:>8.1f}")
+    print(f"  gun dps          {w.get('damage_per_second', 0.0):>8.1f}")
+    print(f"  bullets per sec  {w.get('bullets_per_second', 0.0) / pellets:>8.2f}")
+    print(f"  ammo             {w.get('clip_size', 0):>8}")
+
+
 def _hero_base_card(hero: heroes.Hero, hero_id: int) -> None:
     """Print base stats and what each boon adds."""
     light, heavy = hero.melee_damage(1)
@@ -63,6 +81,8 @@ def _hero_base_card(hero: heroes.Hero, hero_id: int) -> None:
 
         if speed := w.get("bullet_speed"):
             print(f"  bullet velocity  {speed / UNITS_PER_METER:>8.0f}")
+
+    _alt_gun_lines(hero_id)
 
     print()
     print(f"  light melee      {light:>8.1f}")
@@ -98,6 +118,14 @@ def _hero_base_card(hero: heroes.Hero, hero_id: int) -> None:
 
     if regen := hero.stats.get("stamina_regen_per_second"):
         print(f"  stamina cooldown {1 / regen:>8.1f}")
+
+    names = _ability_names(hero_id)
+
+    if names:
+        print("\nabilities")
+
+        for name in names:
+            print(f"  {name}")
 
     if not hero.levels:
         return
@@ -298,6 +326,11 @@ def _tier_changes(ability: abilities.Ability, n: int, ctx: dict[str, float]) -> 
                 out.append(f"{name} +{before:g} -> +{after:g} x {_scale_label(stat)}")
 
     return out
+
+
+def _ability_names(hero_id: int) -> list[str]:
+    """The hero's four signature abilities, the names the ability command takes."""
+    return [a.name for a in abilities.for_hero(hero_id) if "ability_melee" not in a.class_name]
 
 
 def ability_report(args: argparse.Namespace) -> None:

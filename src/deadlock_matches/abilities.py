@@ -152,6 +152,23 @@ def hero_gun(hero_id: int, path: Path = ABILITIES_JSON) -> Ability | None:
     return None
 
 
+def hero_alt_gun(hero_id: int, path: Path = ABILITIES_JSON) -> Ability | None:
+    """Finds a hero's alt-fire weapon if they have a second firing mode.
+
+    The alt record shares the primary's display name or has none, so it
+    can't be reached by name.
+    """
+    for ability in ability_map(path).values():
+        if (
+            ability.hero == hero_id
+            and ability.kind == "weapon"
+            and ability.class_name.endswith(("_alt", "_set_2"))
+        ):
+            return ability
+
+    return None
+
+
 def label(class_name: str, path: Path = ABILITIES_JSON) -> str:
     """Display name for a damage source class_name, whether ability, gun, or item.
 
