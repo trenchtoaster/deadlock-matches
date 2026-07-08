@@ -1,0 +1,411 @@
+"""Argument parsing and dispatch for the deadlock command."""
+
+from __future__ import annotations
+
+import argparse
+from pathlib import Path
+from typing import TYPE_CHECKING
+
+import polars as pl
+
+from deadlock_matches import export, extract, players, queries, schemas, timeline
+from deadlock_matches.cli import cards, data, items, meta, performance
+from deadlock_matches.config import (
+    config_account_names,
+    config_accounts,
+    config_exclude,
+    ensure_config,
+)
+
+if TYPE_CHECKING:
+    from collections.abc import Sequence
+
+
+def parse_accounts(v: str, names: dict[str, int] | None = None) -> list[int]:
+    """Turn "id1,id2" or account names from config.toml like "main" into Steam32 account IDs.
+
+    - names with spaces need commas between accounts, ids also split on spaces
+    """
+    lookup = {name.lower(): a for name, a in (names or {}).items()}
+    ids = []
+
+    for part in v.split(","):
+        part = part.strip()
+
+        if part.lower() in lookup:
+            ids.append(lookup[part.lower()])
+            continue
+
+        for token in part.split():
+            if token.lower() in lookup:
+                ids.append(lookup[token.lower()])
+            elif token.isdigit():
+                ids.append(int(token))
+            else:
+                known = ", ".join(names) if names else "none set"
+                msg = f"unknown account {token!r}, config.toml account names: {known}"
+                raise argparse.ArgumentTypeError(msg)
+
+    return ids
+
+
+def build_parser(config: str | Path | None = None) -> argparse.ArgumentParser:
+    """Build the CLI parser, where --account defaults to the accounts in config.toml."""
+    accounts = config_accounts(config)
+    names = config_account_names(config)
+
+    def account_list(v: str) -> list[int]:
+        return parse_accounts(v, names)
+
+    ap = argparse.ArgumentParser(prog="deadlock")
+    ap.add_argument(
+        "--cache",
+        default=str(extract.DEFAULT_CACHE),
+        help="Steam httpcache folder, detected automatically",
+    )
+    ap.add_argument(
+        "--archive", default=str(extract.ARCHIVE_DIR), help="where match protobufs are archived"
+    )
+    ap.add_argument(
+        "--parquet", default=str(export.PARQUET_DIR), help="where the parquet tables are written"
+    )
+    sub = ap.add_subparsers(dest="cmd")
+
+    d = sub.add_parser("history", help="your recent matches with the match screen numbers")
+    d.add_argument(
+        "--days", type=int, default=None, help="your last N days of games, 1 unless --since is set"
+    )
+    d.add_argument(
+        "--account",
+        type=account_list,
+        default=accounts,
+        help="only matches where these accounts (IDs or names from config.toml) played, "
+        "defaults to config.toml. Matches you only viewed in game stay hidden unless "
+        "you name their players",
+    )
+    d.add_argument(
+        "--since",
+        default=None,
+        help="only matches on or after this date (YYYY-MM-DD), like 2026-07-01",
+    )
+
+    it = sub.add_parser("item", help="item stat card, plus whether it is worth buying on a hero")
+    it.add_argument("item", help='item display name, like "Escalating Exposure"')
+    it.add_argument(
+        "--hero",
+        default=None,
+        help="hero display name, like Mirage; omit to print just the stat card",
+    )
+    it.add_argument(
+        "--account",
+        type=account_list,
+        default=accounts,
+        help="your account IDs or names from config.toml, comma-separated, "
+        "to include your own games",
+    )
+    it.add_argument(
+        "--top", type=int, default=10, help="how many items to show in the bought together table"
+    )
+    it.add_argument(
+        "--min-rating",
+        default="Eternus",
+        help="meta stats only count lobbies at this average skill rating or higher, "
+        "like Eternus, 'all' disables",
+    )
+    it.add_argument(
+        "--since",
+        default=None,
+        help="only count matches on or after this date (YYYY-MM-DD), like 2026-06-30, "
+        "for both your games and the meta stats",
+    )
+
+    b = sub.add_parser("builds", help="what top mains of a hero build")
+    b.add_argument("--hero", required=True, help="hero display name, like Mirage")
+    b.add_argument("--players", type=int, default=6, help="top mains to include")
+    b.add_argument("--games", type=int, default=10, help="recent ranked games per player")
+    b.add_argument(
+        "--min-percent",
+        type=int,
+        default=30,
+        help="hide items bought in fewer than this percent of builds",
+    )
+
+    c = sub.add_parser("compare", help="your stats vs top players minute by minute")
+    c.add_argument("--hero", required=True, help="hero display name, like Mirage")
+    c.add_argument(
+        "--account",
+        type=account_list,
+        default=accounts,
+        help="your account IDs or names from config.toml, defaults to all accounts there",
+    )
+    c.add_argument(
+        "--stat",
+        default="farm",
+        help=f"{', '.join(timeline.STATS)}, "
+        "soul_sources (gap table by income source), or any snapshot field (creep_kills, denies, ...)",
+    )
+    c.add_argument("--players", type=int, default=6, help="top mains to compare against")
+    c.add_argument("--games", type=int, default=10, help="recent ranked games per player")
+
+    mt = sub.add_parser(
+        "match", help="one of your matches in intervals: souls, damage, last hits, denies"
+    )
+    mt.add_argument(
+        "match_id",
+        nargs="?",
+        type=int,
+        default=None,
+        help="match id, defaults to your most recent match",
+    )
+    mt.add_argument(
+        "--account",
+        type=account_list,
+        default=accounts,
+        help="your account IDs or names from config.toml, defaults to all accounts there",
+    )
+    mt.add_argument(
+        "--hero",
+        default=None,
+        help="show another player from the match instead of you, by hero name, like Wraith",
+    )
+    mt.add_argument("--interval", type=int, default=5, help="interval length in minutes")
+    view = mt.add_mutually_exclusive_group()
+    view.add_argument(
+        "--damage",
+        action="store_true",
+        help="damage to heroes by source per interval, like the in-game source graph",
+    )
+    view.add_argument(
+        "--healing",
+        action="store_true",
+        help="healing by source per interval, plus the healing your anti-heal prevented",
+    )
+    view.add_argument(
+        "--teams",
+        action="store_true",
+        help="both teams per interval: souls and the lead, plus every objective "
+        "and Rejuvenator as it fell",
+    )
+    view.add_argument(
+        "--abilities",
+        action="store_true",
+        help="ability unlocks and upgrades in game-time order",
+    )
+
+    f = sub.add_parser(
+        "download", help="retrieve tracked player matches into a separate parquet table"
+    )
+    f.add_argument("--hero", required=True, help="hero display name, like Mirage")
+    f.add_argument("--players", type=int, default=6, help="top mains to track")
+    f.add_argument("--games", type=int, default=10, help="recent ranked games per player")
+    f.add_argument("--out", default=str(players.PARQUET_DIR), help="players parquet directory")
+
+    de = sub.add_parser("deaths", help="how you die: when, to whom, alone or ganked")
+    de.add_argument(
+        "--account",
+        type=account_list,
+        default=accounts,
+        help="your account IDs or names from config.toml, defaults to all accounts there",
+    )
+    de.add_argument("--hero", default=None, help="hero display name, like Mirage")
+    de.add_argument("--days", type=int, default=None, help="only your last N days of games")
+    de.add_argument(
+        "--since",
+        default=None,
+        help="only days on or after this date (YYYY-MM-DD), like 2026-07-01",
+    )
+    de.add_argument(
+        "--radius",
+        type=int,
+        default=2000,
+        help="units counted as nearby for the ally/enemy context",
+    )
+
+    mv = sub.add_parser("movement", help="movement profile on one hero, you vs top players")
+    mv.add_argument("--hero", required=True, help="hero display name, like Mirage")
+    mv.add_argument(
+        "--account",
+        type=account_list,
+        default=accounts,
+        help="your account IDs or names from config.toml, defaults to all accounts there",
+    )
+
+    dy = sub.add_parser("winrate", help="wins and losses per day")
+    dy.add_argument(
+        "--account",
+        type=account_list,
+        default=accounts,
+        help="your account IDs or names from config.toml, defaults to all accounts there",
+    )
+    dy.add_argument("--days", type=int, default=None, help="only your last N days of games")
+    dy.add_argument(
+        "--since",
+        default=None,
+        help="only days on or after this date (YYYY-MM-DD or YYYYMMDD), like 2026-07-01",
+    )
+    dy.add_argument(
+        "--by",
+        choices=("day", "week", "month"),
+        default="day",
+        help="group the table by day, week, or month",
+    )
+    dy.add_argument("--hero", default=None, help="hero display name, like Mirage")
+    dy.add_argument(
+        "--min-rating",
+        default="Eternus",
+        help="with --hero, the public win rate line only counts lobbies at this average "
+        "skill rating or higher, 'all' disables",
+    )
+
+    he = sub.add_parser("hero", help="base stats and boon gains, or stats at a breakpoint")
+    he.add_argument("hero", help="hero display name, like Mirage")
+    he.add_argument("--souls", type=int, default=None, help="total souls earned")
+    he.add_argument("--level", type=int, default=None, help="level, instead of souls")
+
+    ab = sub.add_parser("ability", help="base numbers, spirit scaling and tier upgrades")
+    ab.add_argument("ability", help='ability display name, like "Dust Devil"')
+    ab.add_argument(
+        "--hero",
+        default=None,
+        help="hero display name, for ability names that exist on several heroes",
+    )
+    ab.add_argument(
+        "--souls", type=int, default=None, help="resolve boon scaling at this soul count"
+    )
+    ab.add_argument("--level", type=int, default=None, help="level, instead of souls")
+
+    me = sub.add_parser("meta", help="public hero win rates, pick rates, and match counts")
+    me.add_argument("--hero", default=None, help="one hero's numbers per bucket, like Mirage")
+    me.add_argument(
+        "--by",
+        choices=sorted(meta.BUCKETS),
+        default=None,
+        help="split into buckets: rating (Oracle 3) or day/week/month",
+    )
+    me.add_argument(
+        "--min-rating",
+        default="all",
+        help="only count lobbies at this average skill rating or higher, like Eternus",
+    )
+    me.add_argument("--since", default=None, help="only matches on or after this date (YYYY-MM-DD)")
+    me.add_argument(
+        "--until", default=None, help="only matches on or before this date (YYYY-MM-DD)"
+    )
+
+    sub.add_parser(
+        "accounts", help="Steam accounts on this PC that have run Deadlock, for config.toml"
+    )
+
+    sub.add_parser("assets", help="redownload heroes.json / items.json (run after a patch)")
+
+    sub.add_parser("export", help="rebuild parquet tables from the archive")
+
+    sc = sub.add_parser("schema", help="column docs for the parquet tables (the data dictionary)")
+    sc.add_argument(
+        "table", nargs="?", default=None, help="one table name, all tables when omitted"
+    )
+    sc.add_argument(
+        "--sample",
+        nargs="?",
+        const=5,
+        type=int,
+        default=None,
+        metavar="N",
+        help="also print the first N parquet rows for one table (default: 5)",
+    )
+
+    return ap
+
+
+def schema_report(args: argparse.Namespace) -> None:
+    """Print schema docs and, optionally, a few rows from the matching parquet table."""
+    if args.sample is not None and args.table is None:
+        print("--sample needs a table name, for example: deadlock schema players --sample")
+        return
+
+    if args.sample is not None and args.sample < 1:
+        print("--sample must be at least 1")
+        return
+
+    print(schemas.describe(args.table))
+
+    if args.sample is None:
+        return
+
+    path = Path(args.parquet) / f"{args.table}.parquet"
+
+    if not queries.table_exists(args.table, args.parquet):
+        print(f"\nNo parquet file at {path}")
+        return
+
+    frame = queries.scan(args.table, args.parquet).head(args.sample).collect()
+    print(f"\nSample rows from {path}:")
+
+    with pl.Config(tbl_rows=args.sample, tbl_cols=-1, tbl_width_chars=240):
+        print(frame)
+
+
+def main(argv: Sequence[str] | None = None, config: str | Path | None = None) -> None:
+    """Entry point for the deadlock CLI."""
+    args = build_parser(config).parse_args(argv)
+    ensure_config(config)
+
+    card_only = args.cmd == "item" and args.hero is None
+
+    if (
+        args.cmd
+        in (None, "history", "item", "compare", "winrate", "deaths", "movement", "match", "export")
+        and not card_only
+    ):
+        new = data.sync_archive(args.cache, args.archive)
+        if new and args.cmd != "export":
+            data.refresh_tables(args.archive, args.parquet, config_exclude(config))
+
+    needs_account = args.cmd in ("compare", "winrate", "deaths", "movement") or (
+        args.cmd == "match" and (args.match_id is None or args.hero is None)
+    )
+
+    if needs_account and not args.account:
+        print("No account set: pass --account or update config.toml")
+        print("`deadlock accounts` lists the accounts on this PC with their IDs")
+        return
+
+    if args.cmd == "schema":
+        try:
+            schema_report(args)
+        except ValueError as e:
+            print(e)
+    elif args.cmd == "item":
+        items.item_report(args, config)
+    elif args.cmd == "builds":
+        items.builds_report(args)
+    elif args.cmd == "compare":
+        performance.compare_report(args, config)
+    elif args.cmd == "match":
+        performance.match_report(args, config)
+    elif args.cmd == "download":
+        data.download_matches(args, config)
+    elif args.cmd == "winrate":
+        performance.winrate_report(args, config)
+    elif args.cmd == "deaths":
+        performance.deaths_report(args, config)
+    elif args.cmd == "movement":
+        performance.movement_report(args, config)
+    elif args.cmd == "hero":
+        cards.hero_report(args)
+    elif args.cmd == "ability":
+        cards.ability_report(args)
+    elif args.cmd == "meta":
+        meta.meta_report(args)
+    elif args.cmd == "accounts":
+        data.list_accounts(args, config)
+    elif args.cmd == "assets":
+        data.refresh_assets(args)
+    elif args.cmd == "export":
+        data.export_tables(args, config)
+    else:
+        data.match_history(args, config)
+
+
+if __name__ == "__main__":
+    main()
