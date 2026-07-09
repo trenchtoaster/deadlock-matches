@@ -150,12 +150,12 @@ def builds_report(args: argparse.Namespace) -> None:
         print(f"Unknown hero: {args.hero}")
         return
 
-    mains = players.top_mains(hero_id, limit=args.players)
-    print(f"Top {len(mains)} {args.hero} mains:\n")
+    top = players.top_players(hero_id, limit=args.players)
+    print(f"Top {len(top)} {args.hero} players:\n")
     print(f"  {'Player':<18} {'Rank':>5}  {'Region':<9} Record")
 
     wins, losses = [], []
-    for m in mains:
+    for m in top:
         bs = players.player_builds(m["account_id"], hero_id, n=args.games)
         w = [b for b in bs if b["win"]]
         losses += [b for b in bs if not b["win"]]

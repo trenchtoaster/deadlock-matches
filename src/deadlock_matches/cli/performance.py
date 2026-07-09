@@ -146,13 +146,13 @@ def compare_report(args: argparse.Namespace, config: str | Path | None = None) -
         print(f"No games for accounts {ids} on {args.hero}")
         return
 
-    mains = players.top_mains(hero_id, limit=args.players)
-    print(f"You ({ids}, {len(mine)} games) vs top {args.hero} mains: {args.stat}")
+    top = players.top_players(hero_id, limit=args.players)
+    print(f"You ({ids}, {len(mine)} games) vs top {args.hero} players: {args.stat}")
 
     print(f"\n  {'Player':<18} {'Rank':>5}  {'Region':<9} {'Games':>5}")
 
     theirs = []
-    for m in mains:
+    for m in top:
         blocks = players.player_timelines(m["account_id"], hero_id, n=args.games)
         theirs += blocks
         print(f"  {m['name']:<18} {m['rank']:>5}  {m['region']:<9} {len(blocks):>5}")
@@ -848,7 +848,7 @@ def movement_report(args: argparse.Namespace, config: str | Path | None = None) 
 
     title = f"{args.hero} movement: you ({len(you)} games)"
     if top is not None:
-        title += f" vs top mains ({len(top)} games)"
+        title += f" vs top players ({len(top)} games)"
     print(title + "\n")
 
     header = f"  {'Metric':<24}{'You':>9}"

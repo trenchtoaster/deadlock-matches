@@ -1,4 +1,4 @@
-"""Fetch and analyze matches from other players, from leaderboard lookups to parquet tables."""
+"""Download matches from other players and build the parquet-players tables."""
 
 from __future__ import annotations
 
@@ -27,6 +27,13 @@ def leaderboard(region: str) -> list[dict[str, Any]]:
     return lb.get("entries", lb) if isinstance(lb, dict) else lb
 
 
+def hero_leaderboard(region: str, hero_id: int) -> list[dict[str, Any]]:
+    """Per-hero leaderboard entries for a region (rank is the hero rank)."""
+    lb = api.get_json(f"v1/leaderboard/{region}/{hero_id}", max_age=api.DAY)
+
+    return lb.get("entries", lb) if isinstance(lb, dict) else lb
+
+
 def find_player(name: str, regions: Sequence[str] = REGIONS) -> list[dict[str, Any]]:
     """Ladder entries whose account_name contains name (case-insensitive)."""
     low = name.lower()
@@ -42,25 +49,22 @@ def find_player(name: str, regions: Sequence[str] = REGIONS) -> list[dict[str, A
     return hits
 
 
-def top_mains(
+def top_players(
     hero_id: int,
     regions: Sequence[str] = REGIONS,
     limit: int = 8,
     *,
     unambiguous: bool = True,
 ) -> list[dict[str, Any]]:
-    """Best players whose top hero is hero_id, ranked by ladder position.
+    """Top players of a hero from the per-hero leaderboards, best hero rank first.
 
+    Pools the regional hero boards, so the same rank appears once per region.
     unambiguous keeps only entries that resolve to a single account ID, since
     players with lots of smurfs expose many candidate IDs with no way to pick one.
     """
     out = []
     for region in regions:
-        for e in leaderboard(region):
-            heroes_list = e.get("top_hero_ids") or []
-            if heroes_list[:1] != [hero_id]:
-                continue
-
+        for e in hero_leaderboard(region, hero_id):
             ids = e.get("possible_account_ids") or []
             if unambiguous and len(ids) != 1:
                 continue
@@ -331,6 +335,37 @@ def download_matches(
                     "downloaded_at": dt.datetime.fromtimestamp(mtime, dt.UTC),
                 }
             )
+
+    return rows
+
+
+def matches_by_id(match_ids: Sequence[int]) -> list[dict[str, Any]]:
+    """Download rows for specific match IDs, pulled from the API directly.
+
+    account_id/hero_id/rank/region come back null since no tracked player brought
+    the match in. The body carries all 12 players, so every one lands in the tables
+    and match --hero picks any of them. Unreachable ids are skipped.
+    """
+    rows = []
+
+    for match_id in match_ids:
+        try:
+            match_metadata(match_id)
+        except Exception:
+            continue
+
+        mtime = api.data_path(f"v1/matches/{match_id}/metadata").stat().st_mtime
+        rows.append(
+            {
+                "match_id": match_id,
+                "account_id": None,
+                "player": None,
+                "hero_id": None,
+                "rank": None,
+                "region": None,
+                "downloaded_at": dt.datetime.fromtimestamp(mtime, dt.UTC),
+            }
+        )
 
     return rows
 

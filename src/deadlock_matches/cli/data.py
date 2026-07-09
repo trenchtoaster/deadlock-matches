@@ -298,29 +298,22 @@ def refresh_assets(_args: argparse.Namespace) -> None:
 
 
 def download_matches(args: argparse.Namespace, config: str | Path | None = None) -> None:
-    """Query the API for matches from top mains and config-selected players, then build their tables."""
-    hero_id = heroes.hero_id_by_name(args.hero)
-    if hero_id is None:
-        print(f"Unknown hero: {args.hero}")
-        return
+    """Build player tables from the API for specific match IDs, specific accounts, or top players."""
+    if args.match:
+        rows = players.matches_by_id(args.match)
+        got = len({r["match_id"] for r in rows})
+        print(f"Downloading {len(args.match)} match ID(s), got {got}")
+    else:
+        if args.hero is None:
+            print("download needs --hero, or --match with match IDs")
+            return
 
-    tracked = players.top_mains(hero_id, limit=args.players)
-    known = {t["account_id"] for t in tracked}
-    tracked += [
-        {"name": name, "account_id": a}
-        for name, a in config_players(args.hero, config).items()
-        if a not in known
-    ]
+        hero_id = heroes.hero_id_by_name(args.hero)
+        if hero_id is None:
+            print(f"Unknown hero: {args.hero}")
+            return
 
-    print(f"Downloading recent {args.hero} games for {len(tracked)} players:")
-
-    for t in tracked:
-        where = f"rank {t['rank']:<4} {t['region']}" if t.get("rank") else "selected in config"
-        print(f"  {t['name']:<18} {where}")
-
-    rows = players.download_matches(tracked, hero_id, n=args.games)
-    unique = len({r["match_id"] for r in rows})
-    print(f"\nRetrieved {unique} unique matches across {len(rows)} player games")
+        rows = _download_players(args, hero_id, config)
 
     counts = players.write_player_tables(rows, out_dir=args.out, exclude=config_exclude(config))
 
@@ -328,6 +321,66 @@ def download_matches(args: argparse.Namespace, config: str | Path | None = None)
         print(f"  {name:<14} {n:>7,} rows")
 
     print(f"Players parquet tables at {_tilde(args.out)}")
+
+
+def _download_players(
+    args: argparse.Namespace, hero_id: int, config: str | Path | None
+) -> list[dict[str, Any]]:
+    """Recent games for the given accounts, or the top players plus config players by default."""
+    if args.account:
+        tracked = [{"name": str(a), "account_id": a} for a in args.account]
+    else:
+        tracked = players.top_players(hero_id, limit=args.players)
+        known = {t["account_id"] for t in tracked}
+        tracked += [
+            {"name": name, "account_id": a}
+            for name, a in config_players(args.hero, config).items()
+            if a not in known
+        ]
+
+    print(f"Downloading recent {args.hero} games for {len(tracked)} players:")
+
+    for t in tracked:
+        where = f"rank {t['rank']:<4} {t['region']}" if t.get("rank") else "selected"
+        print(f"  {t['name']:<18} {where}")
+
+    rows = players.download_matches(tracked, hero_id, n=args.games)
+    unique = len({r["match_id"] for r in rows})
+    print(f"\nRetrieved {unique} unique matches across {len(rows)} player games")
+
+    return rows
+
+
+def leaderboard_report(args: argparse.Namespace, config: str | Path | None = None) -> None:
+    """Print the top players of a hero.
+
+    - --matches also lists recent match IDs per player
+    """
+    hero_id = heroes.hero_id_by_name(args.hero)
+    if hero_id is None:
+        print(f"Unknown hero: {args.hero}")
+        return
+
+    top = players.top_players(hero_id, limit=args.players)
+    known = {m["account_id"] for m in top}
+    top += [
+        {"name": name, "account_id": a, "rank": None, "region": "config"}
+        for name, a in config_players(args.hero, config).items()
+        if a not in known
+    ]
+
+    print(f"{args.hero} leaderboard:")
+
+    for m in top:
+        where = f"rank {m['rank']:<4} {m['region']}" if m.get("rank") else "config"
+        print(f"  {m['name']:<20} {m['account_id']:<12} {where}")
+
+        if args.matches:
+            for row in players.recent_hero_matches(m["account_id"], hero_id, n=args.matches):
+                when = dt.datetime.fromtimestamp(row["start_time"], dt.UTC).strftime("%Y-%m-%d")
+                result = "win " if row["match_result"] == row["player_team"] else "loss"
+                kda = f"{row['player_kills']}/{row['player_deaths']}/{row['player_assists']}"
+                print(f"      {row['match_id']}  {when}  {result}  {kda}")
 
 
 def export_tables(args: argparse.Namespace, config: str | Path | None = None) -> None:

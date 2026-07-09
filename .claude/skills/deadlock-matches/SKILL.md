@@ -24,7 +24,7 @@ uv run deadlock accounts                  # Steam accounts on this PC that have 
                                           # paste-ready [accounts] block for config.toml
 uv run deadlock history [--days N] [--since 2026-07-01]
                                           # match screen numbers + lobby average, most recent day of games by default
-uv run deadlock match [92345678] [--hero Wraith] [--interval 10] [--souls|--damage|--healing|--teams|--abilities]
+uv run deadlock match [12345678] [--hero Wraith] [--interval 10] [--souls|--damage|--healing|--teams|--abilities]
                                           # one player's match split into 5-minute intervals:
                                           # souls (+/min), K/D/A, damage dealt/taken, obj damage,
                                           # healing + prevented healing, troopers, neutrals, denies;
@@ -57,12 +57,24 @@ uv run deadlock item "Escalating Exposure" --hero Mirage [--min-rating all] [--s
                                           # building (no card here, the bare form above is the
                                           # card); meta defaults to Eternus+ lobbies, --since caps
                                           # your games AND the meta to a patch window
-uv run deadlock builds --hero Mirage      # item builds from top mains of a hero
+uv run deadlock builds --hero Mirage      # item builds from top players of a hero
 uv run deadlock compare --hero Mirage     # your stats vs top players, where you fall behind
 uv run deadlock compare --hero Mirage --stat soul_sources
                                           # the same gap split by income source
-uv run deadlock download --hero Mirage       # materialize recent matches from top mains and
-                                          # config-selected players into parquet-players/ (see below)
+uv run deadlock leaderboard --hero Mirage [--players 8] [--matches 5]
+                                          # current top players from the per-hero leaderboard with
+                                          # account_ids (config players too, marked config); --matches lists
+                                          # each one's recent ranked match ids + result, the
+                                          # discovery step before download --account/--match
+uv run deadlock download --hero Mirage [--account 111222333] [--match 12345678]
+                                          # materialize recent matches from top players and
+                                          # config-selected players into parquet-players/ (see below).
+                                          # --account pulls specific players' recent games instead
+                                          # of the leaderboard (needs --hero); --match fetches
+                                          # matches by ID, no --hero (stores all 12 players, so
+                                          # match --hero works on any of them). both comma-separate.
+                                          # then read a top player's game with:
+                                          # deadlock --parquet <parquet-players dir> match <id> --hero Mirage
 uv run deadlock winrate [--days N] [--since 2026-07-01] [--by week] [--hero Mirage] [--min-rating Oracle]
                                           # daily W/L, MVP/Key Player counts, net wins;
                                           # --by week/month rolls days into bigger buckets;
@@ -72,7 +84,7 @@ uv run deadlock winrate [--days N] [--since 2026-07-01] [--by week] [--hero Mira
 uv run deadlock deaths [--hero Mirage] [--days N] [--radius 2000]
                                           # deaths by game time, top killers; with movement
                                           # exported also solo/outnumbered context
-uv run deadlock movement --hero Mirage    # slide/dash/air movement profile vs top mains
+uv run deadlock movement --hero Mirage    # slide/dash/air movement profile vs top players
                                           # (needs movement out of the config exclude list)
 uv run deadlock hero Mirage --souls 25000 # boon stats at a soul breakpoint (health, spirit,
                                           # melee, gun damage, AP), --level N works too,
@@ -226,8 +238,8 @@ Everything in `src/deadlock_matches/`:
 - `damage.py` — per-source damage from the damage matrix
 - `timeline.py` — per-minute cumulative curves, medians, interval rates
 - `api.py` — deadlock-api HTTP client with disk cache (`get_json`), the only network code; its docstring lists every endpoint in use and which function wraps it — keep that list current when adding endpoints
-- `players.py` — other players: leaderboard → top mains of a hero → their builds/timelines, plus the parquet-players materialization (`download_matches` → `write_player_tables`) and `tracked_player_games(names, hero=, since=)` (tracked players' own rows joined to players/matches with local day, names matched case-insensitively — the downloads→players→matches boilerplate for comparing against specific tracked players)
-- `meta.py` — item win-rate/synergy analytics on api data
+- `players.py` — other players: per-hero leaderboard (`hero_leaderboard`) → top players of a hero → their builds/timelines, plus the parquet-players materialization (`download_matches` for tracked players or `matches_by_id` for specific match ids → `write_player_tables`) and `tracked_player_games(names, hero=, since=)` (tracked players' own rows joined to players/matches with local day, names matched case-insensitively — the downloads→players→matches boilerplate for comparing against specific tracked players). `matches_by_id` rows carry null account/hero (no tracked player brought them in)
+- `meta.py` — item win-rate/synergy analytics on API data
 - `heroes.py` / `items.py` — id ↔ name mapping from the assets API
 - `skill_rating.py` — badge level → skill rating label (`label(52)` = "Ritualist 2", tiers from `data/skill_rating.json`, refreshed by `deadlock assets`)
 - `abilities.py` — damage-source class_name → current display name (`label()`; engine names like mirage_tornado never change, display names do), plus ability tuning numbers (`Ability.stat`/`spirit_scale` tier math, `ability_by_name`, `for_hero`, `hero_gun`)

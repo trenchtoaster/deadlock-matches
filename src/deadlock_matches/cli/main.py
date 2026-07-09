@@ -49,6 +49,20 @@ def parse_accounts(v: str, names: dict[str, int] | None = None) -> list[int]:
     return ids
 
 
+def int_list(v: str) -> list[int]:
+    """Parse "id1,id2" or space-separated ids into a list of ints, for match and account IDs."""
+    ids = []
+
+    for token in v.replace(",", " ").split():
+        if not token.isdigit():
+            msg = f"not a numeric id: {token!r}"
+            raise argparse.ArgumentTypeError(msg)
+
+        ids.append(int(token))
+
+    return ids
+
+
 def build_parser(config: str | Path | None = None) -> argparse.ArgumentParser:
     """Build the CLI parser, where --account defaults to the accounts in config.toml."""
     accounts = config_accounts(config)
@@ -120,9 +134,9 @@ def build_parser(config: str | Path | None = None) -> argparse.ArgumentParser:
         "for both your games and the meta stats",
     )
 
-    b = sub.add_parser("builds", help="what top mains of a hero build")
+    b = sub.add_parser("builds", help="what the top players of a hero build")
     b.add_argument("--hero", required=True, help="hero display name, like Mirage")
-    b.add_argument("--players", type=int, default=6, help="top mains to include")
+    b.add_argument("--players", type=int, default=6, help="top players to include")
     b.add_argument("--games", type=int, default=10, help="recent ranked games per player")
     b.add_argument(
         "--min-percent",
@@ -145,7 +159,7 @@ def build_parser(config: str | Path | None = None) -> argparse.ArgumentParser:
         help=f"{', '.join(timeline.STATS)}, "
         "soul_sources (gap table by income source), or any snapshot field (creep_kills, denies, ...)",
     )
-    c.add_argument("--players", type=int, default=6, help="top mains to compare against")
+    c.add_argument("--players", type=int, default=6, help="top players to compare against")
     c.add_argument("--games", type=int, default=10, help="recent ranked games per player")
 
     mt = sub.add_parser(
@@ -156,7 +170,7 @@ def build_parser(config: str | Path | None = None) -> argparse.ArgumentParser:
         nargs="?",
         type=int,
         default=None,
-        help="match id, defaults to your most recent match",
+        help="match ID, defaults to your most recent match",
     )
     mt.add_argument(
         "--account",
@@ -202,10 +216,37 @@ def build_parser(config: str | Path | None = None) -> argparse.ArgumentParser:
     f = sub.add_parser(
         "download", help="retrieve tracked player matches into a separate parquet table"
     )
-    f.add_argument("--hero", required=True, help="hero display name, like Mirage")
-    f.add_argument("--players", type=int, default=6, help="top mains to track")
+    f.add_argument("--hero", default=None, help="hero display name, like Mirage")
+    f.add_argument(
+        "--match",
+        type=int_list,
+        default=None,
+        help="specific match ID(s), comma-separated: stores every player in them, no --hero needed",
+    )
+    f.add_argument(
+        "--account",
+        type=int_list,
+        default=None,
+        help="specific account ID(s) to pull instead of the leaderboard top players, needs --hero",
+    )
+    f.add_argument("--players", type=int, default=6, help="top players to track")
     f.add_argument("--games", type=int, default=5, help="recent ranked games per player")
     f.add_argument("--out", default=str(players.PARQUET_DIR), help="players parquet directory")
+
+    mn = sub.add_parser(
+        "leaderboard", help="the top players of a hero and their recent match IDs"
+    )
+    mn.add_argument("--hero", required=True, help="hero display name, like Mirage")
+    mn.add_argument("--players", type=int, default=8, help="how many top players to list")
+    mn.add_argument(
+        "--matches",
+        nargs="?",
+        const=5,
+        type=int,
+        default=None,
+        metavar="N",
+        help="also list the recent ranked match IDs per player (default 5)",
+    )
 
     de = sub.add_parser("deaths", help="how you die: when, to whom, alone or ganked")
     de.add_argument(
@@ -392,6 +433,8 @@ def main(argv: Sequence[str] | None = None, config: str | Path | None = None) ->
         performance.match_report(args, config)
     elif args.cmd == "download":
         data.download_matches(args, config)
+    elif args.cmd == "leaderboard":
+        data.leaderboard_report(args, config)
     elif args.cmd == "winrate":
         performance.winrate_report(args, config)
     elif args.cmd == "deaths":

@@ -140,6 +140,7 @@ Lobby average: The Hidden King Ascendant 3, The Archmother Ascendant 3
 - `--teams`: both teams per interval, souls and the running lead, then every objective and Rejuvenator event timestamp
 - `--abilities`: ability unlocks and upgrades in the order you spent them, with the level and required souls for that unlock or cumulative AP spend
 - the last hits total comes from the match screen, the per-interval columns split it into troopers and neutrals
+- to read a top player's game, download it first (`deadlock download --match <id>` or `--account <id>`) and point match at those tables: `deadlock --parquet ~/.local/share/deadlock-matches/parquet-players match <id> --hero Mirage`
 
 ```
 Match 12345678: Mirage, win, 2026-07-07 11:49, 32:48
@@ -430,9 +431,33 @@ Passive  (cooldown 15s)
 
 ## Top players and public stats
 
-Everything in this section uses [deadlock-api](https://api.deadlock-api.com). Top players come from the regional leaderboards, so Rank in these reports is their overall ladder rank.
+Everything in this section uses [deadlock-api](https://api.deadlock-api.com). Top players come from the per-hero leaderboards, so Rank in these reports is their rank on that hero across regions. The overall ranked ladder is not used here since it says nothing about a specific hero.
 
-`--players` and `--games` set how many top mains and how many recent ranked games per player are pulled (6 mains with 10 games each by default currently).
+`--players` and `--games` set how many top players and how many recent ranked games per player are pulled (6 players with 10 games each by default currently).
+
+### Following specific players
+
+The commands below default to the current leaderboard top players, but the leaderboard shifts and a player you care about can drop off it. To follow specific people, go from a name to an account ID to a watchlist:
+
+1. **Find the top players for your hero.** `deadlock leaderboard --hero Mirage` lists the current top players with their account IDs. Add `--matches` to also print each one's recent match ids.
+
+   ```
+   Mirage leaderboard:
+     someplayer           111222333    rank 1    Europe
+         12345678  2026-07-05  win   14/2/23
+     anothermain          444555666    rank 24   SAmerica
+   ```
+
+2. **Get an account ID.** For someone off the leaderboard, the ID is exact in any match they played (`deadlock match <id> --hero <theirs>` prints every player), or convert their Steam profile URL from steam64 to steam32. Searching by name is unreliable, since the only name search is over current Steam persona names, which change often.
+
+3. **Optionally pin them to a watchlist.** Add the ID under `[players.<Hero>]` in `config.toml` so `deadlock download` always pulls them, even when they are off the ladder. The name is just a label for reports.
+
+   ```toml
+   [players.Mirage]
+   someplayer = 111222333
+   ```
+
+4. **Download and analyze.** `deadlock download --hero Mirage` pulls the top players plus everyone on the watchlist. To skip the watchlist and grab someone one-off, use `--account <id>`, or fetch a single game with `--match <id>`. Then any command works on their games by pointing `--parquet` at the downloaded tables, for example `deadlock --parquet ~/.local/share/deadlock-matches/parquet-players match <id> --hero Mirage`.
 
 ### `uv run deadlock meta --hero Mirage --by rating`
 
@@ -466,12 +491,12 @@ Mirage public data (Oracle+ lobbies, deadlock-api.com)
 - an expensive late item with a big win/loss gap usually just means the winner got rich enough to buy it
 
 ```
-Top 6 Mirage mains:
+Top 6 Mirage players:
 
   Player              Rank  Region    Record
-  apacycle               1  Europe    8W 2L
-  Sephuku               14  SAmerica  6W 4L
-  OniBy                 45  Europe    7W 3L
+  someplayer             1  Europe    8W 2L
+  anothermain           14  SAmerica  6W 4L
+  thirdmain             45  Europe    7W 3L
 
 Shared core across 35 winning builds:
 
@@ -491,7 +516,7 @@ Shared core across 35 winning builds:
 - `--stat combat`, `objectives`, `catch_up`, `other` (Trophy Collector and similar item income), `souls` (net worth), `soul_sources` (every income source as one gap table), or any raw snapshot field: `creep_kills`, `denies`, `player_damage`
 
 ```
-You (111222333, 50 games) vs top Mirage mains: farm
+You (111222333, 50 games) vs top Mirage players: farm
 
   Min       You (n)        Top (n)       Gap   You/min  Top/min
     3     1,138 (50)     1,274 (60)      -137       379       425
@@ -503,9 +528,26 @@ You (111222333, 50 games) vs top Mirage mains: farm
    25    17,920 (50)    19,340 (55)    -1,420       986       931
 ```
 
+### `uv run deadlock leaderboard --hero Mirage`
+
+- the current top players of a hero from the per-hero leaderboard, with their account IDs
+- `--matches` (optionally `--matches 10`) lists each one's recent ranked match ids, win or loss, so you can pick a game to pull
+- config `[players.<Hero>]` entries show up too, marked `config`
+
+```
+Mirage leaderboard:
+  someplayer           111222333    rank 1    Europe
+      12345678  2026-07-05  win   14/2/23
+      12345670  2026-07-05  win   19/5/20
+  anothermain          444555666    rank 24   SAmerica
+      12340013  2026-07-03  win   13/7/17
+```
+
 ### `uv run deadlock download --hero Mirage`
 
-- downloads recent matches from top mains and your selected `[players]` in config into their own parquet tables (see below)
+- downloads recent matches from top players and your selected `[players]` in config into their own parquet tables (see below)
+- `--account 111222333` pulls a specific player's recent games instead of the leaderboard top players (still needs `--hero`); comma-separate for several
+- `--match 12345678` fetches one match by ID, no `--hero` needed: it stores every player in the match, so `match --hero <anyone>` then works on it; comma-separate for several
 - re-running adds new matches without downloading old ones again
 - `item` and `movement` use these downloaded games for their top player numbers
 
@@ -551,10 +593,10 @@ Bought together (win rate of games with both, vs the item alone):
 
 - movement profile on one hero: how much you slide, dash, and stay airborne, how far you move, and how often you stand still (small radius)
 - needs the `movement` table, so delete it from `exclude` in `config.toml` first
-- the Top column appears when `deadlock download` ran with movement enabled and is from the top mains on the leaderboard
+- the Top column appears when `deadlock download` ran with movement enabled and is from the top players on the leaderboard
 
 ```
-Mirage movement: you (50 games) vs top mains (114 games)
+Mirage movement: you (50 games) vs top players (114 games)
 
   Metric                        You      Top      Gap
   slide %                       3.9      8.3     +4.4
@@ -604,7 +646,7 @@ The tables are stored in `~/.local/share/deadlock-matches/parquet/` (`%LOCALAPPD
 
 The tables do not cover everything Valve stores yet. The full structure is `CMsgMatchMetaDataContents` in [`protos/citadel_gcmessages_common.proto`](protos/citadel_gcmessages_common.proto) and can be read as plain text. This is a work in progress, and new columns and tables get added as more of that data turns out to be interesting to query.
 
-`deadlock download --hero` builds the same tables for matches from *other* players in the `parquet-players/` directory. This includes top mains from the leaderboard and anyone selected under `players` in config. The layout is identical, so every query works on their games. An extra `downloads` table records which player each match came from, their rank at the time, and when it was retrieved. Re-running adds new matches without downloading old ones again.
+`deadlock download --hero` builds the same tables for matches from *other* players in the `parquet-players/` directory. This includes top players from the leaderboard, anyone selected under `players` in config, and any account or match id you pass to `--account` / `--match`. The layout is identical, so every query works on their games. An extra `downloads` table records which player each match came from, their rank at the time, and when it was retrieved; a match pulled by id has no player, so those columns are null. Re-running adds new matches without downloading old ones again.
 
 ## Writing your own queries
 
@@ -640,7 +682,7 @@ uv run --with marimo --with altair marimo edit notebooks/getting_started.py
 
 ### Comparing against tracked players
 
-Run `deadlock download --hero Mirage` first. It writes top Mirage mains and any players from `[players.Mirage]` in `config.toml` to `parquet-players/`. The downloaded tables have the same layout as your own tables, and `players.tracked_player_games()` finds the tracked player's own row in each downloaded match.
+Run `deadlock download --hero Mirage` first. It writes the top Mirage players and anyone from `[players.Mirage]` in `config.toml` to `parquet-players/`. The downloaded tables have the same layout as your own tables, and `players.tracked_player_games()` finds the tracked player's own row in each downloaded match.
 
 This example gets the two groups you need for a comparison, your Mirage games and the tracked players' Mirage games. From there, `source_intervals()` gives the same source breakdown as `deadlock match --damage`, but across every game in the frame.
 

@@ -125,6 +125,43 @@ def _history_row(match_id, hero_id=52, mode=1, start=1):
     return {"match_id": match_id, "hero_id": hero_id, "match_mode": mode, "start_time": start}
 
 
+def test_top_players_pools_per_hero_boards_and_drops_ambiguous(monkeypatch):
+    boards = {
+        "Europe": [
+            {"account_name": "eu1", "rank": 1, "possible_account_ids": [101]},
+            {"account_name": "smurf", "rank": 2, "possible_account_ids": [201, 202]},
+        ],
+        "NAmerica": [{"account_name": "na1", "rank": 1, "possible_account_ids": [301]}],
+    }
+    calls = []
+
+    def fake_board(region, hero_id):
+        calls.append((region, hero_id))
+
+        return boards.get(region, [])
+
+    monkeypatch.setattr(players, "hero_leaderboard", fake_board)
+
+    got = players.top_players(66, regions=["Europe", "NAmerica"], limit=5)
+
+    assert [(g["name"], g["rank"], g["region"], g["account_id"]) for g in got] == [
+        ("eu1", 1, "Europe", 101),
+        ("na1", 1, "NAmerica", 301),
+    ]
+    assert calls == [("Europe", 66), ("NAmerica", 66)]
+
+
+def test_top_players_respects_limit(monkeypatch):
+    board = [
+        {"account_name": f"p{r}", "rank": r, "possible_account_ids": [r]} for r in range(1, 6)
+    ]
+    monkeypatch.setattr(players, "hero_leaderboard", lambda region, hero_id: board)
+
+    got = players.top_players(66, regions=["Europe"], limit=3)
+
+    assert [g["rank"] for g in got] == [1, 2, 3]
+
+
 def test_recent_hero_matches_filters_and_sorts(monkeypatch):
     rows = [
         _history_row(1, start=5),
@@ -178,6 +215,32 @@ def test_download_matches_skips_failed_downloads(monkeypatch):
     monkeypatch.setattr(players, "match_metadata", boom)
 
     assert players.download_matches([{"account_id": 11, "name": "x"}], 52) == []
+
+
+def test_matches_by_id(tmp_path, monkeypatch):
+    monkeypatch.setattr(api, "DATA_DIR", tmp_path)
+
+    def fake_metadata(match_id):
+        api.data_path(f"v1/matches/{match_id}/metadata").write_text("{}", encoding="utf-8")
+        return _match_json(match_id)
+
+    monkeypatch.setattr(players, "match_metadata", fake_metadata)
+
+    rows = players.matches_by_id([900, 901])
+
+    assert [r["match_id"] for r in rows] == [900, 901]
+    assert all(r["account_id"] is None and r["hero_id"] is None for r in rows)
+    assert all(r["player"] is None and r["rank"] is None for r in rows)
+    assert all(r["downloaded_at"].tzinfo is not None for r in rows)
+
+
+def test_matches_by_id_skips_unreachable(monkeypatch):
+    def boom(match_id):
+        raise OSError("api down")
+
+    monkeypatch.setattr(players, "match_metadata", boom)
+
+    assert players.matches_by_id([900, 901]) == []
 
 
 def test_write_player_tables(tmp_path, monkeypatch):

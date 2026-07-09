@@ -8,6 +8,7 @@ else is a real cache under the cache directory: entries expire by file age
 Endpoints in use, one named wrapper each:
 
 - v1/leaderboard/{region} -> players.leaderboard
+- v1/leaderboard/{region}/{hero_id} -> players.hero_leaderboard
 - v1/players/{account_id}/match-history -> players.match_history
 - v1/matches/{match_id}/metadata -> players.match_metadata (backfill + ground truth for extract.py)
 - v1/analytics/item-stats?hero_id= -> meta.get_item_stats

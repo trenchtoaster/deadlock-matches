@@ -158,13 +158,27 @@ def test_parse_accounts_unknown_name_without_config():
         parse_accounts("main")
 
 
-def test_download_command_merges_config_players_after_top_mains(tmp_path, monkeypatch, capsys):
+def test_int_list_parses_commas_and_spaces():
+    from deadlock_matches.cli.main import int_list
+
+    assert int_list("900,901") == [900, 901]
+    assert int_list("900 901") == [900, 901]
+
+
+def test_int_list_rejects_non_numeric():
+    from deadlock_matches.cli.main import int_list
+
+    with pytest.raises(argparse.ArgumentTypeError, match="not a numeric id"):
+        int_list("abc")
+
+
+def test_download_command_merges_config_players_after_top_players(tmp_path, monkeypatch, capsys):
     cfg = tmp_path / "config.toml"
     cfg.write_text('[players.Mirage]\nsomeplayer = 22\n"already-top" = 11\n')
 
     monkeypatch.setattr(
         players,
-        "top_mains",
+        "top_players",
         lambda hero_id, limit: [{"account_id": 11, "name": "lead", "rank": 1, "region": "Asia"}],
     )
 
@@ -198,7 +212,7 @@ def test_download_command_merges_config_players_after_top_mains(tmp_path, monkey
 def test_builds_command_prints_shared_core(tmp_path, monkeypatch, capsys):
     monkeypatch.setattr(
         players,
-        "top_mains",
+        "top_players",
         lambda hero_id, limit: [{"account_id": 11, "name": "lead", "rank": 1, "region": "Asia"}],
     )
 
@@ -210,7 +224,7 @@ def test_builds_command_prints_shared_core(tmp_path, monkeypatch, capsys):
 
     out = capsys.readouterr().out
 
-    assert "Top 1 Mirage mains:" in out
+    assert "Top 1 Mirage players:" in out
     assert "lead" in out
     assert "Healbane" in out
     assert "Win %" in out
@@ -223,6 +237,100 @@ def test_download_command_unknown_hero(tmp_path, capsys):
     main(["download", "--hero", "Nobody", "--out", str(tmp_path)], config=tmp_path / "none.json")
 
     assert "Unknown hero" in capsys.readouterr().out
+
+
+def test_download_command_by_match_id(tmp_path, monkeypatch, capsys):
+    seen = {}
+
+    def fake_by_id(match_ids):
+        seen["ids"] = list(match_ids)
+
+        return [{"match_id": m} for m in match_ids]
+
+    monkeypatch.setattr(players, "matches_by_id", fake_by_id)
+    monkeypatch.setattr(
+        players, "write_player_tables", lambda rows, out_dir, exclude: {"matches": len(rows)}
+    )
+
+    main(["download", "--match", "900,901", "--out", str(tmp_path)], config=tmp_path / "none.json")
+
+    assert seen["ids"] == [900, 901]
+
+    out = capsys.readouterr().out
+
+    assert "Downloading 2 match ID(s), got 2" in out
+
+
+def test_download_command_by_account_skips_leaderboard(tmp_path, monkeypatch, capsys):
+    def boom(*a, **k):
+        raise AssertionError("top_players should not be called with --account")
+
+    monkeypatch.setattr(players, "top_players", boom)
+
+    seen = {}
+
+    def fake_download(tracked, hero_id, n):
+        seen["tracked"] = tracked
+
+        return []
+
+    monkeypatch.setattr(players, "download_matches", fake_download)
+    monkeypatch.setattr(
+        players, "write_player_tables", lambda rows, out_dir, exclude: {"matches": 0}
+    )
+
+    main(
+        ["download", "--hero", "Mirage", "--account", "77,88", "--out", str(tmp_path)],
+        config=tmp_path / "none.json",
+    )
+
+    assert [t["account_id"] for t in seen["tracked"]] == [77, 88]
+
+
+def test_download_command_needs_hero_or_match(tmp_path, capsys):
+    main(["download", "--account", "77", "--out", str(tmp_path)], config=tmp_path / "none.json")
+
+    assert "needs --hero" in capsys.readouterr().out
+
+
+def test_leaderboard_command_lists_players_and_match_ids(tmp_path, monkeypatch, capsys):
+    cfg = tmp_path / "config.toml"
+    cfg.write_text("[players.Mirage]\nfriend = 22\n")
+
+    monkeypatch.setattr(
+        players,
+        "top_players",
+        lambda hero_id, limit: [{"account_id": 11, "name": "lead", "rank": 1, "region": "Asia"}],
+    )
+    monkeypatch.setattr(
+        players,
+        "recent_hero_matches",
+        lambda account_id, hero_id, n: [
+            {
+                "match_id": 5000 + account_id,
+                "start_time": 1783000000,
+                "match_result": 0,
+                "player_team": 0,
+                "player_kills": 10,
+                "player_deaths": 2,
+                "player_assists": 8,
+            }
+        ],
+    )
+
+    main(["leaderboard", "--hero", "Mirage", "--matches", "1"], config=cfg)
+
+    out = capsys.readouterr().out
+
+    assert "lead" in out
+    assert "11" in out
+    assert "rank 1" in out
+    assert "friend" in out
+    assert "config" in out
+    assert "5011" in out
+    assert "5022" in out
+    assert "win" in out
+    assert "10/2/8" in out
 
 
 def test_parser_rejects_account_list_form(tmp_path):

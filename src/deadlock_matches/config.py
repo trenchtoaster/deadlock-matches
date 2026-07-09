@@ -111,7 +111,10 @@ timezone = "{_detect_timezone()}"
 # main = 111222333
 # "old alt" = 123456789
 
-# players to compare against per hero, on top of the leaderboard mains.
+# a watchlist of specific players to always track per hero: friends, rivals, one-tricks.
+# `deadlock download` pulls these on top of the live leaderboard top players, so pin anyone you
+# want followed even when they drop off the ladder. `deadlock leaderboard --hero X` lists the
+# current top players with their account ids if you are looking for someone to add.
 # the player name is just a label for the reports, paste their real name or make one up.
 # quotes around hero and player names are always safe, and required when a name has spaces.
 # [players."Mirage"]
