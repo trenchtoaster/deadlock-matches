@@ -663,6 +663,8 @@ Questions like these are a few lines of polars each:
 - `my_games()` is one row per match you played, with the local day for grouping by session
 - `final_stats()` is the final stats of every player in every match, with accuracy and headshot rate worked out
 - `hero_damage()` is damage against heroes only, safe to sum by source
+- `damage_by_source("Mirage")` is whole-game damage totals per source across your games of a hero, the share each gun, ability, and item did, like `deadlock match --damage` summed over every game instead of split into intervals
+- `souls_by_source("Mirage")` is the same for souls, where your income came from across your games of a hero (troopers, jungle, bosses, ...), the aggregate of `deadlock match --souls`
 - `source_intervals(games, stat="damage")` is similar to `deadlock match --damage`, but tracks data from multiple matches at once in 5-minute intervals
 - `team_damage_ranks()` ranks every player by hero damage within their team, with `top_team_damage` for "did they top the chart?"
 - `ability_upgrades()` is your ability unlock and upgrade order, with the level and required souls for each unlock or cumulative AP spend

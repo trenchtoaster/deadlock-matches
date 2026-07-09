@@ -617,6 +617,56 @@ def test_final_stats_adds_local_day(pq):
     assert df["day"].to_list() == [LOCAL_DAY, LOCAL_DAY]
 
 
+def test_damage_by_source_totals_share_and_rate(pq):
+    df = queries.damage_by_source("Mirage", accounts=[42], parquet_dir=pq)
+
+    assert df.columns[0] == "games"
+    assert df["total"].to_list() == [150, 90]
+    assert df["games"].to_list() == [1, 1]
+    assert df["per_min"].to_list() == [5.0, 3.0]
+    assert df["percent"].sum() == pytest.approx(100.0)
+
+
+def test_damage_by_source_matches_filter(pq):
+    kept = queries.damage_by_source("Mirage", accounts=[42], matches=[100], parquet_dir=pq)
+
+    assert kept["total"].to_list() == [150, 90]
+
+    with pytest.raises(ValueError):
+        queries.damage_by_source("Mirage", accounts=[42], matches=[999], parquet_dir=pq)
+
+
+def test_damage_by_source_raises_without_games(pq):
+    with pytest.raises(ValueError):
+        queries.damage_by_source("Haze", accounts=[42], parquet_dir=pq)
+
+    with pytest.raises(ValueError):
+        queries.damage_by_source("Mirage", accounts=[], parquet_dir=pq)
+
+
+def test_souls_by_source_sums_orbs(movement_pq):
+    df = queries.souls_by_source("Mirage", accounts=[42], parquet_dir=movement_pq)
+
+    assert df.columns[0] == "games"
+    assert df["souls"].sum() == 700
+    assert df["games"].to_list() == [1]
+    assert df["percent"].to_list() == [100.0]
+
+
+def test_souls_by_source_matches_filter(movement_pq):
+    kept = queries.souls_by_source("Mirage", accounts=[42], matches=[100], parquet_dir=movement_pq)
+
+    assert kept["souls"].sum() == 700
+
+    with pytest.raises(ValueError):
+        queries.souls_by_source("Mirage", accounts=[42], matches=[999], parquet_dir=movement_pq)
+
+
+def test_souls_by_source_raises_without_souls(pq):
+    with pytest.raises(ValueError):
+        queries.souls_by_source("Mirage", accounts=[42], parquet_dir=pq)
+
+
 def test_final_stats_null_rates_when_nothing_fired(pq):
     df = queries.final_stats(pq, tz="America/Chicago").collect()
     other = df.filter(pl.col("account_id") == 43)

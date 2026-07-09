@@ -619,6 +619,116 @@ def hero_damage(
     return _local_day(detail, parquet_dir, tz)
 
 
+def damage_by_source(
+    hero: str,
+    accounts: Sequence[int] | None = None,
+    matches: Sequence[int] | None = None,
+    parquet_dir: str | Path | None = None,
+) -> pl.DataFrame:
+    """Total damage to heroes by source across your games of a hero.
+
+    - one row per source (gun, ability, item proc), summed over every game
+    - per_min divides by your minutes on the hero, percent is the share of that total
+    - matches limits to specific match ids, like scoping to one game
+    """
+    accounts = config.config_accounts() if accounts is None else list(accounts)
+
+    if not accounts:
+        msg = "no accounts: pass accounts= or fill in accounts in config.toml"
+        raise ValueError(msg)
+
+    predicate = (pl.col("hero") == hero) & pl.col("dealer_account_id").is_in(accounts)
+
+    if matches is not None:
+        predicate = predicate & pl.col("match_id").is_in(list(matches))
+
+    rows = hero_damage(parquet_dir=parquet_dir).filter(predicate).collect()
+
+    if rows.is_empty():
+        msg = f"no damage rows for {hero} on accounts {accounts}"
+        raise ValueError(msg)
+
+    minutes = (
+        scan("matches", parquet_dir)
+        .filter(pl.col("match_id").is_in(rows["match_id"].unique().to_list()))
+        .collect()["duration_s"]
+        .sum()
+        / 60
+    )
+    grand = rows["damage"].sum()
+
+    return (
+        rows.group_by("source_name", "delivery")
+        .agg(
+            pl.col("damage").sum().alias("total"),
+            pl.col("match_id").n_unique().alias("games"),
+        )
+        .with_columns(
+            (pl.col("total") / minutes).round(1).alias("per_min"),
+            (pl.col("total") / grand * 100).round(1).alias("percent"),
+        )
+        .select("games", "source_name", "delivery", "total", "per_min", "percent")
+        .sort("total", descending=True)
+    )
+
+
+def souls_by_source(
+    hero: str,
+    accounts: Sequence[int] | None = None,
+    matches: Sequence[int] | None = None,
+    parquet_dir: str | Path | None = None,
+) -> pl.DataFrame:
+    """Total souls by income source across your games of a hero.
+
+    - souls sums the guaranteed and orb portions, the in-game figure
+    - orb_share is the deniable orb portion you secured, percent is share of the total
+    - matches limits to specific match ids, like scoping to one game
+    """
+    accounts = config.config_accounts() if accounts is None else list(accounts)
+
+    if not accounts:
+        msg = "no accounts: pass accounts= or fill in accounts in config.toml"
+        raise ValueError(msg)
+
+    hero_games = (
+        scan("players", parquet_dir)
+        .filter(pl.col("hero") == hero, pl.col("account_id").is_in(accounts))
+        .select("match_id", "account_id")
+    )
+
+    if matches is not None:
+        hero_games = hero_games.filter(pl.col("match_id").is_in(list(matches)))
+
+    finals = (
+        scan("soul_sources", parquet_dir)
+        .join(hero_games, on=["match_id", "account_id"])
+        .group_by("match_id", "account_id", "source_name")
+        .agg(pl.col("souls").max(), pl.col("souls_orbs").max())
+        .collect()
+    )
+
+    if finals.is_empty():
+        msg = f"no soul_sources rows for {hero} on accounts {accounts}"
+        raise ValueError(msg)
+
+    total = int((finals["souls"] + finals["souls_orbs"]).sum())
+
+    return (
+        finals.group_by("source_name")
+        .agg(
+            (pl.col("souls") + pl.col("souls_orbs")).sum().alias("souls"),
+            pl.col("souls_orbs").sum().alias("secured_orbs"),
+            pl.len().alias("games"),
+        )
+        .with_columns(
+            (pl.col("souls") / total * 100).round(1).alias("percent"),
+            (pl.col("secured_orbs") / pl.col("souls") * 100).round(1).alias("orb_share"),
+        )
+        .select("games", "source_name", "souls", "secured_orbs", "percent", "orb_share")
+        .sort("souls", descending=True)
+    )
+
+
 def final_stats(parquet_dir: str | Path | None = None, tz: str | None = None) -> pl.LazyFrame:
     """Final snapshot values for each player in each match, with hero/won, local day, and gun rates.
 
