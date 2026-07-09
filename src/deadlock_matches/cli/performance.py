@@ -7,8 +7,8 @@ from typing import TYPE_CHECKING, Any
 
 import polars as pl
 
-from deadlock_matches import heroes, meta, players, queries, schemas, timeline
-from deadlock_matches.cli.data import TEAMS
+from deadlock_matches import heroes, meta, players, queries, schemas, skill_rating, timeline
+from deadlock_matches.cli.data import MVP_LABELS, TEAMS, final_stats
 from deadlock_matches.config import config_timezone, format_accounts
 
 if TYPE_CHECKING:
@@ -227,6 +227,48 @@ def _match_player(match_id: int, args: argparse.Namespace, tz: str) -> pl.DataFr
     )
 
 
+def _final_scoreboard(row: dict[str, Any], args: argparse.Namespace) -> None:
+    """Print the 12-player post-game scoreboard with the resolved player starred."""
+    badges = [
+        f"{TEAMS[team]} {skill_rating.label(row[f'average_badge_team{team}'])}"
+        for team in (0, 1)
+        if row.get(f"average_badge_team{team}") is not None
+    ]
+
+    if badges:
+        print("Lobby average: " + ", ".join(badges))
+
+    match_ids = pl.LazyFrame({"match_id": [row["match_id"]]}, schema={"match_id": pl.Int64})
+    board = (
+        queries.scan("players", args.parquet)
+        .filter(pl.col("match_id") == row["match_id"])
+        .join(final_stats(match_ids, args.parquet), on=["match_id", "account_id"], how="left")
+        .with_columns(
+            pl.col("player_damage", "boss_damage", "player_healing", "heal_prevented").fill_null(0)
+        )
+        .sort(["team", "net_worth"], descending=[False, True])
+        .collect()
+    )
+
+    print()
+    print(
+        f"  {'Team':<16} {'Hero':<14} {'':<8} {'K/D/A':<8} {'Souls':>9} "
+        f"{'Damage':>8} {'Obj damage':>10} {'Healing':>8} {'Prevented':>9} "
+        f"{'Last hits':>9} {'Denies':>6}"
+    )
+
+    for p in board.iter_rows(named=True):
+        kda = f"{p['kills']}/{p['deaths']}/{p['assists']}"
+        hero = f"{p['hero']} *" if p["account_id"] == row["account_id"] else p["hero"]
+        print(
+            f"  {TEAMS.get(p['team'], p['team']):<16} {hero:<14} "
+            f"{MVP_LABELS.get(p['mvp_rank'], ''):<8} {kda:<8} {p['net_worth']:>9,} "
+            f"{p['player_damage']:>8,} {p['boss_damage']:>10,} {p['player_healing']:>8,} "
+            f"{p['heal_prevented']:>9,} {p['last_hits']:>9,} {p['denies']:>6}"
+        )
+    print()
+
+
 def match_report(args: argparse.Namespace, config: str | Path | None = None) -> None:
     """Break the match for one player into intervals of souls, damage, and last hits."""
     if args.interval <= 0:
@@ -276,7 +318,6 @@ def match_report(args: argparse.Namespace, config: str | Path | None = None) -> 
     when = row["start_local"].strftime("%Y-%m-%d %H:%M")
     result = "win" if row["won"] else "loss"
     minutes, seconds = divmod(row["duration_s"], 60)
-    kda = f"{row['kills']}/{row['deaths']}/{row['assists']}"
 
     print(f"Match {row['match_id']}: {row['hero']}, {result}, {when}, {minutes}:{seconds:02d}")
 
@@ -296,30 +337,34 @@ def match_report(args: argparse.Namespace, config: str | Path | None = None) -> 
         damage_source_table(row, args)
         return
 
+    _final_scoreboard(row, args)
+
     df = queries.match_intervals(
         row["match_id"], row["account_id"], args.interval * 60, args.parquet
     )
 
     print(
-        f"Final: {kda}, {row['net_worth']:,} souls, {int(df['damage'].sum()):,} damage, "
-        f"{int(df['damage_taken'].sum()):,} taken, {int(df['healing'].sum()):,} healing, "
-        f"{int(df['heal_prevented'].sum()):,} prevented, {row['last_hits']} last hits, "
-        f"{row['denies']} denies"
+        f"  {'Time':<9}{'Souls':>8}{'/min':>7}{'K/D/A':>8}{'Damage':>9}{'Taken':>8}"
+        f"{'Obj damage':>11}{'Healing':>9}{'Prevented':>11}{'Last hits':>10}"
+        f"{'Troopers':>10}{'Neutrals':>9}{'Denies':>8}"
     )
 
-    print(
-        f"\n  {'Time':<9}{'Souls':>8}{'/min':>7}{'K/D/A':>8}{'Damage':>9}{'Taken':>8}"
-        f"{'Obj dmg':>9}{'Healing':>9}{'Prevented':>11}{'Troopers':>10}{'Neutrals':>9}{'Denies':>8}"
-    )
+    def table_line(label: str, r: dict[str, Any]) -> str:
+        interval_kda = f"{r['kills']}/{r['deaths']}/{r['assists']}"
+
+        return (
+            f"  {label:<9}{r['souls']:>8,}{r['souls_min']:>7,.0f}{interval_kda:>8}"
+            f"{r['damage']:>9,}{r['damage_taken']:>8,}{r['obj_damage']:>11,}"
+            f"{r['healing']:>9,}{r['heal_prevented']:>11,}"
+            f"{r['creeps'] + r['neutrals']:>10}{r['creeps']:>10}{r['neutrals']:>9}{r['denies']:>8}"
+        )
 
     for r in df.iter_rows(named=True):
-        interval_kda = f"{r['kills']}/{r['deaths']}/{r['assists']}"
-        print(
-            f"  {_span(r):<9}{r['souls']:>8,}{r['souls_min']:>7,.0f}{interval_kda:>8}"
-            f"{r['damage']:>9,}{r['damage_taken']:>8,}{r['obj_damage']:>9,}"
-            f"{r['healing']:>9,}{r['heal_prevented']:>11,}"
-            f"{r['creeps']:>10}{r['neutrals']:>9}{r['denies']:>8}"
-        )
+        print(table_line(_span(r), r))
+
+    totals = df.sum().row(0, named=True)
+    totals["souls_min"] = totals["souls"] / (row["duration_s"] / 60)
+    print(table_line("Total", totals))
 
 
 def _objective_events(row: dict[str, Any], args: argparse.Namespace) -> list[tuple[int, str]]:

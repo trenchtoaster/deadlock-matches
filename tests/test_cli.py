@@ -533,10 +533,10 @@ def test_history_since_filters_matches(capsys, tmp_path):
 
     run_main(tmp_path, "history", "--since", cutoff.isoformat())
 
-    out = capsys.readouterr().out
+    lines = [line.rstrip() for line in capsys.readouterr().out.splitlines()]
 
-    assert "Match 101" in out
-    assert "Match 100" not in out
+    assert any(line.endswith("101") for line in lines)
+    assert not any(line.endswith("100") for line in lines)
 
 
 def test_history_account_filter(capsys, tmp_path):
@@ -546,14 +546,16 @@ def test_history_account_filter(capsys, tmp_path):
 
     run_main(tmp_path, "history", "--account", "42")
 
-    assert "Match 100" in capsys.readouterr().out
+    lines = [line.rstrip() for line in capsys.readouterr().out.splitlines()]
+
+    assert any(line.endswith("100") for line in lines)
 
     run_main(tmp_path, "history", "--account", "99")
 
     assert "No match metadata found" in capsys.readouterr().out
 
 
-def test_history_marks_your_rows_and_hides_ids(capsys, tmp_path):
+def test_history_lists_one_line_per_game(capsys, tmp_path):
     cache = tmp_path / "cache"
     cache.mkdir()
     write_cache_entry(cache, match_id=100, stats=[(300, 3000), (600, 5000)])
@@ -567,10 +569,41 @@ def test_history_marks_your_rows_and_hides_ids(capsys, tmp_path):
 
     out = capsys.readouterr().out
 
-    assert "You (marked * below): main (42)" in out
-    assert "Account" not in out
-    assert re.search(r"Mirage\s+\*\s+5/2/8", out)
+    assert re.search(
+        r"Account\s+Hero\s+Result\s+K/D/A\s+Souls\s+Damage\s+Timestamp\s+Match ID", out
+    )
+    assert re.search(r"main\s+Mirage\s+win\s+5/2/8\s+5,000\s+\S+\s+\S+ \S+\s+100", out)
+    assert "42" not in out
     assert "77" not in out
+
+
+def test_history_without_account_prints_hint(capsys, tmp_path):
+    run_main(tmp_path, "history", accounts=None)
+
+    assert "--account" in capsys.readouterr().out
+
+
+def test_history_defaults_to_last_ten_games(capsys, tmp_path):
+    cache = tmp_path / "cache"
+    cache.mkdir()
+
+    for n in range(12):
+        write_cache_entry(cache, match_id=100 + n, start_time=1783000000 + n * 3600)
+
+    run_main(tmp_path, "history")
+
+    lines = [line.rstrip() for line in capsys.readouterr().out.splitlines()]
+    listed = [line for line in lines if re.search(r"\d{3}$", line)]
+
+    assert len(listed) == 10
+    assert listed[0].endswith("102")
+    assert listed[-1].endswith("111")
+
+    run_main(tmp_path, "history", "--days", "1")
+
+    lines = [line.rstrip() for line in capsys.readouterr().out.splitlines()]
+
+    assert sum(1 for line in lines if re.search(r"\d{3}$", line)) == 12
 
 
 def test_match_prints_interval_table(capsys, tmp_path):
@@ -583,10 +616,14 @@ def test_match_prints_interval_table(capsys, tmp_path):
     out = capsys.readouterr().out
 
     assert "Match 100: Mirage, win," in out
-    assert "Final: 5/2/8, 5,000 souls" in out
-    assert "150 last hits, 12 denies" in out
+    assert re.search(r"Team\s+Hero\s+K/D/A\s+Souls\s+Damage\s+Obj damage", out)
+    assert re.search(r"The Archmother\s+Mirage \*\s+5/2/8\s+5,000", out)
+    assert re.search(r"150\s+12", out)
     assert re.search(r"0-5m\s+3,000\s+600", out)
     assert re.search(r"5-10m\s+2,000\s+400", out)
+    assert re.search(r"Total\s+5,000\s+167", out)
+    assert "Final:" not in out
+    assert "Obj dmg" not in out
 
 
 def test_match_defaults_to_most_recent(capsys, tmp_path):
@@ -782,7 +819,8 @@ def test_match_hero_flag_picks_another_player(capsys, tmp_path):
     out = capsys.readouterr().out
 
     assert "Match 100: Infernus, loss," in out
-    assert "2,500 souls" in out
+    assert re.search(r"Infernus \*\s+0/0/0\s+2,500", out)
+    assert re.search(r"Total\s+2,500", out)
     assert re.search(r"0-5m\s+1,500\s+300", out)
 
 
@@ -1192,8 +1230,8 @@ def test_new_matches_trigger_parquet_rebuild(tmp_path, capsys):
 
     out = capsys.readouterr().out
 
-    assert "+2 new" in out
-    assert "Added 2 new matches" in out
+    assert "Added" not in out
+    assert "Archive" not in out
     assert (pq / "matches").is_dir()
     assert (pq / "damage").is_dir()
     assert next((pq / "matches").glob("*.parquet"), None) is not None
@@ -1212,14 +1250,15 @@ def test_no_new_matches_skips_rebuild(tmp_path, capsys):
         ["--cache", str(cache), "--archive", str(arc), "--parquet", str(pq), "history"], config=cfg
     )
     capsys.readouterr()
+
+    written = sorted(p.stat().st_mtime_ns for p in (pq / "matches").rglob("*.parquet"))
+
     main(
         ["--cache", str(cache), "--archive", str(arc), "--parquet", str(pq), "history"], config=cfg
     )
 
-    out = capsys.readouterr().out
-
-    assert "no new" in out
-    assert "parquet files" not in out
+    assert "100" in capsys.readouterr().out
+    assert sorted(p.stat().st_mtime_ns for p in (pq / "matches").rglob("*.parquet")) == written
 
 
 def test_hero_command_prints_breakpoint(capsys, tmp_path):

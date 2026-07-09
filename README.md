@@ -33,7 +33,8 @@ The complex protobuf data is parsed to simple parquet tables on your computer. T
   1. hit Escape
   2. click Account in the top right corner
   3. click on the games in your match history
-- run `uv run deadlock history` to process recent matches
+- run `uv run deadlock sync` to pull them in, then `uv run deadlock history` to see them
+- `uv run deadlock sync --source api` skips the clicking and downloads your matches from [deadlock-api.com](https://deadlock-api.com) instead, but the API may not have every game (see [sync](#uv-run-deadlock-sync))
 - optionally add players to compare yourself against per hero under `[players.<Hero>]` (top ladder accounts, pros, friends, etc)
 
 ```toml
@@ -107,30 +108,22 @@ alt1 = 123456789
 
 ### `uv run deadlock history`
 
-- your recent matches, one row per player with the numbers from the match screen
-- your accounts are listed once up top and your hero is marked with a `*`
-- shows your last day of games, `--days` and `--since` reach further back
+- one line per game of yours with the match ID, newest last
+- shows your last 10 games, `--days` and `--since` reach further back
+- the ID feeds the other commands: `match 12345678`, `download --match 12345678`
 - matches you only viewed in game stay hidden unless you name their players with `--account`
 
 ```
-You (marked * below): main
-
-Match 12345678: 2731s, The Hidden King won, 2026-07-03 20:28
-Lobby average: The Hidden King Ascendant 3, The Archmother Ascendant 3
-
-  Team             Hero                    K/D/A    Net worth   Damage Obj damage  Healing Prevented Last hits Denies
-  The Hidden King  Seven          1 (MVP)  7/4/24      59,402   62,667     20,579    8,058         0       247      1
-  The Hidden King  Mirage *       2 (Key)  10/5/15     58,210   57,784      8,062   24,004     4,231       160      0
-  The Hidden King  Infernus                9/8/13      57,501   31,022      7,470   14,849         0       292      2
-  The Archmother   Venator        3 (Key)  13/3/6      62,965   61,977     10,163   29,043     1,268       327      4
-  The Archmother   The Doorman             3/6/15      55,408   18,387      1,629    6,032         0       180      6
-  The Archmother   Dynamo                  6/6/11      48,292   22,678      7,528   15,098       620       204      9
+  Account    Hero           Result  K/D/A        Souls   Damage  Timestamp         Match ID
+  main       Mirage         win     10/5/15     58,210   57,784  2026-07-03 20:28  12345678
+  main       Mirage         loss    9/12/11     43,912   38,102  2026-07-03 21:22  12345731
+  alt1       Vindicta       win     11/2/9      51,004   62,220  2026-07-03 22:37  12345802
 ```
 
 ### `uv run deadlock match`
 
-- one player's match split into intervals: souls, kills/deaths/assists, damage dealt and taken, objective damage, healing and prevented healing, troopers, neutrals, denies
-- `deadlock match`: your own data from your most recent match
+- one match: the full 12-player final scoreboard, then your side of it split into intervals of souls, kills/deaths/assists, damage dealt and taken, objective damage, healing and prevented healing, last hits, denies
+- `deadlock match`: your most recent match
 - `deadlock match 12345678`: that match from the archive, your player
 - `deadlock match 12345678 --hero Wraith`: another player from the match (any archived match works, including ones you only viewed)
 - `deadlock match --hero Abrams`: the Abrams in your most **recent** match
@@ -141,23 +134,32 @@ Lobby average: The Hidden King Ascendant 3, The Archmother Ascendant 3
 - `--healing`: the same by-source view for your healing, plus a second table for the healing your anti-heal items prevented. The game never shows either per source, and the totals match the Healing and Prevented columns
 - `--teams`: both teams per interval, souls and the running lead, then every objective and Rejuvenator event timestamp
 - `--abilities`: ability unlocks and upgrades in the order you spent them, with the level and required souls for that unlock or cumulative AP spend
-- the last hits total comes from the match screen, the per-interval columns split it into troopers and neutrals
+- the scoreboard shows the match screen numbers while the interval columns come from the minute snapshots, so the Last hits totals can differ slightly. Troopers and Neutrals split the interval Last hits column
 - to read a top player's game, download it first (`deadlock download --match <id>` or `--account <id>`) and point match at those tables: `deadlock --parquet ~/.local/share/deadlock-matches/parquet-players match <id> --hero Mirage`
 
 ```
-Match 12345678: Mirage, win, 2026-07-07 11:49, 32:48
-Final: 9/3/20, 53,558 souls, 49,231 damage, 34,356 taken, 18,894 healing, 4,807 prevented, 151 last hits, 2 denies
+Match 12345678: Mirage, win, 2026-07-03 20:28, 40:41
+Lobby average: The Hidden King Ascendant 3, The Archmother Ascendant 3
 
-  Time        Souls   /min   K/D/A   Damage   Taken  Obj dmg  Healing  Prevented  Troopers Neutrals  Denies
-  0-5m        1,905    381   0/0/1    1,356     886        0      474          0         1        3       0
-  5-10m       3,353    671   0/1/0    2,270   2,728        0      844        417        16        0       2
-  10-15m      6,753  1,351   1/0/2    4,658   2,269        0    1,135        554        18        1       0
-  15-20m      5,033  1,007   1/0/2    7,636   4,383    1,458    2,729        732        11        0       0
-  20-25m      5,961  1,192   0/1/2    4,702   5,134      995    1,873        434        21        0       0
-  25-30m      7,063  1,413   2/1/5   12,083   7,584       29    3,499      1,345         7        1       0
-  30-35m     11,119  2,224   4/0/3    8,941   6,524    9,233    4,173        808         2        0       0
-  35-40m      9,037  1,807   0/0/2    2,825   1,340        0      886        197        16        6       0
-  40-41m      3,334  4,168   1/0/3    4,760   3,508    2,144    3,281        320         3        0       0
+  Team             Hero                    K/D/A        Souls   Damage Obj damage  Healing Prevented Last hits Denies
+  The Hidden King  Seven          1 (MVP)  7/4/24      59,402   62,667     20,579    8,058         0       247      1
+  The Hidden King  Mirage *       2 (Key)  9/3/20      58,210   49,231     13,859   18,894     4,807       151      2
+  The Hidden King  Infernus                9/8/13      57,501   31,022      7,470   14,849         0       292      2
+  The Archmother   Venator        3 (Key)  13/3/6      62,965   61,977     10,163   29,043     1,268       327      4
+  The Archmother   The Doorman             3/6/15      55,408   18,387      1,629    6,032         0       180      6
+  The Archmother   Dynamo                  6/6/11      48,292   22,678      7,528   15,098       620       204      9
+
+  Time        Souls   /min   K/D/A   Damage   Taken Obj damage  Healing  Prevented Last hits  Troopers Neutrals  Denies
+  0-5m        1,905    381   0/0/1    1,356     886          0      474          0         4         1        3       0
+  5-10m       3,353    671   0/1/0    2,270   2,728          0      844        417        16        16        0       2
+  10-15m      6,753  1,351   1/0/2    4,658   2,269          0    1,135        554        19        18        1       0
+  15-20m      5,033  1,007   1/0/2    7,636   4,383      1,458    2,729        732        11        11        0       0
+  20-25m      5,961  1,192   0/1/2    4,702   5,134        995    1,873        434        21        21        0       0
+  25-30m      7,063  1,413   2/1/5   12,083   7,584         29    3,499      1,345         8         7        1       0
+  30-35m     11,119  2,224   4/0/3    8,941   6,524      9,233    4,173        808         2         2        0       0
+  35-40m      9,037  1,807   0/0/2    2,825   1,340          0      886        197        22        16        6       0
+  40-41m      3,334  4,168   1/0/3    4,760   3,508      2,144    3,281        320         3         3        0       0
+  Total      53,558  1,316   9/3/20  49,231  34,356     13,859   18,894      4,807       106        95       11       2
 ```
 
 With `--souls`, the same intervals split by income source, matching the game's souls breakdown, then grouped into lane, roaming, combat, and objectives:
@@ -650,9 +652,28 @@ Mirage movement: you (50 games) vs top players (114 games)
 
 ### `uv run deadlock sync`
 
-- rebuilds the parquet tables from the archive (normally automatic)
+- pulls new matches from the Steam cache into the archive and updates the parquet tables
+- you rarely need to run it yourself, every report command runs the same step quietly first, so `deadlock history` after a session already shows the new games
+- the row counts it prints are what the new matches added on that run, not table totals
 - `--source api` pulls your match history from deadlock-api.com and downloads any missing matches into the archive without opening them in game
-- `--full` rebuilds every table from scratch
+- `--full` rebuilds every table from scratch, needed after a schema change or a backfill
+- `--dry-run` shows what would happen without writing anything
+
+```
+Archive: 814 matches (+1 new) at ~/.local/share/deadlock-matches/matches
+
+  matches                 1 rows
+  players                12 rows
+  stats                 132 rows
+  soul_sources        1,584 rows
+  item_events           411 rows
+  damage              2,576 rows
+  damage_sources     12,658 rows
+  mid_boss                2 rows
+  objectives             21 rows
+  deaths                 82 rows
+Decoded 1 new matches and skipped 813 already exported
+```
 
 The API might not have every game an account played, so the sync grabs whatever it does have. The only way to guarantee every match is to click each one in the in-game match history, and the game lets you open roughly 50 before it makes you wait and try again.
 

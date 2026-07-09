@@ -45,46 +45,28 @@ TEAMS = {0: "The Hidden King", 1: "The Archmother"}
 MVP_LABELS = {1: "1 (MVP)", 2: "2 (Key)", 3: "3 (Key)"}
 
 
-def _print_match(match: dict[str, Any], rows: list[dict[str, Any]], you: set[int]) -> None:
-    """Print the match header and a table with one row per player.
-
-    you is the set of your account IDs, whose hero names get a trailing star.
-    """
-    when = match["start_local"].strftime("%Y-%m-%d %H:%M")
-    winner = TEAMS.get(match["winning_team"], match["winning_team"])
-    print(f"Match {match['match_id']}: {match['duration_s']}s, {winner} won, {when}")
-
-    badges = [
-        f"{TEAMS[team]} {skill_rating.label(match[f'average_badge_team{team}'])}"
-        for team in (0, 1)
-        if match[f"average_badge_team{team}"] is not None
-    ]
-    if badges:
-        print("Lobby average: " + ", ".join(badges))
-
-    print()
-    print(
-        f"  {'Team':<16} {'Hero':<14} {'':<8} {'K/D/A':<8} {'Net worth':>9} "
-        f"{'Damage':>8} {'Obj damage':>10} {'Healing':>8} {'Prevented':>9} "
-        f"{'Last hits':>9} {'Denies':>6}"
+def final_stats(match_ids: pl.LazyFrame, parquet_dir: str | Path) -> pl.LazyFrame:
+    """Return the end-of-match damage and healing totals per player from the stats snapshots."""
+    return (
+        queries.scan("stats", parquet_dir)
+        .join(match_ids, on="match_id")
+        .group_by("match_id", "account_id")
+        .agg(
+            pl.col("player_damage").max(),
+            pl.col("boss_damage").max(),
+            pl.col("player_healing").max(),
+            pl.col("heal_prevented").max(),
+        )
     )
 
-    for p in sorted(rows, key=lambda r: (r["team"], -r["net_worth"])):
-        kda = f"{p['kills']}/{p['deaths']}/{p['assists']}"
-        hero = f"{p['hero']} *" if p["account_id"] in you else p["hero"]
-        print(
-            f"  {TEAMS.get(p['team'], p['team']):<16} {hero:<14} "
-            f"{MVP_LABELS.get(p['mvp_rank'], ''):<8} {kda:<8} {p['net_worth']:>9,} "
-            f"{p['player_damage']:>8,} {p['boss_damage']:>10,} {p['player_healing']:>8,} "
-            f"{p['heal_prevented']:>9,} {p['last_hits']:>9,} {p['denies']:>6}"
-        )
-    print()
 
-
-def sync_archive(cache: str | Path, archive_dir: str | Path) -> int:
+def sync_archive(cache: str | Path, archive_dir: str | Path, *, quiet: bool = False) -> int:
     """Snapshot the live cache into the archive and say where the data lives."""
     archive_dir = Path(archive_dir)
     new = extract.archive(cache, archive_dir)
+
+    if quiet:
+        return new
 
     total = sum(1 for _ in archive_dir.glob("*.bin"))
     note = f"+{new} new" if new else "no new"
@@ -98,18 +80,23 @@ def refresh_tables(
     out_dir: str | Path,
     accounts: Collection[int],
     exclude: Collection[str] = (),
+    *,
+    quiet: bool = False,
 ) -> None:
     """Bring the parquet tables up to date with the archive by decoding only new matches."""
     result = export.export_new(
         archive_dir=archive_dir, out_dir=out_dir, exclude=exclude, accounts=accounts
     )
 
-    if result.decoded:
+    if result.decoded and not quiet:
         print(f"Added {result.decoded:,} new matches to the parquet tables\n")
 
 
 def match_history(args: argparse.Namespace, config: str | Path | None = None) -> None:
-    """Print recent matches from the parquet tables, newest last so it ends at the prompt."""
+    """Print one line per game of yours, newest last, with the match ID for the other commands.
+
+    - shows the last 10 games unless --days or --since widen the window
+    """
     tz = config_timezone(config)
 
     if not queries.table_exists("matches", args.parquet):
@@ -122,19 +109,12 @@ def match_history(args: argparse.Namespace, config: str | Path | None = None) ->
     since = dt.date.fromisoformat(since) if since else None
     days = getattr(args, "days", None)
 
-    if since is None and days is None:
-        days = 1
-
-    accounts = getattr(args, "account", None) or []
-    players_lf = queries.scan("players", args.parquet)
-    wanted = players_lf
-
-    if accounts:
-        wanted = players_lf.filter(pl.col("account_id").is_in(accounts))
+    accounts = args.account
+    players_lf = queries.scan("players", args.parquet).filter(pl.col("account_id").is_in(accounts))
 
     matches = (
         queries.scan("matches", args.parquet)
-        .join(wanted.select("match_id").unique(), on="match_id")
+        .join(players_lf.select("match_id").unique(), on="match_id")
         .with_columns(pl.col("start_time").dt.convert_time_zone(tz).alias("start_local"))
         .with_columns(pl.col("start_local").dt.date().alias("day"))
         .sort("start_time")
@@ -152,39 +132,37 @@ def match_history(args: argparse.Namespace, config: str | Path | None = None) ->
         print("No match metadata found in cache")
         return
 
-    finals = (
-        queries.scan("stats", args.parquet)
-        .group_by("match_id", "account_id")
-        .agg(
-            pl.col("player_damage").max(),
-            pl.col("boss_damage").max(),
-            pl.col("player_healing").max(),
-            pl.col("heal_prevented").max(),
+    games = (
+        players_lf.join(matches.lazy().select("match_id", "start_local"), on="match_id")
+        .join(
+            final_stats(matches.lazy().select("match_id"), args.parquet),
+            on=["match_id", "account_id"],
+            how="left",
         )
-    )
-    rows = (
-        players_lf.join(matches.lazy().select("match_id"), on="match_id")
-        .join(finals, on=["match_id", "account_id"], how="left")
-        .with_columns(
-            pl.col("player_damage", "boss_damage", "player_healing", "heal_prevented").fill_null(0)
-        )
+        .with_columns(pl.col("player_damage").fill_null(0))
+        .sort("start_local")
         .collect()
     )
-    by_match = {k[0]: part for k, part in rows.partition_by(["match_id"], as_dict=True).items()}
+
+    if since is None and days is None:
+        games = games.tail(10)
 
     names = {account_id: name for name, account_id in config_account_names(config).items()}
-    you = set(accounts)
 
-    present = you & set(rows["account_id"].to_list())
+    print(
+        f"  {'Account':<10} {'Hero':<14} {'Result':<7} {'K/D/A':<9} {'Souls':>8} "
+        f"{'Damage':>8}  {'Timestamp':<16}  Match ID"
+    )
 
-    if present:
-        legend = ", ".join(
-            f"{names[a]} ({a})" if a in names else str(a) for a in accounts if a in present
+    for g in games.iter_rows(named=True):
+        account = names.get(g["account_id"], str(g["account_id"]))
+        result = "win" if g["won"] else "loss"
+        kda = f"{g['kills']}/{g['deaths']}/{g['assists']}"
+        when = g["start_local"].strftime("%Y-%m-%d %H:%M")
+        print(
+            f"  {account:<10} {g['hero']:<14} {result:<7} {kda:<9} {g['net_worth']:>8,} "
+            f"{g['player_damage']:>8,}  {when:<16}  {g['match_id']}"
         )
-        print(f"You (marked * below): {legend}\n")
-
-    for m in matches.iter_rows(named=True):
-        _print_match(m, by_match[m["match_id"]].to_dicts(), you)
 
 
 def _archived_games(parquet_dir: str | Path, ids: list[int]) -> dict[int, int] | None:

@@ -92,9 +92,9 @@ def build_parser(config: str | Path | None = None) -> argparse.ArgumentParser:
     )
     sub = ap.add_subparsers(dest="cmd")
 
-    d = sub.add_parser("history", help="your recent matches with the match screen numbers")
+    d = sub.add_parser("history", help="one line per game of yours with the match ID")
     d.add_argument(
-        "--days", type=int, default=None, help="your last N days of games, 1 unless --since is set"
+        "--days", type=int, default=None, help="your last N days of games instead of the last 10"
     )
     d.add_argument(
         "--account",
@@ -172,7 +172,7 @@ def build_parser(config: str | Path | None = None) -> argparse.ArgumentParser:
     c.add_argument("--games", type=int, default=10, help="recent ranked games per player")
 
     mt = sub.add_parser(
-        "match", help="one of your matches in intervals: souls, damage, last hits, denies"
+        "match", help="one match: the final scoreboard, then your intervals of souls and damage"
     )
     mt.add_argument(
         "match_id",
@@ -456,15 +456,17 @@ def main(argv: Sequence[str] | None = None, config: str | Path | None = None) ->
         args.cmd in (None, "history", "item", "compare", "winrate", "deaths", "movement", "match")
         and not card_only
     ):
-        new = data.sync_archive(args.cache, args.archive)
+        new = data.sync_archive(args.cache, args.archive, quiet=True)
 
         if new:
             accounts = config_accounts(config)
 
             if accounts:
-                data.refresh_tables(args.archive, args.parquet, accounts, config_exclude(config))
+                data.refresh_tables(
+                    args.archive, args.parquet, accounts, config_exclude(config), quiet=True
+                )
 
-    needs_account = args.cmd in ("compare", "winrate", "deaths", "movement") or (
+    needs_account = args.cmd in ("history", "compare", "winrate", "deaths", "movement") or (
         args.cmd == "match" and (args.match_id is None or args.hero is None)
     )
 

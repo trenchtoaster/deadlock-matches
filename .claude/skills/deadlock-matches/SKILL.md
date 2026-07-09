@@ -23,11 +23,18 @@ uv run deadlock accounts                  # Steam accounts on this PC that have 
                                           # ids, account/profile names, archived games, plus a
                                           # paste-ready [accounts] block for config.toml
 uv run deadlock history [--days N] [--since 2026-07-01]
-                                          # match screen numbers + lobby average, most recent day of games by default
+                                          # lists one line per game of yours with account, hero,
+                                          # result, K/D/A, souls, damage, timestamp, and match id,
+                                          # newest last, last 10 games by default. Run it to get
+                                          # the match id that match/download take
 uv run deadlock match [12345678] [--hero Wraith] [--interval 10] [--souls|--damage|--healing|--teams|--abilities]
-                                          # one player's match split into 5-minute intervals:
+                                          # prints the 12-player final scoreboard (lobby average,
+                                          # K/D/A, souls, damage, obj damage, healing, prevented,
+                                          # last hits, denies, resolved player starred), then that
+                                          # player's match split into 5-minute intervals of
                                           # souls (+/min), K/D/A, damage dealt/taken, obj damage,
-                                          # healing + prevented healing, troopers, neutrals, denies;
+                                          # healing + prevented healing, last hits (troopers +
+                                          # neutrals split out), and denies, with a Total row;
                                           # no id = your most recent match, --hero picks any
                                           # player in the match instead of you (works on matches
                                           # you only viewed, every player's snapshots are archived);
