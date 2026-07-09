@@ -7,7 +7,17 @@ import zoneinfo
 import polars as pl
 import pytest
 
-from deadlock_matches import abilities, assets, heroes, items, players, schemas, timeline
+from deadlock_matches import (
+    abilities,
+    assets,
+    export,
+    extract,
+    heroes,
+    items,
+    players,
+    schemas,
+    timeline,
+)
 from deadlock_matches.cli import cards, data, performance
 from deadlock_matches.cli import items as cli_items
 from deadlock_matches.cli import meta as cli_meta
@@ -122,9 +132,14 @@ def write_cache_entry(
     return f
 
 
-def run_main(tmp_path, *args):
+def run_main(tmp_path, *args, accounts="you = 42"):
     cfg = tmp_path / "config.toml"
-    cfg.write_text('timezone = "America/Chicago"')
+    contents = 'timezone = "America/Chicago"'
+
+    if accounts:
+        contents += f"\n[accounts]\n{accounts}\n"
+
+    cfg.write_text(contents)
     (tmp_path / "cache").mkdir(exist_ok=True)
 
     base = ["--cache", str(tmp_path / "cache"), "--archive", str(tmp_path / "arc")]
@@ -207,6 +222,102 @@ def test_download_command_merges_config_players_after_top_players(tmp_path, monk
     assert "lead" in out
     assert "someplayer" in out
     assert "rank 1" in out
+
+
+def _sync_config(tmp_path):
+    cfg = tmp_path / "config.toml"
+    cfg.write_text('timezone = "Asia/Manila"\n[accounts]\nmain = 42\nalt1 = 43\n')
+
+    return cfg
+
+
+def _sync_api_mocks(monkeypatch, seen):
+    history = {
+        42: [
+            {"match_id": 100, "start_time": 1_700_000_000},
+            {"match_id": 101, "start_time": 1_700_100_000},
+        ],
+        43: [
+            {"match_id": 101, "start_time": 1_700_100_000},
+            {"match_id": 200, "start_time": 1_700_200_000},
+        ],
+    }
+    monkeypatch.setattr(players, "match_history", lambda account_id: history[account_id])
+    monkeypatch.setattr(extract, "archived_match_ids", lambda archive_dir: {100})
+
+    def fake_download(match_ids, archive_dir):
+        seen["ids"] = list(match_ids)
+
+        return len(list(seen["ids"])), []
+
+    monkeypatch.setattr(players, "download_metadata", fake_download)
+
+    def fake_export_new(archive_dir, out_dir, exclude, accounts):
+        seen["accounts"] = sorted(accounts)
+
+        return export.ExportResult(counts={"matches": 2}, decoded=2, skipped=0)
+
+    monkeypatch.setattr(export, "export_new", fake_export_new)
+
+
+def test_sync_api_downloads_missing_matches_into_the_archive(tmp_path, monkeypatch, capsys):
+    cfg = _sync_config(tmp_path)
+    seen = {}
+    _sync_api_mocks(monkeypatch, seen)
+
+    main(["--parquet", str(tmp_path), "sync", "--source", "api"], config=cfg)
+
+    assert seen["ids"] == [101, 200]
+    assert seen["accounts"] == [42, 43]
+
+    out = capsys.readouterr().out
+
+    assert "3 games in the API" in out
+    assert "1 already archived" in out
+    assert "2 to download" in out
+
+
+def test_sync_api_dry_run_skips_the_download(tmp_path, monkeypatch, capsys):
+    cfg = _sync_config(tmp_path)
+    seen = {}
+    _sync_api_mocks(monkeypatch, seen)
+
+    main(["--parquet", str(tmp_path), "sync", "--source", "api", "--dry-run"], config=cfg)
+
+    assert "ids" not in seen
+
+    out = capsys.readouterr().out
+
+    assert "2 to download" in out
+
+
+def test_sync_local_exports_the_config_accounts(tmp_path, monkeypatch, capsys):
+    cfg = _sync_config(tmp_path)
+    seen = {}
+    monkeypatch.setattr(data, "sync_archive", lambda cache, archive: 0)
+
+    def fake_export_new(archive_dir, out_dir, exclude, accounts):
+        seen["accounts"] = sorted(accounts)
+
+        return export.ExportResult(counts={"matches": 5}, decoded=5, skipped=0)
+
+    monkeypatch.setattr(export, "export_new", fake_export_new)
+
+    main(["--parquet", str(tmp_path), "sync"], config=cfg)
+
+    assert seen["accounts"] == [42, 43]
+
+
+def test_sync_refuses_an_account_not_in_config(tmp_path, monkeypatch, capsys):
+    cfg = _sync_config(tmp_path)
+    monkeypatch.setattr(data, "sync_archive", lambda cache, archive: 0)
+
+    main(["--parquet", str(tmp_path), "sync", "--account", "999"], config=cfg)
+
+    out = capsys.readouterr().out
+
+    assert "not your accounts" in out
+    assert "999" in out
 
 
 def test_builds_command_prints_shared_core(tmp_path, monkeypatch, capsys):
@@ -394,7 +505,7 @@ def test_snapshot_field_accepts_souls_names():
 
 
 def test_compare_without_account_prints_hint(capsys, tmp_path):
-    run_main(tmp_path, "compare", "--hero", "Haze")
+    run_main(tmp_path, "compare", "--hero", "Haze", accounts=None)
 
     out = capsys.readouterr().out
 
@@ -403,7 +514,7 @@ def test_compare_without_account_prints_hint(capsys, tmp_path):
 
 
 def test_winrate_without_account_prints_hint(capsys, tmp_path):
-    run_main(tmp_path, "winrate")
+    run_main(tmp_path, "winrate", accounts=None)
 
     assert "--account" in capsys.readouterr().out
 
@@ -713,7 +824,7 @@ def test_match_rejects_zero_interval(capsys, tmp_path):
 
 
 def test_match_without_account_prints_hint(capsys, tmp_path):
-    run_main(tmp_path, "match")
+    run_main(tmp_path, "match", accounts=None)
 
     assert "--account" in capsys.readouterr().out
 
@@ -909,7 +1020,7 @@ def test_meta_command_hero_defaults_to_weekly(capsys, tmp_path, monkeypatch):
 
 def test_winrate_baseline_prints_without_games(capsys, tmp_path, monkeypatch):
     cfg = tmp_path / "config.toml"
-    cfg.write_text('timezone = "America/Chicago"')
+    cfg.write_text('timezone = "America/Chicago"\n[accounts]\nyou = 42\n')
 
     cache = tmp_path / "cache"
     cache.mkdir()
@@ -1070,10 +1181,14 @@ def test_new_matches_trigger_parquet_rebuild(tmp_path, capsys):
     cache.mkdir()
     arc = tmp_path / "arc"
     pq = tmp_path / "pq"
+    cfg = tmp_path / "config.toml"
+    cfg.write_text("[accounts]\nyou = 42\n")
     write_cache_entry(cache, match_id=100)
     write_cache_entry(cache, match_id=101)
 
-    main(["--cache", str(cache), "--archive", str(arc), "--parquet", str(pq), "history"])
+    main(
+        ["--cache", str(cache), "--archive", str(arc), "--parquet", str(pq), "history"], config=cfg
+    )
 
     out = capsys.readouterr().out
 
@@ -1089,11 +1204,17 @@ def test_no_new_matches_skips_rebuild(tmp_path, capsys):
     cache.mkdir()
     arc = tmp_path / "arc"
     pq = tmp_path / "pq"
+    cfg = tmp_path / "config.toml"
+    cfg.write_text("[accounts]\nyou = 42\n")
     write_cache_entry(cache, match_id=100)
 
-    main(["--cache", str(cache), "--archive", str(arc), "--parquet", str(pq), "history"])
+    main(
+        ["--cache", str(cache), "--archive", str(arc), "--parquet", str(pq), "history"], config=cfg
+    )
     capsys.readouterr()
-    main(["--cache", str(cache), "--archive", str(arc), "--parquet", str(pq), "history"])
+    main(
+        ["--cache", str(cache), "--archive", str(arc), "--parquet", str(pq), "history"], config=cfg
+    )
 
     out = capsys.readouterr().out
 

@@ -62,7 +62,7 @@ main = 111222333
 - commands that read your matches archive the cache into `~/.local/share/deadlock-matches/matches/` (`%LOCALAPPDATA%\deadlock-matches\matches` on Windows)
   - Steam's cache only keeps the last 10,000 files it used for all of Steam combined - archiving the matches ensures you do not lose historical data
   - opening game history and clicking a match puts it back in the cache (or keeps it there), so it works as recovery too
-- newly archived matches update the parquet tables automatically. Only the new matches get read each run and running `deadlock export` yourself stays quick. `deadlock export --full` rebuilds every table from scratch after a backfill or a schema change
+- newly archived matches update the parquet tables automatically. Only the new matches get read each run and running `deadlock sync` yourself stays quick. `deadlock sync --full` rebuilds every table from scratch after a backfill or a schema change
 
 ## CLI
 
@@ -460,7 +460,7 @@ Mirage  (hero change history, 25 eras tracked)
     cost_bonuses.vitality.0.bonus      75 -> 84
 ```
 
-The same history feeds the analysis queries: an old match is scored against the hero, item, and ability tuning that was live when it was played, not today's. It is browsable too, `deadlock export` writes the flattened `item_history`, `hero_history`, `ability_history`, and `rank_history` tables and `deadlock schema item_history --sample` reads them.
+The same history feeds the analysis queries: an old match is scored against the hero, item, and ability tuning that was live when it was played, not today's. It is browsable too, `deadlock sync` writes the flattened `item_history`, `hero_history`, `ability_history`, and `rank_history` tables and `deadlock schema item_history --sample` reads them.
 
 ## Top players and public stats
 
@@ -648,9 +648,13 @@ Mirage movement: you (50 games) vs top players (114 games)
 
 - redownloads the hero, item, and ability data after a patch
 
-### `uv run deadlock export`
+### `uv run deadlock sync`
 
-- rebuilds the parquet tables (normally automatic)
+- rebuilds the parquet tables from the archive (normally automatic)
+- `--source api` pulls your match history from deadlock-api.com and downloads any missing matches into the archive without opening them in game
+- `--full` rebuilds every table from scratch
+
+The API might not have every game an account played, so the sync grabs whatever it does have. The only way to guarantee every match is to click each one in the in-game match history, and the game lets you open roughly 50 before it makes you wait and try again.
 
 ### `uv run deadlock schema damage`
 

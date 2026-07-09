@@ -364,7 +364,7 @@ def _objective_events(row: dict[str, Any], args: argparse.Namespace) -> list[tup
 def teams_report(row: dict[str, Any], args: argparse.Namespace) -> None:
     """Print souls per interval for both teams, then the objectives that fell."""
     if not queries.table_exists("objectives", args.parquet):
-        print("No objectives table yet, run `deadlock export`")
+        print("No objectives table yet, run `deadlock sync`")
         return
 
     try:
@@ -433,7 +433,7 @@ def souls_report(row: dict[str, Any], args: argparse.Namespace) -> None:
       catch-up, and other, the way you earned them
     """
     if not queries.table_exists("soul_sources", args.parquet):
-        print("No soul_sources table yet, run `deadlock export`")
+        print("No soul_sources table yet, run `deadlock sync`")
         return
 
     try:
@@ -495,7 +495,7 @@ def souls_report(row: dict[str, Any], args: argparse.Namespace) -> None:
 def damage_source_table(row: dict[str, Any], args: argparse.Namespace) -> None:
     """Print the per source intervals for one player, damage or healing plus prevented healing."""
     if not queries.table_exists("damage_sources", args.parquet):
-        print("No damage_sources table yet, run `deadlock export`")
+        print("No damage_sources table yet, run `deadlock sync`")
         return
 
     if args.healing:
@@ -789,7 +789,7 @@ def deaths_report(args: argparse.Namespace, config: str | Path | None = None) ->
     if not has_context:
         print(
             '\nAlly/enemy context needs the movement table: remove "movement" from '
-            '"exclude" in config.toml and run `deadlock export`'
+            '"exclude" in config.toml and run `deadlock sync`'
         )
 
 
@@ -810,7 +810,7 @@ def movement_report(args: argparse.Namespace, config: str | Path | None = None) 
     if not queries.table_exists("movement", args.parquet):
         print(
             'No movement table: remove "movement" from the exclude list in config.toml '
-            "and run `deadlock export`"
+            "and run `deadlock sync`"
         )
         return
 

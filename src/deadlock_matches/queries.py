@@ -914,7 +914,7 @@ def death_context(
     - needs the movement table for player positions (excluded by default)
     """
     if not table_exists("movement", parquet_dir):
-        msg = 'movement table not exported: remove "movement" from the exclude list in config.toml and run `deadlock export`'
+        msg = 'movement table not exported: remove "movement" from the exclude list in config.toml and run `deadlock sync`'
         raise ValueError(msg)
 
     deaths = my_deaths(parquet_dir, accounts, tz)

@@ -467,6 +467,21 @@ def _decode_matches(paths: Iterable[Path]) -> Iterator[MatchInfo]:
             continue
 
 
+def _select_infos(
+    infos: Iterable[MatchInfo],
+    accounts: Collection[int] | None,
+) -> Iterator[MatchInfo]:
+    """Yield the matches a listed account played in.
+
+    - None yields every match
+    """
+    account_ids = set(accounts) if accounts else None
+
+    for info in infos:
+        if account_ids is None or any(p.account_id in account_ids for p in info.players):
+            yield info
+
+
 def exported_match_ids(out_dir: Path) -> set[int]:
     """Match ids already written to the matches table. Empty before the table exists."""
     from deadlock_matches import queries
@@ -643,10 +658,13 @@ def export_all(
     archive_dir: str | Path | None = None,
     out_dir: str | Path | None = None,
     exclude: Collection[str] = (),
+    accounts: Collection[int] | None = None,
 ) -> ExportResult:
     """Rebuild every parquet table from scratch by streaming one month at a time.
 
     - both directories default to the standard locations (the match archive and PARQUET_DIR)
+    - accounts keeps only matches a listed account played in
+    - without it every archived match is exported
     - each built table is cleared first so a match dropped from the archive also leaves the tables
     - excluded tables are left untouched rather than deleted, so opting movement out keeps its history
     - the versioned asset tables flatten out of the committed history into out_dir/assets
@@ -659,7 +677,8 @@ def export_all(
         if name not in exclude:
             clear_partition(name, out_dir)
 
-    counts = export_infos(_decode_matches(_archive_paths(archive_dir)), out_dir, exclude)
+    infos = _select_infos(_decode_matches(_archive_paths(archive_dir)), accounts)
+    counts = export_infos(infos, out_dir, exclude)
 
     _write_asset_tables(out_dir, counts)
 
@@ -675,10 +694,13 @@ def export_new(
     archive_dir: str | Path | None = None,
     out_dir: str | Path | None = None,
     exclude: Collection[str] = (),
+    accounts: Collection[int] | None = None,
 ) -> ExportResult:
     """Export only the matches not already in the tables and append them to their month partitions.
 
     - reads the exported match_ids from the matches table and an empty table means a full build
+    - accounts keeps only matches a listed account played in
+    - without it every archived match is exported
     - a legacy single-file store is re-laid-out into partitions first, without decoding anything
     - decodes only the .bin files whose match_id is new so processed matches are never re-read
     - old month partitions are left alone and only the months the new matches fall in are rewritten
@@ -693,14 +715,15 @@ def export_new(
     exported = exported_match_ids(out_dir)
 
     if not exported:
-        return export_all(archive_dir, out_dir, exclude)
+        return export_all(archive_dir, out_dir, exclude, accounts)
 
     paths = _new_archive_paths(archive_dir, exported)
 
     if not paths:
         return ExportResult(counts={}, decoded=0, skipped=len(exported))
 
-    counts = export_infos(_decode_matches(paths), out_dir, exclude)
+    infos = _select_infos(_decode_matches(paths), accounts)
+    counts = export_infos(infos, out_dir, exclude)
 
     if not (out_dir / "assets").is_dir():
         _write_asset_tables(out_dir, counts)

@@ -152,9 +152,7 @@ def test_top_players_pools_per_hero_boards_and_drops_ambiguous(monkeypatch):
 
 
 def test_top_players_respects_limit(monkeypatch):
-    board = [
-        {"account_name": f"p{r}", "rank": r, "possible_account_ids": [r]} for r in range(1, 6)
-    ]
+    board = [{"account_name": f"p{r}", "rank": r, "possible_account_ids": [r]} for r in range(1, 6)]
     monkeypatch.setattr(players, "hero_leaderboard", lambda region, hero_id: board)
 
     got = players.top_players(66, regions=["Europe"], limit=3)

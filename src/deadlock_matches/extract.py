@@ -172,6 +172,32 @@ def archive(cache_dir: str | Path = DEFAULT_CACHE, archive_dir: str | Path = ARC
     return new
 
 
+def archived_match_ids(archive_dir: str | Path = ARCHIVE_DIR) -> set[int]:
+    """Return the match ids already saved as .bin files in the archive."""
+    return {int(p.name.split("_")[0]) for p in Path(archive_dir).glob("*.bin")}
+
+
+def has_match(archive_dir: str | Path, match_id: int) -> bool:
+    """Return True when a .bin for this match id is already archived."""
+    return any(Path(archive_dir).glob(f"{match_id}_*.bin"))
+
+
+def store_meta(archive_dir: str | Path, match_id: int, salt: int, meta_bz2: bytes) -> None:
+    """Write a downloaded .meta.bz2 body into the archive as a cache-shaped {match_id}_{salt}.bin.
+
+    - prepends the cache URL so parse_cache_file reads it the same as a copied cache entry
+    - the salt matches the httpcache filename, so the same match from both sources is one file
+    """
+    archive_dir = Path(archive_dir)
+    archive_dir.mkdir(parents=True, exist_ok=True)
+
+    header = f"/1422450/{match_id}_{salt}.meta.bz2\n".encode()
+    dest = archive_dir / f"{match_id}_{salt}.bin"
+    tmp = dest.with_name(f"{dest.name}.tmp")
+    tmp.write_bytes(header + meta_bz2)
+    tmp.replace(dest)
+
+
 def iter_matches(
     cache_dir: str | Path = DEFAULT_CACHE, archive_dir: str | Path = ARCHIVE_DIR
 ) -> Iterator[Path]:

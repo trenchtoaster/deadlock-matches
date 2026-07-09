@@ -474,6 +474,87 @@ def _archive_match(arc, match_id, when):
     (arc / f"{match_id}_1.bin").write_bytes(header + bz2.compress(meta.SerializeToString()))
 
 
+def test_export_all_keeps_only_matches_a_listed_account_played(tmp_path):
+    arc = tmp_path / "arc"
+    arc.mkdir()
+    _archive_match(arc, 7, dt.datetime(2026, 6, 1, tzinfo=dt.UTC))
+
+    kept = export.export_all(arc, tmp_path / "keep", accounts=[42])
+    assert kept.counts["matches"] == 1
+
+    df = queries.scan("players", tmp_path / "keep").collect()
+    assert set(df["account_id"].to_list()) == {42, 43}
+
+    dropped = export.export_all(arc, tmp_path / "drop", accounts=[999])
+    assert dropped.counts.get("matches", 0) == 0
+
+
+def test_export_new_filters_new_matches_by_account(tmp_path):
+    arc = tmp_path / "arc"
+    arc.mkdir()
+    out = tmp_path / "pq"
+    _archive_match(arc, 7, dt.datetime(2026, 6, 1, tzinfo=dt.UTC))
+
+    export.export_new(arc, out, accounts=[42])
+    assert export.exported_match_ids(out) == {7}
+
+    _archive_match(arc, 8, dt.datetime(2026, 6, 2, tzinfo=dt.UTC))
+    result = export.export_new(arc, out, accounts=[999])
+
+    assert result.counts.get("matches", 0) == 0
+    assert export.exported_match_ids(out) == {7}
+
+
+def _meta_body(match_id):
+    """A .meta.bz2 body for a built match, the shape the API and Valve return."""
+    info = build_match(match_id=match_id)
+    contents = pb.CMsgMatchMetaDataContents()
+    contents.match_info.CopyFrom(info)
+    meta = pb.CMsgMatchMetaData()
+    meta.match_details = contents.SerializeToString()
+
+    return bz2.compress(meta.SerializeToString())
+
+
+def test_store_meta_writes_a_loadable_bin(tmp_path):
+    assert not extract.has_match(tmp_path, 55)
+
+    extract.store_meta(tmp_path, 55, 2062213690, _meta_body(55))
+
+    assert extract.has_match(tmp_path, 55)
+    assert extract.archived_match_ids(tmp_path) == {55}
+    assert extract.load(tmp_path / "55_2062213690.bin").match_id == 55
+
+
+def test_download_metadata_stores_then_skips(tmp_path, monkeypatch):
+    from deadlock_matches import api, players
+
+    monkeypatch.setattr(
+        players, "salts", lambda mid: {"metadata_salt": 9, "metadata_url": "http://x"}
+    )
+    monkeypatch.setattr(api, "get_bytes", lambda url: _meta_body(55))
+
+    written, missing = players.download_metadata([55], tmp_path)
+
+    assert written == 1
+    assert missing == []
+    assert extract.has_match(tmp_path, 55)
+
+    again, _ = players.download_metadata([55], tmp_path)
+    assert again == 0
+
+
+def test_download_metadata_reports_unavailable(tmp_path, monkeypatch):
+    from deadlock_matches import players
+
+    monkeypatch.setattr(players, "salts", lambda mid: None)
+
+    written, missing = players.download_metadata([77], tmp_path)
+
+    assert written == 0
+    assert missing == [77]
+
+
 def test_export_partitions_by_month(tmp_path):
     arc = tmp_path / "arc"
     arc.mkdir()
@@ -609,7 +690,9 @@ def test_export_new_migrates_a_legacy_single_file_store(tmp_path):
     _archive_match(arc, 10, dt.datetime(2026, 6, 5, tzinfo=dt.UTC))
     _archive_match(arc, 11, dt.datetime(2026, 7, 5, tzinfo=dt.UTC))
 
-    for name, df in export.build_tables(list(export._decode_matches(export._archive_paths(arc)))).items():
+    for name, df in export.build_tables(
+        list(export._decode_matches(export._archive_paths(arc)))
+    ).items():
         df.write_parquet(out / f"{name}.parquet")
 
     assert (out / "matches.parquet").exists()

@@ -10,7 +10,7 @@ def _(mo):
     # Getting started
 
     This notebook is the manual way to explore your match data. Every cell is a plain
-    polars query over the parquet tables that `deadlock export` builds, the same tables
+    polars query over the parquet tables that `deadlock sync` builds, the same tables
     the CLI and the `queries` helpers read.
 
     Change a cell and everything downstream recomputes. The full list of helpers is in

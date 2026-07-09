@@ -108,14 +108,17 @@ uv run deadlock meta [--hero Mirage] [--by rating|day|week|month] [--min-rating 
                                           # (each flag combo is its own URL, cached up to a day)
 uv run deadlock schema [table]            # the data dictionary — read before writing polars
 uv run deadlock assets                    # refresh heroes/items after a patch (+ dated snapshot for as-of pricing)
-uv run deadlock export                    # rebuild parquet tables
+uv run deadlock sync                      # rebuild parquet tables; --full from scratch;
+                                          # --source api pulls missing matches from the
+                                          # match-history API into the archive (it may not
+                                          # have every game — the rest need in-game clicks)
 ```
 
 `compare --stat` accepts: `farm` (default, kill/assist gold excluded), `combat`, `objectives`, `catch_up`, `other` (item income), `souls` (net worth), `soul_sources` (the income gap table, all sources + a footnote that net worth runs ~1% over the sum, the game credits sell refunds etc. to no source), or any raw snapshot field (`creep_kills`, `denies`, `player_damage`, ...).
 
 ## Aggregate questions → parquet + polars
 
-Prefer `deadlock export` + polars over looping protobufs for win rates, damage totals, souls curves, item timing. Tables rebuild automatically whenever a data command archives new matches, so run a quick `deadlock history` first and the tables are guaranteed fresh; `deadlock export` forces a full rebuild (needed after changing `export.py`). `--archive`/`--parquet` point any command at non-default dirs. Tables live in `~/.local/share/deadlock-matches/parquet/`.
+Prefer `deadlock sync` + polars over looping protobufs for win rates, damage totals, souls curves, item timing. Tables rebuild automatically whenever a data command archives new matches, so run a quick `deadlock history` first and the tables are guaranteed fresh; `deadlock sync --full` forces a full rebuild (needed after changing `export.py`). Sync filters to the config accounts — it refuses to run without an `[accounts]` table and refuses `--account` ids not in it. `--archive`/`--parquet` point any command at non-default dirs. Tables live in `~/.local/share/deadlock-matches/parquet/`.
 
 ### queries.py helper catalog
 
@@ -231,7 +234,7 @@ Modules are organized by data source, not by layer: `queries.py` answers questio
 Everything in `src/deadlock_matches/`:
 
 - `extract.py` — cache walking, archive sync, protobuf decode (`iter_matches`, `archive`, `load`), local Steam accounts (`steam_accounts`)
-- `cli/` — the `deadlock` entry point, one module per command group: `main.py` (parser, dispatch, `schema`), `data.py` (`history`, `download`, `export`, `assets` plus the archive sync), `performance.py` (`compare`, `winrate`, `deaths`, `movement`), `items.py` (`item`, `builds`), `cards.py` (`hero`, `ability`)
+- `cli/` — the `deadlock` entry point, one module per command group: `main.py` (parser, dispatch, `schema`), `data.py` (`history`, `download`, `sync`, `assets` plus the archive snapshot), `performance.py` (`compare`, `winrate`, `deaths`, `movement`), `items.py` (`item`, `builds`), `cards.py` (`hero`, `ability`)
 - `config.py` — config.toml reading and the starter file (`config_accounts`, `config_account_names`, `format_accounts`, `config_players`, `config_exclude`, `config_timezone`, `ensure_config`)
 - `export.py` — parquet tables (`build_tables`) plus the `delivery`/`attribution` classifiers
 - `schemas.py` — the table models: one class per parquet table, dtype + description per column

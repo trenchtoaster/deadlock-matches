@@ -21,7 +21,9 @@ def tier_map(path: Path = SKILL_RATING_JSON) -> dict[int, str]:
     return {rec["tier"]: rec["name"] for rec in records}
 
 
-def rank_asof(tier: int, when: dt.datetime | dt.date, path: Path = RANK_HISTORY_PARQUET) -> str | None:
+def rank_asof(
+    tier: int, when: dt.datetime | dt.date, path: Path = RANK_HISTORY_PARQUET
+) -> str | None:
     """Return the rank name for a tier in effect at the given time.
 
     - latest era on or before `when`

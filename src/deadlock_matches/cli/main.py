@@ -242,6 +242,33 @@ def build_parser(config: str | Path | None = None) -> argparse.ArgumentParser:
     f.add_argument("--games", type=int, default=5, help="recent ranked games per player")
     f.add_argument("--out", default=str(players.PARQUET_DIR), help="players parquet directory")
 
+    sy = sub.add_parser(
+        "sync", help="pull your matches into the parquet tables from the archive or the API"
+    )
+    sy.add_argument(
+        "--source",
+        choices=("local", "api"),
+        default="local",
+        help="the local archive (default) or the match-history API",
+    )
+    sy.add_argument(
+        "--account",
+        type=account_list,
+        default=accounts,
+        help="account IDs or names from config.toml, defaults to every config account",
+    )
+    sy.add_argument(
+        "--full",
+        action="store_true",
+        help="rebuild every table from scratch instead of adding only new matches",
+    )
+    sy.add_argument(
+        "--since", default=None, help="only api matches on or after this date (YYYY-MM-DD)"
+    )
+    sy.add_argument(
+        "--dry-run", action="store_true", help="show what would be written without writing anything"
+    )
+
     mn = sub.add_parser("leaderboard", help="the top players of a hero and their recent match IDs")
     mn.add_argument("--hero", required=True, help="hero display name, like Mirage")
     mn.add_argument("--players", type=int, default=8, help="how many top players to list")
@@ -370,13 +397,6 @@ def build_parser(config: str | Path | None = None) -> argparse.ArgumentParser:
         "--start-date", default="2026-01-01", help="earliest patch date to scan (YYYY-MM-DD)"
     )
 
-    ex = sub.add_parser("export", help="add newly archived matches to the parquet tables")
-    ex.add_argument(
-        "--full",
-        action="store_true",
-        help="rebuild every table from scratch after a backfill or schema change",
-    )
-
     sc = sub.add_parser("schema", help="column docs for the parquet tables (the data dictionary)")
     sc.add_argument(
         "table", nargs="?", default=None, help="one table name, all tables when omitted"
@@ -415,7 +435,7 @@ def schema_report(args: argparse.Namespace) -> None:
         print(f"\nNo parquet file at {paths.tilde(path)}")
 
         if args.table in schemas.ASSET_TABLES:
-            print("Run deadlock export to write the asset tables from the committed history.")
+            print("Run deadlock sync to write the asset tables from the committed history.")
 
         return
 
@@ -436,13 +456,16 @@ def main(argv: Sequence[str] | None = None, config: str | Path | None = None) ->
     card_only = args.cmd == "item" and args.hero is None
 
     if (
-        args.cmd
-        in (None, "history", "item", "compare", "winrate", "deaths", "movement", "match", "export")
+        args.cmd in (None, "history", "item", "compare", "winrate", "deaths", "movement", "match")
         and not card_only
     ):
         new = data.sync_archive(args.cache, args.archive)
-        if new and args.cmd != "export":
-            data.refresh_tables(args.archive, args.parquet, config_exclude(config))
+
+        if new:
+            accounts = config_accounts(config)
+
+            if accounts:
+                data.refresh_tables(args.archive, args.parquet, accounts, config_exclude(config))
 
     needs_account = args.cmd in ("compare", "winrate", "deaths", "movement") or (
         args.cmd == "match" and (args.match_id is None or args.hero is None)
@@ -468,6 +491,8 @@ def main(argv: Sequence[str] | None = None, config: str | Path | None = None) ->
         performance.match_report(args, config)
     elif args.cmd == "download":
         data.download_matches(args, config)
+    elif args.cmd == "sync":
+        data.sync_tables(args, config)
     elif args.cmd == "leaderboard":
         data.leaderboard_report(args, config)
     elif args.cmd == "winrate":
@@ -488,8 +513,6 @@ def main(argv: Sequence[str] | None = None, config: str | Path | None = None) ->
         data.refresh_assets(args)
     elif args.cmd == "backfill":
         data.rebuild_history(args)
-    elif args.cmd == "export":
-        data.export_tables(args, config)
     else:
         data.match_history(args, config)
 

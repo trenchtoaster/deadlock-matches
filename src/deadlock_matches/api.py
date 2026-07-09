@@ -97,3 +97,15 @@ def get_json(
     target.write_text(json.dumps(data), encoding="utf-8")
 
     return data
+
+
+def get_bytes(url: str) -> bytes | None:
+    """Download the raw bytes at a full URL, or None when it cannot be reached."""
+    req = urllib.request.Request(url, headers={"User-Agent": "deadlock-matches/1.0"})
+
+    try:
+        with urllib.request.urlopen(req, timeout=30) as r:
+            return r.read()
+
+    except OSError:
+        return None

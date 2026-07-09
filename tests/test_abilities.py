@@ -32,8 +32,14 @@ def test_ability_asof_picks_the_era(tmp_path):
     path = tmp_path / "ability_history.parquet"
     _ability_history(path, 60, 75)
 
-    assert abilities.ability_asof("ability_slash", dt.date(2026, 6, 20), path).properties["damage"] == 60
-    assert abilities.ability_asof("ability_slash", dt.date(2026, 7, 2), path).properties["damage"] == 75
+    assert (
+        abilities.ability_asof("ability_slash", dt.date(2026, 6, 20), path).properties["damage"]
+        == 60
+    )
+    assert (
+        abilities.ability_asof("ability_slash", dt.date(2026, 7, 2), path).properties["damage"]
+        == 75
+    )
 
 
 def test_ability_asof_without_history_falls_back_to_bundled(tmp_path):

@@ -23,6 +23,7 @@ from deadlock_matches import (
 )
 from deadlock_matches.config import (
     config_account_names,
+    config_accounts,
     config_exclude,
     config_players,
     config_timezone,
@@ -92,10 +93,15 @@ def sync_archive(cache: str | Path, archive_dir: str | Path) -> int:
 
 
 def refresh_tables(
-    archive_dir: str | Path, out_dir: str | Path, exclude: Collection[str] = ()
+    archive_dir: str | Path,
+    out_dir: str | Path,
+    accounts: Collection[int],
+    exclude: Collection[str] = (),
 ) -> None:
     """Bring the parquet tables up to date with the archive by decoding only new matches."""
-    result = export.export_new(archive_dir=archive_dir, out_dir=out_dir, exclude=exclude)
+    result = export.export_new(
+        archive_dir=archive_dir, out_dir=out_dir, exclude=exclude, accounts=accounts
+    )
 
     if result.decoded:
         print(f"Added {result.decoded:,} new matches to the parquet tables\n")
@@ -106,7 +112,10 @@ def match_history(args: argparse.Namespace, config: str | Path | None = None) ->
     tz = config_timezone(config)
 
     if not queries.table_exists("matches", args.parquet):
-        refresh_tables(args.archive, args.parquet, config_exclude(config))
+        accounts = config_accounts(config)
+
+        if accounts:
+            refresh_tables(args.archive, args.parquet, accounts, config_exclude(config))
 
     since = getattr(args, "since", None)
     since = dt.date.fromisoformat(since) if since else None
@@ -403,23 +412,141 @@ def leaderboard_report(args: argparse.Namespace, config: str | Path | None = Non
                 print(f"      {row['match_id']}  {when}  {result}  {kda}")
 
 
-def export_tables(args: argparse.Namespace, config: str | Path | None = None) -> None:
-    """Update the parquet tables incrementally or fully rebuild them with --full."""
-    exclude = config_exclude(config)
+def sync_tables(args: argparse.Namespace, config: str | Path | None = None) -> None:
+    """Pull matches into the parquet tables from the local archive or the match-history API."""
+    accounts = _sync_accounts(args, config)
 
-    if getattr(args, "full", False):
-        result = export.export_all(archive_dir=args.archive, out_dir=args.parquet, exclude=exclude)
+    if accounts is None:
+        return
+
+    if args.source == "api":
+        _sync_from_api(args, config, accounts)
 
     else:
-        result = export.export_new(archive_dir=args.archive, out_dir=args.parquet, exclude=exclude)
+        _sync_from_archive(args, config, accounts)
 
-    for name, n in result.counts.items():
-        print(f"  {name:<16} {n:>8,} rows")
+
+def _sync_accounts(args: argparse.Namespace, config: str | Path | None) -> list[int] | None:
+    """Return the config accounts to sync.
+
+    - prints the fix when none are configured or one is not yours
+    """
+    configured = set(config_accounts(config) or [])
+    requested = getattr(args, "account", None)
+
+    if not requested:
+        print("sync needs --account or an [accounts] table in config.toml")
+        print("`deadlock accounts` lists the accounts on this PC with their IDs")
+
+        return None
+
+    stray = [a for a in requested if a not in configured]
+
+    if stray:
+        listed = ", ".join(str(a) for a in stray)
+        print(f"not your accounts: {listed}")
+        print("sync only pulls the accounts in your config.toml")
+
+        return None
+
+    return list(requested)
+
+
+def _sync_from_archive(
+    args: argparse.Namespace, config: str | Path | None, accounts: list[int]
+) -> None:
+    """Snapshot the cache, then export the account matches from the local archive into the tables."""
+    sync_archive(args.cache, args.archive)
+    exclude = config_exclude(config)
+
+    if getattr(args, "dry_run", False):
+        pending = _pending_archive(args.archive, args.parquet)
+        print(f"{pending} archived matches not yet in the tables")
+        print("sync filters them to your accounts as it writes")
+
+        return
+
+    if getattr(args, "full", False):
+        result = export.export_all(args.archive, args.parquet, exclude, accounts)
+
+    else:
+        result = export.export_new(args.archive, args.parquet, exclude, accounts)
+
+    _print_table_counts(result.counts)
 
     if result.skipped:
         print(
-            f"Decoded {result.decoded:,} new matches, "
-            f"skipped {result.skipped:,} already exported"
+            f"Decoded {result.decoded:,} new matches "
+            f"and skipped {result.skipped:,} already exported"
         )
 
+
+def _sync_from_api(
+    args: argparse.Namespace, config: str | Path | None, accounts: list[int]
+) -> None:
+    """Download the raw metadata for the API match history into the archive, then export it."""
+    from zoneinfo import ZoneInfo
+
+    tz = ZoneInfo(config_timezone(config))
+    since = getattr(args, "since", None)
+    since = dt.date.fromisoformat(since) if since else None
+    names = {account_id: name for name, account_id in config_account_names(config).items()}
+
+    def local_day(start_time: int) -> dt.date:
+        return dt.datetime.fromtimestamp(start_time, dt.UTC).astimezone(tz).date()
+
+    match_ids: set[int] = set()
+
+    print("Match history per account:")
+
+    for account_id in accounts:
+        rows = players.match_history(account_id)
+        kept = [r for r in rows if since is None or local_day(r["start_time"]) >= since]
+
+        if kept:
+            days = [local_day(r["start_time"]) for r in kept]
+            span = f"{min(days)} to {max(days)}"
+
+        else:
+            span = "none"
+
+        match_ids.update(r["match_id"] for r in kept)
+        label = names.get(account_id, str(account_id))
+        print(f"  {label:<18} {len(kept):>5} games   {span}")
+
+    archived = extract.archived_match_ids(args.archive)
+    to_get = sorted(match_ids - archived)
+    have = len(match_ids & archived)
+
+    print(
+        f"\n{len(match_ids)} games in the API: {have} already archived, {len(to_get)} to download"
+    )
+
+    if getattr(args, "dry_run", False) or not to_get:
+        return
+
+    written, missing = players.download_metadata(to_get, args.archive)
+    print(f"Downloaded {written} matches into the archive")
+
+    if missing:
+        print(f"{len(missing)} not available from the API")
+        print("open those in game to archive them")
+
+    result = export.export_new(args.archive, args.parquet, config_exclude(config), accounts)
+    _print_table_counts(result.counts)
+
     print(f"Parquet tables at {_tilde(args.parquet)}")
+
+
+def _pending_archive(archive_dir: str | Path, out_dir: str | Path) -> int:
+    """Count archived matches not yet written to the tables."""
+    archive_ids = {int(p.name.split("_")[0]) for p in Path(archive_dir).glob("*.bin")}
+    exported = export.exported_match_ids(Path(out_dir))
+
+    return len(archive_ids - exported)
+
+
+def _print_table_counts(counts: dict[str, int]) -> None:
+    """Print the row count written to each table."""
+    for name, n in counts.items():
+        print(f"  {name:<16} {n:>8,} rows")

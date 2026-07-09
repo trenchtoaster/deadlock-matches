@@ -97,6 +97,15 @@ def match_metadata(match_id: int) -> dict[str, Any]:
     return api.get_json(f"v1/matches/{match_id}/metadata", permanent=True)["match_info"]
 
 
+def salts(match_id: int) -> dict[str, Any] | None:
+    """Return the metadata and replay salts for a match."""
+    try:
+        return api.get_json(f"v1/matches/{match_id}/salts", permanent=True)
+
+    except OSError:
+        return None
+
+
 def recent_hero_matches(account_id: int, hero_id: int, n: int = 10) -> list[dict[str, Any]]:
     """List the N most recent ranked match-history rows for a player on a hero."""
     ms = [
@@ -372,9 +381,7 @@ def matches_by_id(match_ids: Sequence[int]) -> list[dict[str, Any]]:
     return rows
 
 
-def _merge_downloads(
-    out_dir: Path, download_rows: list[dict[str, Any]]
-) -> list[dict[str, Any]]:
+def _merge_downloads(out_dir: Path, download_rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
     """Fold new download rows into the existing ledger and keep the earliest download per key."""
     existing = out_dir / "downloads.parquet"
     old = pl.read_parquet(existing).to_dicts() if existing.exists() else []
@@ -400,9 +407,41 @@ def _decode_bodies(match_ids: list[int]) -> Iterator[MatchInfo]:
             continue
 
 
-def _store_counts(
-    out_dir: Path, exclude: Collection[str], downloads_n: int
-) -> dict[str, int]:
+def download_metadata(match_ids: Sequence[int], archive_dir: str | Path) -> tuple[int, list[int]]:
+    """Download the raw metadata for each match into the archive as a .bin.
+
+    - returns how many landed and the match ids the API could not provide
+    - the .meta.bz2 comes from the Valve replay server, falling back to the API
+    """
+    written = 0
+    missing: list[int] = []
+
+    for match_id in match_ids:
+        if extract.has_match(archive_dir, match_id):
+            continue
+
+        info = salts(match_id)
+
+        if info is None or "metadata_salt" not in info:
+            missing.append(match_id)
+            continue
+
+        url = info.get("metadata_url")
+        body = (api.get_bytes(url) if url else None) or api.get_bytes(
+            f"{api.BASE}/v1/matches/{match_id}/metadata/raw"
+        )
+
+        if body is None:
+            missing.append(match_id)
+            continue
+
+        extract.store_meta(archive_dir, match_id, info["metadata_salt"], body)
+        written += 1
+
+    return written, missing
+
+
+def _store_counts(out_dir: Path, exclude: Collection[str], downloads_n: int) -> dict[str, int]:
     """Row totals per match table plus the downloads ledger size."""
     counts: dict[str, int] = {}
 
