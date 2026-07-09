@@ -1,10 +1,11 @@
 import bz2
-import json
+import datetime as dt
 
 import polars as pl
+import pytest
 from google.protobuf import json_format
 
-from deadlock_matches import export, extract
+from deadlock_matches import export, extract, items, queries
 from deadlock_matches.extract import pb
 
 EE = 3005970438
@@ -272,31 +273,13 @@ def test_item_events_denormalized():
     assert unknown["flags"][0] == 1
 
 
-def test_item_events_assets_date_null_without_history():
+def test_item_events_priced_from_committed_history():
+    start = dt.datetime.fromtimestamp(1783000000, dt.UTC)
     events = export.build_tables([build_match()])["item_events"]
 
-    assert events["assets_date"].null_count() == len(events)
-
-
-def test_item_events_priced_from_history_snapshot(tmp_path):
-    folder = tmp_path / "2026-01-01"
-    folder.mkdir()
-    old_ee = {
-        "id": EE,
-        "name": "Escalating Exposure",
-        "class_name": "upgrade_escalating_exposure",
-        "cost": 4800,
-        "slot": "spirit",
-        "tier": 4,
-        "is_active": False,
-    }
-    (folder / "items.json").write_text(json.dumps([old_ee]))
-
-    events = export.build_tables([build_match()], assets_history=tmp_path)["item_events"]
     ee = events.filter(pl.col("item_id") == EE)
 
-    assert ee["cost"][0] == 4800
-    assert str(ee["assets_date"][0]) == "2026-01-01"
+    assert ee["cost"][0] == items.item_asof(EE, start).cost
 
 
 def test_damage_maps_slots_to_accounts():
@@ -335,8 +318,11 @@ def test_damage_categories():
     assert export._damage_category("ability_blood_bomb_bloodspill") == "ability"
 
 
-def test_item_attribution():
-    events = export.build_tables([build_match()])["item_events"]
+def test_item_attribution(tmp_path):
+    for name, df in export.build_tables([build_match()]).items():
+        df.write_parquet(tmp_path / f"{name}.parquet")
+
+    events = queries.item_attribution(tmp_path).collect()
 
     ee = events.filter(pl.col("item_id") == EE)
 
@@ -454,18 +440,206 @@ def test_export_all_writes_parquet(tmp_path):
     (arc / "7_1.bin").write_bytes(header + bz2.compress(meta_msg.SerializeToString()))
 
     out = tmp_path / "pq"
-    counts = export.export_all(arc, out)
+    result = export.export_all(arc, out)
 
-    assert counts["matches"] == 1
-    assert counts["players"] == 2
-    assert counts["movement"] == 3
-    assert (out / "movement.parquet").exists()
+    assert result.counts["matches"] == 1
+    assert result.counts["players"] == 2
+    assert result.counts["movement"] == 3
+    assert result.decoded == 1
+    assert (out / "movement").is_dir()
+    assert next((out / "movement").glob("*.parquet"), None) is not None
 
-    df = pl.read_parquet(out / "players.parquet")
+    df = queries.scan("players", out).collect()
 
     assert df.filter(pl.col("account_id") == 42)["hero"][0] == "Mirage"
 
-    counts = export.export_all(arc, out, exclude=("movement",))
+    result = export.export_all(arc, out, exclude=("movement",))
 
-    assert "movement" not in counts
-    assert not (out / "movement.parquet").exists()
+    assert "movement" not in result.counts
+    assert (out / "movement").is_dir()
+
+
+def _archive_match(arc, match_id, when):
+    """Write one match into the .bin archive at a chosen start time."""
+    info = build_match(match_id=match_id)
+    info.start_time = int(when.timestamp())
+
+    contents = pb.CMsgMatchMetaDataContents()
+    contents.match_info.CopyFrom(info)
+
+    meta = pb.CMsgMatchMetaData()
+    meta.match_details = contents.SerializeToString()
+
+    header = f"replay1.valve.net\x00/1422450/{match_id}_1.meta.bz2\x00".encode()
+    (arc / f"{match_id}_1.bin").write_bytes(header + bz2.compress(meta.SerializeToString()))
+
+
+def test_export_partitions_by_month(tmp_path):
+    arc = tmp_path / "arc"
+    arc.mkdir()
+    out = tmp_path / "pq"
+
+    _archive_match(arc, 10, dt.datetime(2026, 6, 5, tzinfo=dt.UTC))
+    _archive_match(arc, 11, dt.datetime(2026, 7, 5, tzinfo=dt.UTC))
+
+    result = export.export_all(arc, out)
+
+    assert result.counts["matches"] == 2
+
+    written = {p.name for p in (out / "matches").glob("*.parquet")}
+
+    assert written == {"2026-06.parquet", "2026-07.parquet"}
+
+    matches = queries.scan("matches", out).collect()
+
+    assert sorted(matches["match_id"].to_list()) == [10, 11]
+
+
+def test_movement_is_partitioned_and_readable(tmp_path):
+    arc = tmp_path / "arc"
+    arc.mkdir()
+    out = tmp_path / "pq"
+
+    _archive_match(arc, 10, dt.datetime(2026, 6, 5, tzinfo=dt.UTC))
+    export.export_all(arc, out)
+
+    assert (out / "movement").is_dir()
+
+    movement = queries.scan("movement", out).collect()
+
+    assert movement.height == 3
+    assert movement["match_id"].unique().to_list() == [10]
+
+
+def test_incremental_decodes_only_new_matches(tmp_path):
+    arc = tmp_path / "arc"
+    arc.mkdir()
+    out = tmp_path / "pq"
+
+    _archive_match(arc, 10, dt.datetime(2026, 6, 5, tzinfo=dt.UTC))
+    export.export_all(arc, out)
+
+    _archive_match(arc, 11, dt.datetime(2026, 7, 5, tzinfo=dt.UTC))
+    result = export.export_new(arc, out)
+
+    assert result.decoded == 1
+    assert result.skipped == 1
+
+    matches = queries.scan("matches", out).collect()
+
+    assert sorted(matches["match_id"].to_list()) == [10, 11]
+
+
+def test_incremental_leaves_untouched_month_alone(tmp_path):
+    arc = tmp_path / "arc"
+    arc.mkdir()
+    out = tmp_path / "pq"
+
+    _archive_match(arc, 10, dt.datetime(2026, 6, 5, tzinfo=dt.UTC))
+    export.export_all(arc, out)
+
+    june = out / "matches" / "2026-06.parquet"
+    before = june.stat().st_mtime_ns
+
+    _archive_match(arc, 11, dt.datetime(2026, 7, 5, tzinfo=dt.UTC))
+    export.export_new(arc, out)
+
+    assert june.stat().st_mtime_ns == before
+    assert (out / "matches" / "2026-07.parquet").exists()
+
+
+def test_incremental_is_idempotent(tmp_path):
+    arc = tmp_path / "arc"
+    arc.mkdir()
+    out = tmp_path / "pq"
+
+    _archive_match(arc, 10, dt.datetime(2026, 6, 5, tzinfo=dt.UTC))
+    _archive_match(arc, 11, dt.datetime(2026, 6, 6, tzinfo=dt.UTC))
+    export.export_all(arc, out)
+
+    names = ("matches", "players", "damage", "movement")
+    before = {name: len(queries.scan(name, out).collect()) for name in names}
+
+    result = export.export_new(arc, out)
+
+    assert result.decoded == 0
+    assert result.skipped == 2
+
+    after = {name: len(queries.scan(name, out).collect()) for name in names}
+
+    assert before == after
+
+    matches = queries.scan("matches", out).collect()
+
+    assert matches["match_id"].n_unique() == matches.height
+
+
+def test_write_partitioned_replaces_rather_than_duplicating(tmp_path):
+    df = export.build_tables([build_match(match_id=5)])["matches"]
+
+    export.write_partitioned("matches", df, "2026-06", tmp_path)
+    export.write_partitioned("matches", df, "2026-06", tmp_path)
+
+    got = pl.read_parquet(tmp_path / "matches" / "2026-06.parquet")
+
+    assert got.height == 1
+    assert got["match_id"].to_list() == [5]
+
+
+def test_write_partitioned_raises_on_schema_drift_and_keeps_the_old_file(tmp_path):
+    df = export.build_tables([build_match(match_id=5)])["matches"]
+
+    export.write_partitioned("matches", df, "2026-06", tmp_path)
+
+    target = tmp_path / "matches" / "2026-06.parquet"
+    before = target.read_bytes()
+
+    with pytest.raises((pl.exceptions.ShapeError, pl.exceptions.SchemaError, ValueError)):
+        export.write_partitioned("matches", df.drop("duration_s"), "2026-06", tmp_path)
+
+    assert target.read_bytes() == before
+
+
+def test_export_new_migrates_a_legacy_single_file_store(tmp_path):
+    arc = tmp_path / "arc"
+    arc.mkdir()
+    out = tmp_path / "pq"
+    out.mkdir()
+
+    _archive_match(arc, 10, dt.datetime(2026, 6, 5, tzinfo=dt.UTC))
+    _archive_match(arc, 11, dt.datetime(2026, 7, 5, tzinfo=dt.UTC))
+
+    for name, df in export.build_tables(list(export._decode_matches(export._archive_paths(arc)))).items():
+        df.write_parquet(out / f"{name}.parquet")
+
+    assert (out / "matches.parquet").exists()
+
+    result = export.export_new(arc, out, exclude=("movement",))
+
+    assert (out / "matches").is_dir()
+    assert not (out / "matches.parquet").exists()
+
+    matches = queries.scan("matches", out).collect()
+
+    assert sorted(matches["match_id"].to_list()) == [10, 11]
+    assert result.decoded == 0
+    assert result.skipped == 2
+
+
+def test_migrate_to_partitions_preserves_all_rows_without_decoding(tmp_path):
+    out = tmp_path / "pq"
+    out.mkdir()
+
+    tables = export.build_tables([build_match(match_id=10)])
+
+    for name, df in tables.items():
+        df.write_parquet(out / f"{name}.parquet")
+
+    before = {name: len(df) for name, df in tables.items()}
+
+    export.migrate_to_partitions(out)
+
+    for name in ("matches", "players", "damage", "movement"):
+        assert not (out / f"{name}.parquet").exists()
+        assert (out / name).is_dir()
+        assert queries.scan(name, out).collect().height == before[name]

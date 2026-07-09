@@ -23,6 +23,12 @@ def cache_dir() -> Path:
     return Path.home() / ".cache/deadlock-matches"
 
 
-def assets_history_dir() -> Path:
-    """Dated asset snapshots, one folder per refresh date."""
-    return data_dir() / "deadlock-matches/assets"
+def tilde(path: str | Path) -> str:
+    """Shorten a path under the home directory to a ~ prefix for printing."""
+    p = Path(path).resolve()
+    home = Path.home().resolve()
+
+    if p.is_relative_to(home):
+        return "~/" + p.relative_to(home).as_posix()
+
+    return str(p)

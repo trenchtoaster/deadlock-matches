@@ -14,7 +14,9 @@ import polars as pl
 from deadlock_matches import api, config, export, extract, items, paths, queries, schemas
 
 if TYPE_CHECKING:
-    from collections.abc import Collection, Sequence
+    from collections.abc import Collection, Iterator, Sequence
+
+    from deadlock_matches.extract import MatchInfo
 
 REGIONS = ("Europe", "NAmerica", "Asia", "SAmerica", "Oceania")
 PARQUET_DIR = paths.data_dir() / "deadlock-matches/parquet-players"
@@ -84,7 +86,7 @@ def top_players(
 
 
 def match_history(account_id: int) -> list[dict[str, Any]]:
-    """A player's recent matches, by account ID."""
+    """List the recent matches for a player, by account ID."""
     d = api.get_json(f"v1/players/{account_id}/match-history", max_age=api.DAY)
 
     return d.get("matches", d) if isinstance(d, dict) else d
@@ -96,7 +98,7 @@ def match_metadata(match_id: int) -> dict[str, Any]:
 
 
 def recent_hero_matches(account_id: int, hero_id: int, n: int = 10) -> list[dict[str, Any]]:
-    """The n most recent ranked match-history rows for a player on a hero."""
+    """List the N most recent ranked match-history rows for a player on a hero."""
     ms = [
         m
         for m in match_history(account_id)
@@ -150,7 +152,7 @@ def build_order(
 def player_builds(
     account_id: int, hero_id: int, n: int = 10, min_cost: int = 0
 ) -> list[dict[str, Any]]:
-    """The n most recent ranked builds for a player on a hero, win and loss.
+    """List the N most recent ranked builds for a player on a hero, win and loss.
 
     min_cost passes through to build_order.
     """
@@ -169,7 +171,7 @@ def player_builds(
 
 
 def player_timelines(account_id: int, hero_id: int, n: int = 10) -> list[dict[str, Any]]:
-    """A player's own player blocks (stats snapshots included) from recent ranked games."""
+    """Collect the player blocks for the account itself (stats snapshots included) from recent ranked games."""
     out = []
     for m in recent_hero_matches(account_id, hero_id, n):
         try:
@@ -370,51 +372,78 @@ def matches_by_id(match_ids: Sequence[int]) -> list[dict[str, Any]]:
     return rows
 
 
-def write_player_tables(
-    download_rows: list[dict[str, Any]],
-    out_dir: str | Path | None = None,
-    assets_history: Path | None = None,
-    exclude: Collection[str] = (),
-) -> dict[str, int]:
-    """Materialize downloaded matches into their own parquet directory, the standard tables plus downloads.
-
-    - downloads accumulates across runs: new rows merge with the existing table,
-      earliest downloaded_at winning per (match, player, hero)
-    - the match tables fully rebuild from the stored API bodies for every
-      match in downloads, downloading any body that went missing again
-    - exclude skips tables by name, the same list export_all takes
-    """
-    out_dir = PARQUET_DIR if out_dir is None else Path(out_dir)
-    out_dir.mkdir(parents=True, exist_ok=True)
-
+def _merge_downloads(
+    out_dir: Path, download_rows: list[dict[str, Any]]
+) -> list[dict[str, Any]]:
+    """Fold new download rows into the existing ledger and keep the earliest download per key."""
     existing = out_dir / "downloads.parquet"
     old = pl.read_parquet(existing).to_dicts() if existing.exists() else []
 
     merged: dict[tuple[int, int, int], dict[str, Any]] = {}
+
     for r in old + download_rows:
         key = (r["match_id"], r["account_id"], r["hero_id"])
 
         if key not in merged or r["downloaded_at"] < merged[key]["downloaded_at"]:
             merged[key] = r
 
-    downloads = sorted(merged.values(), key=lambda r: (r["match_id"], r["account_id"]))
+    return sorted(merged.values(), key=lambda r: (r["match_id"], r["account_id"]))
 
-    infos = []
-    for match_id in sorted({r["match_id"] for r in downloads}):
+
+def _decode_bodies(match_ids: list[int]) -> Iterator[MatchInfo]:
+    """Decode the stored API body for each match id in order and skip any that fail."""
+    for match_id in match_ids:
         try:
-            infos.append(extract.from_api_json(match_metadata(match_id)))
+            yield extract.from_api_json(match_metadata(match_id))
+
         except Exception:
             continue
 
-    tables = export.build_tables(infos, assets_history, exclude)
-    tables["downloads"] = schemas.conform("downloads", downloads)
 
-    counts = {}
-    for name, df in tables.items():
-        df.write_parquet(out_dir / f"{name}.parquet")
-        counts[name] = len(df)
+def _store_counts(
+    out_dir: Path, exclude: Collection[str], downloads_n: int
+) -> dict[str, int]:
+    """Row totals per match table plus the downloads ledger size."""
+    counts: dict[str, int] = {}
 
-    for name in exclude:
-        (out_dir / f"{name}.parquet").unlink(missing_ok=True)
+    for name in schemas.TABLES:
+        if name not in schemas.PARTITIONED or name in exclude:
+            continue
+
+        if queries.table_exists(name, out_dir):
+            counts[name] = queries.scan(name, out_dir).select(pl.len()).collect().item()
+
+    counts["downloads"] = downloads_n
 
     return counts
+
+
+def write_player_tables(
+    download_rows: list[dict[str, Any]],
+    out_dir: str | Path | None = None,
+    exclude: Collection[str] = (),
+) -> dict[str, int]:
+    """Materialize downloaded matches into their own parquet directory plus the downloads ledger.
+
+    - downloads accumulates across runs and the earliest downloaded_at wins per (match, player, hero)
+    - match bodies are immutable so only match_ids not already built get decoded and appended
+    - a legacy single-file store is re-laid-out into partitions first, without decoding anything
+    - nothing is pruned, so a player's history builds up across runs
+    """
+    out_dir = PARQUET_DIR if out_dir is None else Path(out_dir)
+    out_dir.mkdir(parents=True, exist_ok=True)
+
+    downloads = _merge_downloads(out_dir, download_rows)
+    wanted = sorted({r["match_id"] for r in downloads})
+
+    if export.is_legacy_layout(out_dir):
+        export.migrate_to_partitions(out_dir, exclude)
+
+    exported = export.exported_match_ids(out_dir)
+    new_ids = [m for m in wanted if m not in exported]
+
+    export.export_infos(_decode_bodies(new_ids), out_dir, exclude)
+
+    schemas.conform("downloads", downloads).write_parquet(out_dir / "downloads.parquet")
+
+    return _store_counts(out_dir, exclude, len(downloads))

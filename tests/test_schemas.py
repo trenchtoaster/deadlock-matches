@@ -3,7 +3,7 @@ import datetime as dt
 import polars as pl
 import pytest
 
-from deadlock_matches import schemas
+from deadlock_matches import assets, schemas
 
 MATCH_ROW = {
     "match_id": 1,
@@ -77,3 +77,35 @@ def test_describe_all_tables():
 def test_describe_unknown_table():
     with pytest.raises(ValueError, match="Unknown table"):
         schemas.describe("test")
+
+
+def test_asset_tables_conform_empty_typed():
+    for name in schemas.ASSET_TABLES:
+        df = schemas.conform(name, [])
+
+        assert df.height == 0
+        assert df.columns == list(schemas.TABLES[name])
+
+
+def test_weapon_history_columns_match_assets():
+    cols = [
+        c
+        for c in schemas.TABLES["ability_weapon_history"]
+        if c not in ("ability_class", "era_from", "client_version")
+    ]
+
+    assert tuple(cols) == assets.WEAPON_FIELDS
+    assert schemas.WEAPON_HISTORY_FIELDS == assets.WEAPON_FIELDS
+
+
+def test_table_path_routes_asset_tables(tmp_path):
+    assert schemas.table_path("item_history", tmp_path) == tmp_path / "assets/item_history.parquet"
+    assert schemas.table_path("matches", tmp_path) == tmp_path / "matches.parquet"
+
+
+def test_partitioned_covers_match_tables_only(tmp_path):
+    assert schemas.is_partitioned("matches")
+    assert schemas.is_partitioned("movement")
+    assert not schemas.is_partitioned("item_history")
+    assert not schemas.is_partitioned("downloads")
+    assert schemas.partition_dir("movement", tmp_path) == tmp_path / "movement"

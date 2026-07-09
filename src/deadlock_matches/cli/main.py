@@ -3,12 +3,13 @@
 from __future__ import annotations
 
 import argparse
+import datetime as dt
 from pathlib import Path
 from typing import TYPE_CHECKING
 
 import polars as pl
 
-from deadlock_matches import export, extract, players, queries, schemas, timeline
+from deadlock_matches import export, extract, paths, players, queries, schemas, timeline
 from deadlock_matches.cli import cards, data, items, meta, performance
 from deadlock_matches.config import (
     config_account_names,
@@ -19,6 +20,12 @@ from deadlock_matches.config import (
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
+
+AS_OF_HELP = (
+    "show the card as the game was on this date (YYYY-MM-DD), like 2026-03-01, "
+    "from the versioned asset history; defaults to the current patch"
+)
+CHANGES_HELP = "list every patch that changed this, from the versioned asset history, and quit"
 
 
 def parse_accounts(v: str, names: dict[str, int] | None = None) -> list[int]:
@@ -133,6 +140,8 @@ def build_parser(config: str | Path | None = None) -> argparse.ArgumentParser:
         help="only count matches on or after this date (YYYY-MM-DD), like 2026-06-30, "
         "for both your games and the meta stats",
     )
+    it.add_argument("--as-of", type=dt.date.fromisoformat, default=None, help=AS_OF_HELP)
+    it.add_argument("--changes", action="store_true", help=CHANGES_HELP)
 
     b = sub.add_parser("builds", help="what the top players of a hero build")
     b.add_argument("--hero", required=True, help="hero display name, like Mirage")
@@ -188,13 +197,13 @@ def build_parser(config: str | Path | None = None) -> argparse.ArgumentParser:
     view.add_argument(
         "--souls",
         action="store_true",
-        help="souls by source per interval, like the in-game souls graph, grouped "
+        help="souls by source per interval, like the in game souls graph, grouped "
         "into lane, roaming, combat, and objectives",
     )
     view.add_argument(
         "--damage",
         action="store_true",
-        help="damage to heroes by source per interval, like the in-game source graph",
+        help="damage to heroes by source per interval, like the in game source graph",
     )
     view.add_argument(
         "--healing",
@@ -233,9 +242,7 @@ def build_parser(config: str | Path | None = None) -> argparse.ArgumentParser:
     f.add_argument("--games", type=int, default=5, help="recent ranked games per player")
     f.add_argument("--out", default=str(players.PARQUET_DIR), help="players parquet directory")
 
-    mn = sub.add_parser(
-        "leaderboard", help="the top players of a hero and their recent match IDs"
-    )
+    mn = sub.add_parser("leaderboard", help="the top players of a hero and their recent match IDs")
     mn.add_argument("--hero", required=True, help="hero display name, like Mirage")
     mn.add_argument("--players", type=int, default=8, help="how many top players to list")
     mn.add_argument(
@@ -309,6 +316,8 @@ def build_parser(config: str | Path | None = None) -> argparse.ArgumentParser:
     he.add_argument("hero", help="hero display name, like Mirage")
     he.add_argument("--souls", type=int, default=None, help="total souls earned")
     he.add_argument("--level", type=int, default=None, help="level, instead of souls")
+    he.add_argument("--as-of", type=dt.date.fromisoformat, default=None, help=AS_OF_HELP)
+    he.add_argument("--changes", action="store_true", help=CHANGES_HELP)
 
     ab = sub.add_parser("ability", help="base numbers, spirit scaling and tier upgrades")
     ab.add_argument("ability", help='ability display name, like "Dust Devil"')
@@ -321,6 +330,8 @@ def build_parser(config: str | Path | None = None) -> argparse.ArgumentParser:
         "--souls", type=int, default=None, help="resolve boon scaling at this soul count"
     )
     ab.add_argument("--level", type=int, default=None, help="level, instead of souls")
+    ab.add_argument("--as-of", type=dt.date.fromisoformat, default=None, help=AS_OF_HELP)
+    ab.add_argument("--changes", action="store_true", help=CHANGES_HELP)
 
     me = sub.add_parser("meta", help="public hero win rates, pick rates, and match counts")
     me.add_argument("--hero", default=None, help="one hero's numbers per bucket, like Mirage")
@@ -346,7 +357,25 @@ def build_parser(config: str | Path | None = None) -> argparse.ArgumentParser:
 
     sub.add_parser("assets", help="redownload heroes.json / items.json (run after a patch)")
 
-    sub.add_parser("export", help="rebuild parquet tables from the archive")
+    bf = sub.add_parser(
+        "backfill",
+        help="rebuild the committed item and hero price history from the API (maintainer)",
+    )
+    bf.add_argument(
+        "--confirm",
+        action="store_true",
+        help="run it, otherwise the command only says what it would do",
+    )
+    bf.add_argument(
+        "--start-date", default="2026-01-01", help="earliest patch date to scan (YYYY-MM-DD)"
+    )
+
+    ex = sub.add_parser("export", help="add newly archived matches to the parquet tables")
+    ex.add_argument(
+        "--full",
+        action="store_true",
+        help="rebuild every table from scratch after a backfill or schema change",
+    )
 
     sc = sub.add_parser("schema", help="column docs for the parquet tables (the data dictionary)")
     sc.add_argument(
@@ -380,14 +409,18 @@ def schema_report(args: argparse.Namespace) -> None:
     if args.sample is None:
         return
 
-    path = Path(args.parquet) / f"{args.table}.parquet"
+    path = schemas.table_path(args.table, args.parquet)
 
     if not queries.table_exists(args.table, args.parquet):
-        print(f"\nNo parquet file at {path}")
+        print(f"\nNo parquet file at {paths.tilde(path)}")
+
+        if args.table in schemas.ASSET_TABLES:
+            print("Run deadlock export to write the asset tables from the committed history.")
+
         return
 
     frame = queries.scan(args.table, args.parquet).head(args.sample).collect()
-    print(f"\nSample rows from {path}:")
+    print(f"\nSample rows from {paths.tilde(path)}:")
 
     with pl.Config(tbl_rows=args.sample, tbl_cols=-1, tbl_width_chars=240):
         print(frame)
@@ -396,7 +429,9 @@ def schema_report(args: argparse.Namespace) -> None:
 def main(argv: Sequence[str] | None = None, config: str | Path | None = None) -> None:
     """Entry point for the deadlock CLI."""
     args = build_parser(config).parse_args(argv)
-    ensure_config(config)
+
+    if config is None:
+        ensure_config()
 
     card_only = args.cmd == "item" and args.hero is None
 
@@ -451,6 +486,8 @@ def main(argv: Sequence[str] | None = None, config: str | Path | None = None) ->
         data.list_accounts(args, config)
     elif args.cmd == "assets":
         data.refresh_assets(args)
+    elif args.cmd == "backfill":
+        data.rebuild_history(args)
     elif args.cmd == "export":
         data.export_tables(args, config)
     else:

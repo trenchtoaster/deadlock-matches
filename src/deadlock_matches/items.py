@@ -9,9 +9,10 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
-from deadlock_matches import paths
+from deadlock_matches import history
 
 ITEMS_JSON = Path(__file__).parent / "data" / "items.json"
+ITEM_HISTORY_PARQUET = Path(__file__).parent / "data" / "item_history.parquet"
 
 
 @dataclass(frozen=True, slots=True)
@@ -55,30 +56,6 @@ class Item:
         )
 
 
-def snapshot_asof(
-    when: dt.datetime | dt.date, history_dir: Path | None = None
-) -> tuple[Path, str | None]:
-    """Finds the items.json path and snapshot date in effect at a moment.
-
-    - latest dated history folder on or before `when`
-    - moments older than all history get the earliest folder
-    - no history at all falls back to the bundled current snapshot (date None)
-    """
-    history_dir = paths.assets_history_dir() if history_dir is None else history_dir
-    day = when.date().isoformat() if isinstance(when, dt.datetime) else when.isoformat()
-    dates = sorted(
-        p.name for p in history_dir.glob("????-??-??") if (p / ITEMS_JSON.name).is_file()
-    )
-
-    if not dates:
-        return ITEMS_JSON, None
-
-    eligible = [d for d in dates if d <= day]
-    chosen = eligible[-1] if eligible else dates[0]
-
-    return history_dir / chosen / ITEMS_JSON.name, chosen
-
-
 @functools.cache
 def item_map(path: Path = ITEMS_JSON) -> dict[int, Item]:
     """Cached load of items.json, keyed by item ID."""
@@ -96,7 +73,7 @@ def item_name(item_id: int, path: Path = ITEMS_JSON) -> str:
 
 @functools.cache
 def item_by_name(name: str, path: Path = ITEMS_JSON) -> Item | None:
-    """Find an item by display name ignoring case, None if no match."""
+    """Look up an item by display name, ignoring case."""
     low = name.lower()
 
     for item in item_map(path).values():
@@ -108,9 +85,42 @@ def item_by_name(name: str, path: Path = ITEMS_JSON) -> Item | None:
 
 @functools.cache
 def item_by_class_name(class_name: str, path: Path = ITEMS_JSON) -> Item | None:
-    """Find an item by engine class_name, None if no match."""
+    """Look up an item by engine class_name."""
     for item in item_map(path).values():
         if item.class_name == class_name:
             return item
 
     return None
+
+
+def item_asof(
+    item_id: int, when: dt.datetime | dt.date, path: Path = ITEM_HISTORY_PARQUET
+) -> Item | None:
+    """Return the item cost, tier, and slot in effect at the given time.
+
+    - latest era on or before `when`
+    - times older than all history get the earliest era
+    - no history at all falls back to the bundled current snapshot
+    """
+    if not history.has_history(path):
+        return item_map().get(item_id)
+
+    rec = history.record_asof(path, item_id, when)
+
+    return Item.from_record(rec) if rec else None
+
+
+def item_map_asof(
+    when: dt.datetime | dt.date, path: Path = ITEM_HISTORY_PARQUET
+) -> dict[int, Item]:
+    """Return every item in effect at a time, keyed by id.
+
+    - one Item per id from the era live at when
+    - no history at all falls back to the bundled current snapshot
+    """
+    records = history.records_asof(path, when)
+
+    if records is None:
+        return item_map()
+
+    return {rec["id"]: Item.from_record(rec) for rec in records.values()}

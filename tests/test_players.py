@@ -4,7 +4,7 @@ import polars as pl
 import pytest
 from google.protobuf import json_format
 
-from deadlock_matches import api, players
+from deadlock_matches import api, players, queries
 from deadlock_matches.extract import pb
 
 
@@ -270,7 +270,7 @@ def test_write_player_tables(tmp_path, monkeypatch):
     assert downloads["player"][0] == "someone"
     assert downloads["region"][0] == "Asia"
 
-    matches = pl.read_parquet(tmp_path / "pq" / "matches.parquet")
+    matches = queries.scan("matches", tmp_path / "pq").collect()
 
     assert matches["match_id"][0] == 900
 
@@ -371,3 +371,37 @@ def test_tracked_player_games_since(tracked_pq):
     df = players.tracked_player_games(since=since, parquet_dir=tracked_pq, tz="UTC").collect()
 
     assert df["match_id"].to_list() == [901]
+
+
+def test_write_player_tables_skips_already_built(tmp_path, monkeypatch):
+    calls = []
+
+    def fake_meta(mid):
+        calls.append(mid)
+        return _match_json(mid)
+
+    monkeypatch.setattr(players, "match_metadata", fake_meta)
+
+    t0 = dt.datetime(2026, 7, 1, tzinfo=dt.UTC)
+    base = {
+        "account_id": 11,
+        "player": "someone",
+        "hero_id": 52,
+        "rank": 3,
+        "region": "Asia",
+        "downloaded_at": t0,
+    }
+    out = tmp_path / "pq"
+
+    players.write_player_tables([dict(base, match_id=900)], out_dir=out)
+    calls.clear()
+
+    counts = players.write_player_tables([dict(base, match_id=901)], out_dir=out)
+
+    assert calls == [901]
+
+    matches = queries.scan("matches", out).collect()
+
+    assert sorted(matches["match_id"].to_list()) == [900, 901]
+    assert matches["match_id"].n_unique() == matches.height
+    assert counts["matches"] == 2

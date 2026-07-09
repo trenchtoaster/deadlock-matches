@@ -4,7 +4,7 @@ import zoneinfo
 import polars as pl
 import pytest
 
-from deadlock_matches import export, queries, timeline
+from deadlock_matches import export, heroes, history, queries, schemas, timeline
 from deadlock_matches.extract import pb
 
 START = 1783000000
@@ -569,12 +569,14 @@ def test_item_buys_tier_and_item_combine(pq):
 
 def test_hero_scaling_frame():
     df = queries.hero_scaling().collect()
-    mirage = df.filter(pl.col("hero_id") == 52).sort("level")
+    era = df.select("era_from").unique().sort("era_from")["era_from"][-1]
+    mirage = df.filter((pl.col("hero_id") == 52) & (pl.col("era_from") == era)).sort("level")
 
     assert mirage.height == 36
     assert mirage["level"].to_list() == list(range(1, 37))
     assert mirage["base_health"][0] < mirage["base_health"][-1]
     assert mirage["required_souls"].is_sorted()
+    assert df["client_version"].null_count() == 0
 
 
 def test_hero_damage_keeps_only_detail_rows_on_heroes(pq):
@@ -690,32 +692,73 @@ def test_team_damage_ranks_uses_final_damage(rank_pq):
     assert df.filter(pl.col("account_id") == 42)["player_damage"][0] == 1500
 
 
-def test_stale_hero_matches_flags_impossible_health(tmp_path):
-    infos = [
-        build_match(match_id=1, level=10, max_health=100),
-        build_match(match_id=2, level=10, max_health=5000),
-    ]
+def _hero_rec(max_health, rs=500):
+    return {
+        "id": 52,
+        "name": "Mirage",
+        "class_name": "hero_mirage",
+        "stats": {"max_health": max_health},
+        "level_up": {"base_health_from_level": 10.0},
+        "levels": [
+            {
+                "level": 1,
+                "required_souls": 0,
+                "standard_upgrade": False,
+                "currencies": ["ability_unlocks"],
+            },
+            {
+                "level": 2,
+                "required_souls": rs,
+                "standard_upgrade": True,
+                "currencies": ["ability_points"],
+            },
+        ],
+    }
 
-    for name, df in export.build_tables(infos).items():
-        df.write_parquet(tmp_path / f"{name}.parquet")
 
-    assert queries.stale_hero_matches(tmp_path) == [1]
+def _seed_hero_history(tmp_path, monkeypatch, first, second):
+    path = tmp_path / "hero_history.parquet"
+    history.write(
+        path,
+        [
+            {"from": "2026-01-01T00:00:00", "build": 100, "records": {"52": first}},
+            {"from": "2026-02-01T00:00:00", "build": 200, "records": {"52": second}},
+        ],
+    )
+    monkeypatch.setattr(heroes, "HERO_HISTORY_PARQUET", path)
 
 
-def test_stale_hero_matches_empty_without_snapshots(pq):
-    assert queries.stale_hero_matches(pq) == []
-
-
-def test_hero_scaling_joins_to_players(pq):
-    df = (
-        queries.scan("players", pq)
-        .with_columns(pl.lit(1, pl.Int64).alias("level"))
-        .join(queries.hero_scaling(), on=["hero_id", "level"])
-        .collect()
+def test_hero_scaling_asof_picks_era_correct_health(tmp_path, monkeypatch):
+    _seed_hero_history(tmp_path, monkeypatch, _hero_rec(1000), _hero_rec(1200))
+    left = pl.LazyFrame(
+        {
+            "hero_id": [52, 52],
+            "level": [2, 2],
+            "start_time": [
+                dt.datetime(2026, 1, 15, tzinfo=dt.UTC),
+                dt.datetime(2026, 2, 15, tzinfo=dt.UTC),
+            ],
+        }
     )
 
-    assert df.height == 2
-    assert df["base_health"].null_count() == 0
+    out = queries.hero_scaling_asof(left).sort("start_time").collect()
+
+    assert out["base_health"].to_list() == [1010.0, 1210.0]
+
+
+def test_hero_scaling_asof_coalesces_prehistory(tmp_path, monkeypatch):
+    _seed_hero_history(tmp_path, monkeypatch, _hero_rec(1000), _hero_rec(1200))
+    left = pl.LazyFrame(
+        {
+            "hero_id": [52],
+            "level": [2],
+            "start_time": [dt.datetime(2025, 6, 1, tzinfo=dt.UTC)],
+        }
+    )
+
+    out = queries.hero_scaling_asof(left).collect()
+
+    assert out["base_health"].to_list() == [1010.0]
 
 
 def test_table_exists(pq, movement_pq):
@@ -966,6 +1009,37 @@ def test_ability_upgrades_maps_tier_costs_to_soul_thresholds(tmp_path):
     assert df["level"].to_list()[-1] == 36
 
 
+def _dust_match(match_id, start_ts, n_events):
+    info = build_match(match_id=match_id)
+    info.start_time = start_ts
+    player = info.players[0]
+    del player.items[:]
+
+    for i in range(n_events):
+        it = player.items.add()
+        it.item_id = DUST_DEVIL
+        it.game_time_s = 60 + i * 60
+
+    return info
+
+
+def test_ability_upgrades_uses_era_correct_soul_thresholds(tmp_path, monkeypatch):
+    _seed_hero_history(tmp_path, monkeypatch, _hero_rec(1000, rs=500), _hero_rec(1000, rs=800))
+    ts1 = int(dt.datetime(2026, 1, 15, tzinfo=dt.UTC).timestamp())
+    ts2 = int(dt.datetime(2026, 2, 15, tzinfo=dt.UTC).timestamp())
+    tables = export.build_tables(
+        [_dust_match(1, ts1, 2), _dust_match(2, ts2, 2)], exclude=("movement",)
+    )
+
+    for name, df in tables.items():
+        df.write_parquet(tmp_path / f"{name}.parquet")
+
+    df = queries.ability_upgrades("Mirage", tmp_path, accounts=[42]).collect()
+    pts = df.filter(pl.col("ability_point_cost") > 0).sort("match_id")
+
+    assert pts["required_souls"].to_list() == [500, 800]
+
+
 def test_snapshot_players(movement_pq):
     blocks = queries.snapshot_players("Mirage", movement_pq, accounts=[42])
 
@@ -1140,3 +1214,52 @@ def test_skill_rating_labels_badge_columns():
     ).with_columns(queries.skill_rating("average_badge_team0").alias("label"))
 
     assert df["label"].to_list() == ["Archon 6", "Oracle 3", "Obscurus", None]
+
+
+def _write_item_history(parquet_dir):
+    rows = [
+        {
+            "item_id": 7,
+            "name": "T",
+            "class_name": "upgrade_t",
+            "cost": cost,
+            "slot": "weapon",
+            "tier": 1,
+            "is_active": False,
+            "description": None,
+            "era_from": dt.datetime(y, m, 1, tzinfo=dt.UTC),
+            "client_version": build,
+        }
+        for cost, y, m, build in [(500, 2026, 1, 100), (800, 2026, 2, 200)]
+    ]
+    path = schemas.table_path("item_history", parquet_dir)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    schemas.conform("item_history", rows).write_parquet(path)
+
+
+def test_scan_routes_asset_tables_into_subfolder(tmp_path):
+    _write_item_history(tmp_path)
+
+    assert queries.table_exists("item_history", tmp_path)
+    assert not queries.table_exists("matches", tmp_path)
+    assert queries.scan("item_history", tmp_path).select(pl.len()).collect().item() == 2
+
+
+def test_asset_asof_picks_era_and_coalesces_prehistory(tmp_path):
+    _write_item_history(tmp_path)
+    left = pl.LazyFrame(
+        {
+            "item_id": [7, 7, 7],
+            "start_time": [
+                dt.datetime(2025, 1, 1, tzinfo=dt.UTC),
+                dt.datetime(2026, 1, 15, tzinfo=dt.UTC),
+                dt.datetime(2026, 3, 1, tzinfo=dt.UTC),
+            ],
+        }
+    )
+
+    out = queries.asset_asof(left, "item_history", by="item_id", parquet_dir=tmp_path)
+    out = out.sort("start_time").collect()
+
+    assert out["cost"].to_list() == [500, 500, 800]
+    assert out["client_version"].to_list() == [100, 100, 200]

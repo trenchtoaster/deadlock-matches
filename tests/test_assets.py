@@ -1,6 +1,8 @@
 import datetime as dt
 import json
 
+import pytest
+
 from deadlock_matches import abilities, assets, heroes, items
 
 HERO_REC = {
@@ -337,60 +339,6 @@ def test_refresh_abilities_clears_cache(tmp_path, monkeypatch):
     assert abilities.ability_map(p)["x"].name == "New"
 
 
-def test_archive_snapshots_writes_dated_copies(tmp_path):
-    dest = assets.archive_snapshots(tmp_path, dt.date(2026, 7, 6))
-
-    assert dest == tmp_path / "2026-07-06"
-
-    for name in ("heroes.json", "items.json", "abilities.json"):
-        assert (dest / name).is_file()
-
-    bundled = json.loads(items.ITEMS_JSON.read_text(encoding="utf-8"))
-
-    assert json.loads((dest / "items.json").read_text()) == bundled
-
-
-def _make_history(root, dates):
-    for d in dates:
-        folder = root / d
-        folder.mkdir(parents=True)
-        (folder / "items.json").write_text(json.dumps([{"id": 1, "name": d}]))
-
-
-def test_snapshot_asof_picks_latest_on_or_before(tmp_path):
-    _make_history(tmp_path, ["2026-06-01", "2026-07-05"])
-
-    assert items.snapshot_asof(dt.date(2026, 7, 6), tmp_path)[1] == "2026-07-05"
-    assert items.snapshot_asof(dt.date(2026, 7, 5), tmp_path)[1] == "2026-07-05"
-    assert items.snapshot_asof(dt.datetime(2026, 6, 20, 5, tzinfo=dt.UTC), tmp_path)[1] == (
-        "2026-06-01"
-    )
-
-
-def test_snapshot_asof_older_than_history_gets_earliest(tmp_path):
-    _make_history(tmp_path, ["2026-06-01", "2026-07-05"])
-
-    path, date = items.snapshot_asof(dt.date(2020, 1, 1), tmp_path)
-
-    assert date == "2026-06-01"
-    assert items.item_map(path)[1].name == "2026-06-01"
-
-
-def test_snapshot_asof_without_history_falls_back_to_bundled(tmp_path):
-    path, date = items.snapshot_asof(dt.date(2026, 7, 6), tmp_path / "missing")
-
-    assert path == items.ITEMS_JSON
-    assert date is None
-
-
-def test_snapshot_asof_ignores_incomplete_folders(tmp_path):
-    (tmp_path / "2026-07-01").mkdir()
-    (tmp_path / "notes").mkdir()
-    _make_history(tmp_path, ["2026-06-01"])
-
-    assert items.snapshot_asof(dt.date(2026, 7, 6), tmp_path)[1] == "2026-06-01"
-
-
 def test_loaded_hero_carries_stats(tmp_path, monkeypatch):
     monkeypatch.setattr(assets.api, "get_json", lambda path, **kw: [HERO_REC])
     p = tmp_path / "heroes.json"
@@ -497,3 +445,121 @@ def test_weapon_records_skip_ability_fields(tmp_path, monkeypatch):
     assert rec["weapon"] == {"bullet_damage": 14.8}
     assert "properties" not in rec
     assert "upgrades" not in rec
+
+
+def _item_recs(cost):
+    """One upgrade record in the raw API shape at a given cost."""
+    return [
+        {
+            "id": 10,
+            "name": "Foo",
+            "class_name": "upgrade_foo",
+            "cost": cost,
+            "item_slot_type": "weapon",
+            "item_tier": 1,
+        }
+    ]
+
+
+def _fake_assets(builds, items_at):
+    """A get_json stand-in serving steam-info dates and per-build item records."""
+
+    def get_json(path, **kw):
+        if "steam-info/all" in path:
+            return [{"client_version": b, "version_datetime": d} for b, d in builds.items()]
+
+        if "items/by-type/upgrade" in path:
+            return items_at[int(path.split("client_version=")[1])]
+
+        raise AssertionError(path)
+
+    return get_json
+
+
+def test_client_version_dates_maps_build_to_datetime(monkeypatch):
+    monkeypatch.setattr(
+        assets.api,
+        "get_json",
+        lambda path, **kw: [{"client_version": 5, "version_datetime": "2026-01-05T00:00:00"}],
+    )
+
+    assert assets.client_version_dates() == {5: "2026-01-05T00:00:00"}
+
+
+def test_build_item_history_finds_the_change_point(tmp_path, monkeypatch):
+
+    from deadlock_matches import items
+
+    builds = {
+        1: "2026-01-01T00:00:00",
+        2: "2026-01-02T00:00:00",
+        3: "2026-01-03T00:00:00",
+        4: "2026-01-04T00:00:00",
+        5: "2026-01-05T00:00:00",
+    }
+    items_at = {b: _item_recs(500 if b < 4 else 800) for b in builds}
+    monkeypatch.setattr(assets.api, "get_json", _fake_assets(builds, items_at))
+
+    path = tmp_path / "item_history.parquet"
+    n = assets.build_item_history(start_date="2026-01-01", path=path)
+
+    assert n == 2
+    assert items.item_asof(10, dt.datetime(2026, 1, 2), path).cost == 500
+    assert items.item_asof(10, dt.datetime(2026, 1, 5), path).cost == 800
+
+
+def test_build_item_history_single_era_when_nothing_changes(tmp_path, monkeypatch):
+    builds = {b: f"2026-01-0{b}T00:00:00" for b in (1, 2, 3)}
+    monkeypatch.setattr(
+        assets.api, "get_json", _fake_assets(builds, {b: _item_recs(500) for b in builds})
+    )
+
+    path = tmp_path / "item_history.parquet"
+    n = assets.build_item_history(start_date="2026-01-01", path=path)
+
+    assert n == 1
+
+
+def test_build_item_history_captures_a_revert(tmp_path, monkeypatch):
+    builds = {b: f"2026-01-0{b}T00:00:00" for b in (1, 2, 3)}
+    items_at = {1: _item_recs(500), 2: _item_recs(800), 3: _item_recs(500)}
+    monkeypatch.setattr(assets.api, "get_json", _fake_assets(builds, items_at))
+
+    from deadlock_matches import items
+
+    path = tmp_path / "item_history.parquet"
+    n = assets.build_item_history(start_date="2026-01-01", path=path)
+
+    assert n == 3
+    assert items.item_asof(10, dt.datetime(2026, 1, 1), path).cost == 500
+    assert items.item_asof(10, dt.datetime(2026, 1, 2), path).cost == 800
+    assert items.item_asof(10, dt.datetime(2026, 1, 3), path).cost == 500
+
+
+def test_load_build_raises_on_persistent_failure(monkeypatch):
+    monkeypatch.setattr(assets.time, "sleep", lambda *_: None)
+
+    def load(build):
+        raise OSError("500")
+
+    with pytest.raises(RuntimeError, match="client build 2"):
+        assets._load_build(2, {}, load, tries=2)
+
+
+def test_build_asset_history_aborts_when_a_build_keeps_failing(tmp_path, monkeypatch):
+    monkeypatch.setattr(assets.time, "sleep", lambda *_: None)
+    builds = {b: f"2026-01-0{b}T00:00:00" for b in (1, 2, 3)}
+
+    def get_json(path, **kw):
+        if "steam-info/all" in path:
+            return [{"client_version": b, "version_datetime": d} for b, d in builds.items()]
+
+        if "client_version=2" in path:
+            raise OSError("500")
+
+        return _item_recs(500)
+
+    monkeypatch.setattr(assets.api, "get_json", get_json)
+
+    with pytest.raises(RuntimeError, match="client build 2"):
+        assets.build_item_history(start_date="2026-01-01", path=tmp_path / "item_history.parquet")

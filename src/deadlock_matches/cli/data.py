@@ -9,11 +9,14 @@ from typing import TYPE_CHECKING, Any
 import polars as pl
 
 from deadlock_matches import (
+    abilities,
     assets,
     export,
     extract,
     heroes,
+    history,
     items,
+    paths,
     players,
     queries,
     skill_rating,
@@ -32,13 +35,7 @@ if TYPE_CHECKING:
 
 def _tilde(path: str | Path) -> str:
     """Shorten paths under the home directory to ~ for printing."""
-    p = Path(path).resolve()
-    home = Path.home().resolve()
-
-    if p.is_relative_to(home):
-        return "~/" + p.relative_to(home).as_posix()
-
-    return str(p)
+    return paths.tilde(path)
 
 
 TEAMS = {0: "The Hidden King", 1: "The Archmother"}
@@ -97,24 +94,11 @@ def sync_archive(cache: str | Path, archive_dir: str | Path) -> int:
 def refresh_tables(
     archive_dir: str | Path, out_dir: str | Path, exclude: Collection[str] = ()
 ) -> None:
-    """Rebuild the parquet tables so they cover everything in the archive."""
-    counts = export.export_all(archive_dir=archive_dir, out_dir=out_dir, exclude=exclude)
-    print(
-        f"Rebuilt {len(counts)} parquet files from {counts['matches']:,} matches at {_tilde(out_dir)}\n"
-    )
-    warn_stale_heroes(out_dir)
+    """Bring the parquet tables up to date with the archive by decoding only new matches."""
+    result = export.export_new(archive_dir=archive_dir, out_dir=out_dir, exclude=exclude)
 
-
-def warn_stale_heroes(parquet_dir: str | Path) -> None:
-    """Print a warning when current hero stats can't explain archived matches."""
-    stale = queries.stale_hero_matches(parquet_dir)
-
-    if stale:
-        shown = ", ".join(str(m) for m in stale[:5]) + (" ..." if len(stale) > 5 else "")
-        print(
-            f"Warning: hero base stats changed since {len(stale)} matches were played "
-            f"(computed base health exceeds what was recorded): {shown}\n"
-        )
+    if result.decoded:
+        print(f"Added {result.decoded:,} new matches to the parquet tables\n")
 
 
 def match_history(args: argparse.Namespace, config: str | Path | None = None) -> None:
@@ -181,8 +165,12 @@ def match_history(args: argparse.Namespace, config: str | Path | None = None) ->
     names = {account_id: name for name, account_id in config_account_names(config).items()}
     you = set(accounts)
 
-    if you:
-        legend = ", ".join(f"{names[a]} ({a})" if a in names else str(a) for a in accounts)
+    present = you & set(rows["account_id"].to_list())
+
+    if present:
+        legend = ", ".join(
+            f"{names[a]} ({a})" if a in names else str(a) for a in accounts if a in present
+        )
         print(f"You (marked * below): {legend}\n")
 
     for m in matches.iter_rows(named=True):
@@ -293,8 +281,40 @@ def refresh_assets(_args: argparse.Namespace) -> None:
     for name in sorted(old_items - new_items):
         print(f"  gone item: {name}")
 
-    dest = assets.archive_snapshots()
-    print(f"History: dated copy at {_tilde(dest)}")
+
+def rebuild_history(args: argparse.Namespace) -> None:
+    """Rebuild the committed item, hero, ability, and rank history from the assets API."""
+    builders = [
+        ("items", items.ITEM_HISTORY_PARQUET, assets.build_item_history),
+        ("heroes", heroes.HERO_HISTORY_PARQUET, assets.build_hero_history),
+        ("abilities", abilities.ABILITY_HISTORY_PARQUET, assets.build_ability_history),
+        ("ranks", skill_rating.RANK_HISTORY_PARQUET, assets.build_rank_history),
+    ]
+
+    if not args.confirm:
+        print("Rebuilding the committed asset history tables:")
+
+        for name, path, _ in builders:
+            print(f"  {name:<9} {len(history.eras(path))} eras at {_tilde(path)}")
+
+        builds = sum(d >= args.start_date for d in assets.client_version_dates().values())
+        print(
+            f"\nThis scans every client build since {args.start_date} ({builds} builds per "
+            f"asset type) and overwrites those committed files."
+        )
+        print("The API calls are cached after the first run, so a rerun is cheap.")
+        print("End users do not need it, they read the committed tables.")
+        print("Re-run with --confirm to proceed, then review and commit the result.")
+
+        return
+
+    for name, path, build in builders:
+        before = len(history.eras(path))
+        eras = build(start_date=args.start_date)
+        size = path.stat().st_size / 1024 if path.is_file() else 0.0
+        print(f"  {name:<9} {before} -> {eras} eras  {size:.0f} KB at {_tilde(path)}")
+
+    print("\nReview the diff and commit the updated tables.")
 
 
 def download_matches(args: argparse.Namespace, config: str | Path | None = None) -> None:
@@ -384,13 +404,22 @@ def leaderboard_report(args: argparse.Namespace, config: str | Path | None = Non
 
 
 def export_tables(args: argparse.Namespace, config: str | Path | None = None) -> None:
-    """Rebuild the parquet tables and say what was written."""
-    counts = export.export_all(
-        archive_dir=args.archive, out_dir=args.parquet, exclude=config_exclude(config)
-    )
+    """Update the parquet tables incrementally or fully rebuild them with --full."""
+    exclude = config_exclude(config)
 
-    for name, n in counts.items():
-        print(f"  {name:<14} {n:>7,} rows")
+    if getattr(args, "full", False):
+        result = export.export_all(archive_dir=args.archive, out_dir=args.parquet, exclude=exclude)
+
+    else:
+        result = export.export_new(archive_dir=args.archive, out_dir=args.parquet, exclude=exclude)
+
+    for name, n in result.counts.items():
+        print(f"  {name:<16} {n:>8,} rows")
+
+    if result.skipped:
+        print(
+            f"Decoded {result.decoded:,} new matches, "
+            f"skipped {result.skipped:,} already exported"
+        )
 
     print(f"Parquet tables at {_tilde(args.parquet)}")
-    warn_stale_heroes(args.parquet)

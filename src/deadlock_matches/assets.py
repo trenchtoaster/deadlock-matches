@@ -2,14 +2,16 @@
 
 from __future__ import annotations
 
-import datetime as dt
+import hashlib
 import json
 import re
+import time
 from typing import TYPE_CHECKING, Any
 
-from deadlock_matches import abilities, api, heroes, items, paths, skill_rating
+from deadlock_matches import abilities, api, heroes, history, items, skill_rating
 
 if TYPE_CHECKING:
+    from collections.abc import Callable
     from pathlib import Path
 
 HERO_FIELDS = (
@@ -90,8 +92,8 @@ def _measure(val: Any) -> Any:
     return _number(val)
 
 
-def _trim_properties(props: dict[str, Any] | None) -> dict[str, Any]:
-    """Reduce properties to {name: value}, dropping zeros and disabled values."""
+def _property_values(props: dict[str, Any] | None) -> dict[str, Any]:
+    """Flatten properties to {name: value}, dropping zeros and disabled values."""
     out = {}
 
     for name, prop in (props or {}).items():
@@ -107,7 +109,7 @@ def _trim_properties(props: dict[str, Any] | None) -> dict[str, Any]:
     return out
 
 
-def _trim_hero(rec: dict[str, Any]) -> dict[str, Any]:
+def _hero_snapshot(rec: dict[str, Any]) -> dict[str, Any]:
     """Keep the hero fields the package uses, flattening starting_stats to {name: value}."""
     out = {k: rec.get(k) for k in HERO_FIELDS}
     stats = rec.get("starting_stats") or {}
@@ -193,10 +195,10 @@ def _card_sections(sections: list[dict[str, Any]] | None) -> list[dict[str, Any]
     return out
 
 
-def _trim_item(rec: dict[str, Any]) -> dict[str, Any]:
-    """Map an API upgrade record to the snapshot shape (the API uses longer field names)."""
+def _item_snapshot(rec: dict[str, Any]) -> dict[str, Any]:
+    """Convert an API upgrade record to the snapshot shape (the API uses longer field names)."""
     desc = rec.get("description")
-    props = _trim_properties(rec.get("properties"))
+    props = _property_values(rec.get("properties"))
 
     return {
         "id": rec["id"],
@@ -214,7 +216,9 @@ def _trim_item(rec: dict[str, Any]) -> dict[str, Any]:
     }
 
 
-def _trim_ability_properties(props: dict[str, Any] | None) -> tuple[dict[str, Any], dict[str, Any]]:
+def _split_ability_properties(
+    props: dict[str, Any] | None,
+) -> tuple[dict[str, Any], dict[str, Any]]:
     """Split ability properties into base values and stat scaling."""
     values = {}
     scaling = {}
@@ -247,8 +251,8 @@ def _trim_ability_properties(props: dict[str, Any] | None) -> tuple[dict[str, An
     return values, scaling
 
 
-def _trim_upgrades(tiers: list[dict[str, Any]] | None) -> list[list[dict[str, Any]]]:
-    """Reduce tier upgrades to [{property, bonus}] lists, one list per tier."""
+def _tier_bonuses(tiers: list[dict[str, Any]] | None) -> list[list[dict[str, Any]]]:
+    """Flatten tier upgrades to [{property, bonus}] lists, one list per tier."""
     out = []
 
     for tier in tiers or []:
@@ -281,7 +285,7 @@ def _trim_upgrades(tiers: list[dict[str, Any]] | None) -> list[list[dict[str, An
     return out
 
 
-def _trim_ability(rec: dict[str, Any], kind: str) -> dict[str, Any]:
+def _ability_snapshot(rec: dict[str, Any], kind: str) -> dict[str, Any]:
     """Keep the fields that name a damage source, plus gun stats and ability numbers."""
     out = {
         "id": rec["id"],
@@ -299,8 +303,8 @@ def _trim_ability(rec: dict[str, Any], kind: str) -> dict[str, Any]:
         desc = rec.get("description")
         desc = desc if isinstance(desc, dict) else {"desc": desc}
         out["description"] = _clean_text(desc.get("desc"))
-        out["properties"], out["scaling"] = _trim_ability_properties(rec.get("properties"))
-        out["upgrades"] = _trim_upgrades(rec.get("upgrades"))
+        out["properties"], out["scaling"] = _split_ability_properties(rec.get("properties"))
+        out["upgrades"] = _tier_bonuses(rec.get("upgrades"))
         out["tier_descriptions"] = [
             _clean_text(desc.get(f"t{n}_desc")) for n in range(1, len(out["upgrades"]) + 1)
         ]
@@ -308,21 +312,188 @@ def _trim_ability(rec: dict[str, Any], kind: str) -> dict[str, Any]:
     return out
 
 
-def archive_snapshots(history_dir: Path | None = None, on: dt.date | None = None) -> Path:
-    """Copy the bundled snapshots into a dated history folder so old prices stay recoverable.
+def client_version_dates() -> dict[int, str]:
+    """Return the release datetime for each Steam client build."""
+    records = api.get_json("v1/assets/steam-info/all", max_age=api.DAY)
 
-    history_dir defaults to the standard data directory, and on (the folder date)
-    defaults to today.
+    return {r["client_version"]: r["version_datetime"] for r in records}
+
+
+def _versioned(endpoint: str, build: int) -> list[dict[str, Any]]:
+    """Return the records from one assets endpoint at a client build."""
+    return api.get_json(f"{endpoint}?client_version={build}", permanent=True)
+
+
+def _load_build(
+    build: int,
+    cache: dict[int, dict],
+    load: Callable[[int], dict[str, Any]],
+    tries: int = 4,
+) -> dict:
+    """Return the projected records at one client build, retrying transient failures.
+
+    Raises when the build keeps failing so a backfill never records an era start
+    from a different build than the one dated.
     """
-    history_dir = paths.assets_history_dir() if history_dir is None else history_dir
-    on = dt.date.today() if on is None else on
-    dest = history_dir / on.isoformat()
-    dest.mkdir(parents=True, exist_ok=True)
+    if build in cache:
+        return cache[build]
 
-    for src in (heroes.HEROES_JSON, items.ITEMS_JSON, abilities.ABILITIES_JSON):
-        (dest / src.name).write_text(src.read_text(encoding="utf-8"), encoding="utf-8")
+    for k in range(tries):
+        try:
+            cache[build] = load(build)
+            return cache[build]
 
-    return dest
+        except OSError as exc:
+            if k == tries - 1:
+                msg = f"assets API failed for client build {build} after {tries} tries"
+                raise RuntimeError(msg) from exc
+
+            time.sleep(0.4 * (k + 1))
+
+    return cache[build]
+
+
+def _digest(records: dict[str, Any]) -> str:
+    """Return a stable hash of one build's projected records."""
+    return hashlib.sha256(json.dumps(records, sort_keys=True).encode()).hexdigest()
+
+
+def _change_starts(
+    builds: list[int], cache: dict[int, dict], load: Callable[[int], dict[str, Any]]
+) -> list[int]:
+    """Return each build index whose projected records differ from the build before it.
+
+    Walks every build so a value that changes and reverts between two builds is
+    still captured, which a bisection over the endpoints would miss.
+    """
+    starts: list[int] = []
+    prev: str | None = None
+
+    for i, build in enumerate(builds):
+        digest = _digest(_load_build(build, cache, load))
+
+        if digest != prev:
+            starts.append(i)
+            prev = digest
+
+    return starts
+
+
+def build_asset_history(
+    load: Callable[[int], dict[str, Any]], path: Path, start_date: str = "2026-01-01"
+) -> int:
+    """Build a committed asset history by scanning every client build for change points.
+
+    - load(build) returns the {id: record} map at a client build
+    - one era per patch that changed any stored record
+    """
+    dates = client_version_dates()
+    builds = sorted(b for b, d in dates.items() if d >= start_date)
+
+    if not builds:
+        msg = f"no client builds on or after {start_date}"
+        raise ValueError(msg)
+
+    cache: dict[int, dict] = {}
+    states = [
+        {
+            "from": dates[builds[i]],
+            "build": builds[i],
+            "records": _load_build(builds[i], cache, load),
+        }
+        for i in _change_starts(builds, cache, load)
+    ]
+
+    history.write(path, states)
+
+    return len(states)
+
+
+def _by_id(record: dict[str, Any]) -> str:
+    """Return the record id as a string."""
+    return str(record["id"])
+
+
+def _endpoint_load(
+    endpoint: str,
+    project: Callable[[dict[str, Any]], dict[str, Any]],
+    key: Callable[[dict[str, Any]], str],
+) -> Callable[[int], dict[str, Any]]:
+    """Return a loader mapping each record from one endpoint through project, keyed by key."""
+
+    def load(build: int) -> dict[str, Any]:
+        return {key(r): project(r) for r in _versioned(endpoint, build)}
+
+    return load
+
+
+def build_item_history(start_date: str = "2026-01-01", path: Path | None = None) -> int:
+    """Build the committed item history from the assets API.
+
+    - one era per patch that changed any item field
+    - path defaults to the committed history table
+    """
+    path = items.ITEM_HISTORY_PARQUET if path is None else path
+    load = _endpoint_load("v1/assets/items/by-type/upgrade", _item_snapshot, _by_id)
+
+    return build_asset_history(load, path, start_date)
+
+
+def build_hero_history(start_date: str = "2026-01-01", path: Path | None = None) -> int:
+    """Build the committed hero history from the assets API.
+
+    - one era per patch that changed any hero field
+    - path defaults to the committed history table
+    """
+    path = heroes.HERO_HISTORY_PARQUET if path is None else path
+    load = _endpoint_load("v1/assets/heroes", _hero_snapshot, _by_id)
+
+    return build_asset_history(load, path, start_date)
+
+
+def _ability_load(build: int) -> dict[str, Any]:
+    """Return the {class_name: ability record} map at a build, from the ability and weapon endpoints."""
+    out = {}
+
+    for kind in ("ability", "weapon"):
+        for r in _versioned(f"v1/assets/items/by-type/{kind}", build):
+            if r.get("class_name") and r.get("name"):
+                out[r["class_name"]] = _ability_snapshot(r, kind)
+
+    return out
+
+
+def build_ability_history(start_date: str = "2026-01-01", path: Path | None = None) -> int:
+    """Build the committed ability history from the assets API.
+
+    - one era per patch that changed any ability or gun field
+    - path defaults to the committed history table
+    """
+    path = abilities.ABILITY_HISTORY_PARQUET if path is None else path
+
+    return build_asset_history(_ability_load, path, start_date)
+
+
+def _rank_record(record: dict[str, Any]) -> dict[str, Any]:
+    """Return the tier and name for one rank record."""
+    return {"tier": record["tier"], "name": record["name"]}
+
+
+def _by_tier(record: dict[str, Any]) -> str:
+    """Return the rank tier as a string."""
+    return str(record["tier"])
+
+
+def build_rank_history(start_date: str = "2026-01-01", path: Path | None = None) -> int:
+    """Build the committed rank history from the assets API.
+
+    - one era per patch that renamed or added a rank tier
+    - path defaults to the committed history table
+    """
+    path = skill_rating.RANK_HISTORY_PARQUET if path is None else path
+    load = _endpoint_load("v1/assets/ranks", _rank_record, _by_tier)
+
+    return build_asset_history(load, path, start_date)
 
 
 def refresh_abilities(path: Path | None = None) -> int:
@@ -332,7 +503,7 @@ def refresh_abilities(path: Path | None = None) -> int:
     """
     path = abilities.ABILITIES_JSON if path is None else path
     records = [
-        _trim_ability(r, kind)
+        _ability_snapshot(r, kind)
         for kind in ("ability", "weapon")
         for r in api.get_json(f"v1/assets/items/by-type/{kind}", use_cache=False)
         if r.get("class_name") and r.get("name")
@@ -352,7 +523,7 @@ def refresh_heroes(path: Path | None = None) -> int:
     path = heroes.HEROES_JSON if path is None else path
     records = api.get_json("v1/assets/heroes", use_cache=False)
 
-    path.write_text(json.dumps([_trim_hero(r) for r in records]), encoding="utf-8")
+    path.write_text(json.dumps([_hero_snapshot(r) for r in records]), encoding="utf-8")
     heroes.hero_map.cache_clear()
 
     return len(records)
@@ -382,7 +553,7 @@ def refresh_items(path: Path | None = None) -> int:
     path = items.ITEMS_JSON if path is None else path
     records = api.get_json("v1/assets/items/by-type/upgrade", use_cache=False)
 
-    path.write_text(json.dumps([_trim_item(r) for r in records]), encoding="utf-8")
+    path.write_text(json.dumps([_item_snapshot(r) for r in records]), encoding="utf-8")
     items.item_map.cache_clear()
     items.item_by_name.cache_clear()
     items.item_by_class_name.cache_clear()

@@ -14,14 +14,23 @@ if TYPE_CHECKING:
 
 
 def item_report(args: argparse.Namespace, config: str | Path | None = None) -> None:
-    """Print the item's stat card, or its damage, win rate, and synergy numbers on a hero."""
+    """Print the stat card for an item, or its damage, win rate, and synergy numbers on a hero."""
     item = items.item_by_name(args.item)
     if item is None:
         print(f"Unknown item: {args.item}")
         return
 
+    if getattr(args, "changes", False):
+        cards.print_changes(item.name, "item", items.ITEM_HISTORY_PARQUET, item.id)
+        return
+
+    when = getattr(args, "as_of", None)
+
+    if when is not None:
+        item = items.item_asof(item.id, when) or item
+
     if args.hero is None:
-        cards.item_card(item)
+        cards.item_card(item, when)
         return
 
     hero_id = heroes.hero_id_by_name(args.hero)

@@ -1,4 +1,4 @@
-"""Damage broken down by source from a match's damage_matrix.
+"""Damage broken down by source from the match damage_matrix.
 
 - stat_type 0 is the hero-damage figure from the end-of-match screen
 - only real player slots count (slot 0 is an objective, not a hero)
@@ -26,7 +26,7 @@ def _player_slot(info: MatchInfo, account_id: int) -> int | None:
 
 
 def _damage_dealer(info: MatchInfo, account_id: int) -> Any | None:
-    """The damage_dealers entry for an account, or None if they dealt none."""
+    """Look up the damage_dealers entry for an account."""
     slot = _player_slot(info, account_id)
     if slot is None:
         return None
@@ -69,7 +69,7 @@ def damage_from_source(
 def damage_by_source(
     info: MatchInfo, account_id: int, stat_type: int = HERO_DAMAGE
 ) -> dict[str, float]:
-    """Maps each source name to the hero damage one player dealt with it, highest first."""
+    """Total the hero damage one player dealt with each source, highest first."""
     dealer = _damage_dealer(info, account_id)
     if dealer is None:
         return {}

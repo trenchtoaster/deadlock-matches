@@ -8,11 +8,13 @@ from typing import TYPE_CHECKING
 
 import polars as pl
 
-from deadlock_matches import abilities, config, export, heroes, items, schemas
+from deadlock_matches import abilities, config, export, heroes, history, items, schemas
 from deadlock_matches import skill_rating as sr
 
 if TYPE_CHECKING:
-    from collections.abc import Sequence
+    from collections.abc import Iterator, Sequence
+
+_ERA_SENTINEL = dt.datetime(1970, 1, 1, tzinfo=dt.UTC)
 
 
 def scan(table: str, parquet_dir: str | Path | None = None) -> pl.LazyFrame:
@@ -26,21 +28,128 @@ def scan(table: str, parquet_dir: str | Path | None = None) -> pl.LazyFrame:
         msg = f"Unknown table {table!r}, tables: {known}"
         raise ValueError(msg)
 
-    parquet_dir = export.PARQUET_DIR if parquet_dir is None else Path(parquet_dir)
+    parquet_dir = export.PARQUET_DIR if parquet_dir is None else parquet_dir
 
-    return pl.scan_parquet(parquet_dir / f"{table}.parquet")
+    if schemas.is_partitioned(table):
+        directory = schemas.partition_dir(table, parquet_dir)
+
+        if directory.is_dir():
+            return pl.scan_parquet(str(directory / "*.parquet"))
+
+    return pl.scan_parquet(schemas.table_path(table, parquet_dir))
 
 
 def table_exists(table: str, parquet_dir: str | Path | None = None) -> bool:
-    """Whether one exported table's parquet file is on disk (movement is excluded by default)."""
+    """Whether a table is on disk, as a month-partitioned directory or a single parquet file."""
     if table not in schemas.TABLES:
         known = ", ".join(schemas.TABLES)
         msg = f"Unknown table {table!r}, tables: {known}"
         raise ValueError(msg)
 
-    parquet_dir = export.PARQUET_DIR if parquet_dir is None else Path(parquet_dir)
+    parquet_dir = export.PARQUET_DIR if parquet_dir is None else parquet_dir
 
-    return (parquet_dir / f"{table}.parquet").exists()
+    if schemas.is_partitioned(table):
+        directory = schemas.partition_dir(table, parquet_dir)
+
+        if directory.is_dir() and next(directory.glob("*.parquet"), None) is not None:
+            return True
+
+    return schemas.table_path(table, parquet_dir).exists()
+
+
+def _asof_era_join(
+    left: pl.LazyFrame,
+    right: pl.LazyFrame,
+    by: str | Sequence[str],
+    on: str = "start_time",
+) -> pl.LazyFrame:
+    """Join right onto left by the era live at each left row's time.
+
+    - right carries an era_from datetime column and the join key(s) in by
+    - backward as-of on era_from <= left[on], grouped by the key(s)
+    - rows older than the first era fall back to the earliest era, matching record_asof
+    """
+    by_cols = [by] if isinstance(by, str) else list(by)
+    prepared = right.with_columns(
+        pl.when(pl.col("era_from") == pl.col("era_from").min().over(by_cols))
+        .then(pl.lit(_ERA_SENTINEL))
+        .otherwise(pl.col("era_from"))
+        .alias("_join_from")
+    ).sort("_join_from")
+
+    return (
+        left.sort(on)
+        .join_asof(prepared, left_on=on, right_on="_join_from", by=by_cols, strategy="backward")
+        .drop("_join_from")
+    )
+
+
+def asset_asof(
+    left: pl.LazyFrame,
+    table: str,
+    by: str,
+    on: str = "start_time",
+    parquet_dir: str | Path | None = None,
+) -> pl.LazyFrame:
+    """Join a versioned asset table onto left rows by the era live at their time.
+
+    - backward as-of on era_from <= left[on], grouped by the asset key
+    - rows older than the first era fall back to the earliest era, matching record_asof
+    """
+    return _asof_era_join(left, scan(table, parquet_dir), by, on)
+
+
+def item_events_priced(parquet_dir: str | Path | None = None) -> pl.LazyFrame:
+    """Reprice item_events against the item era live at each match start.
+
+    - joins item_events to matches for start_time, then as-of onto item_history
+    - cost, slot, and tier come from item_history, not the baked snapshot
+    """
+    matches = scan("matches", parquet_dir).select("match_id", "start_time")
+    left = (
+        scan("item_events", parquet_dir).drop("cost", "slot", "tier").join(matches, on="match_id")
+    )
+
+    return asset_asof(left, "item_history", by="item_id", parquet_dir=parquet_dir)
+
+
+def item_attribution(parquet_dir: str | Path | None = None) -> pl.LazyFrame:
+    """item_events with an attribution column derived from the damage table.
+
+    - proc = the item shows up as its own upgrade_ damage source somewhere in damage
+    - stat = it never does, its value hides inside other damage rows (Boundless Spirit, Echo Shard)
+    - derived at read time so it stays consistent no matter how the tables were appended
+    """
+    proc = (
+        scan("damage", parquet_dir)
+        .filter(pl.col("stat") == "damage")
+        .filter(pl.col("source_class").str.starts_with("upgrade_"))
+        .select(pl.col("source_class").alias("class_name"))
+        .unique()
+        .with_columns(pl.lit(True).alias("_proc"))
+    )
+
+    catalog = items.item_map()
+    named = [(item_id, item.class_name) for item_id, item in catalog.items() if item.class_name]
+    lookup = pl.LazyFrame(
+        {
+            "item_id": [item_id for item_id, _ in named],
+            "class_name": [class_name for _, class_name in named],
+        }
+    )
+
+    return (
+        scan("item_events", parquet_dir)
+        .join(lookup, on="item_id", how="left")
+        .join(proc, on="class_name", how="left")
+        .with_columns(
+            pl.when(pl.col("_proc").is_not_null())
+            .then(pl.lit("proc"))
+            .otherwise(pl.lit("stat"))
+            .alias("attribution")
+        )
+        .drop("_proc", "class_name")
+    )
 
 
 def my_games(
@@ -48,7 +157,7 @@ def my_games(
     accounts: Sequence[int] | None = None,
     tz: str | None = None,
 ) -> pl.LazyFrame:
-    """One row per match the player appeared in, joined to match details.
+    """Build one row per match the player appeared in, joined to match details.
 
     - adds start_local and day columns so grouping by day or week uses
       the local date, not the UTC date
@@ -73,7 +182,7 @@ def my_games(
 
 
 def _item_windows(predicate: pl.Expr, parquet_dir: str | Path | None) -> pl.LazyFrame:
-    """One row per buy of one item with its ownership window.
+    """Build one row per buy of one item with its ownership window.
 
     A sold buy's window ends at the sell time, a kept buy's at the end of the
     match.
@@ -93,7 +202,7 @@ def _item_windows(predicate: pl.Expr, parquet_dir: str | Path | None) -> pl.Lazy
 
 
 def _item_buys(windows: pl.LazyFrame) -> pl.LazyFrame:
-    """One row per buyer per match with the first buy time and summed owned seconds."""
+    """Build one row per buyer per match with the first buy time and summed owned seconds."""
     return windows.group_by("match_id", "account_id").agg(
         pl.col("game_time_s").min(),
         (pl.col("end_s") - pl.col("game_time_s")).sum().alias("owned_s"),
@@ -220,7 +329,7 @@ def item_games(
     accounts: Sequence[int] | None = None,
     since: str | dt.date | None = None,
 ) -> pl.LazyFrame:
-    """One row per game for the player, with the first buy time and damage for one item joined in.
+    """Build one row per game for the player, with the first buy time and damage for one item joined in.
 
     Games without a buy keep nulls, so "not built" games stay visible next to
     the built ones. owned_s sums the ownership windows, ending at the sell
@@ -394,16 +503,18 @@ def ability_upgrades(
             .over("match_id", "account_id")
             .alias("ability_points_spent")
         )
+        .pipe(_with_hero_era)
     )
     reward_rows = [
         {
+            "era_from": era_from,
             "hero_id": hero.id,
             "reward_n": n,
             "level": info.level,
             "required_souls": info.required_souls,
             "reward": reward,
         }
-        for hero in heroes.hero_map().values()
+        for era_from, _build, hero in _hero_by_era()
         for reward in ("ability_unlocks", "ability_points")
         for n, info in enumerate(
             (info for info in hero.levels if reward in info.currencies),
@@ -413,6 +524,7 @@ def ability_upgrades(
     rewards = pl.LazyFrame(
         reward_rows,
         schema={
+            "era_from": pl.Datetime("us", "UTC"),
             "hero_id": pl.Int64,
             "reward": pl.String,
             "reward_n": pl.Int64,
@@ -426,14 +538,14 @@ def ability_upgrades(
     return (
         events.join(
             unlocks,
-            left_on=["hero_id", "ability_unlock_n"],
-            right_on=["hero_id", "reward_n"],
+            left_on=["hero_id", "era_from", "ability_unlock_n"],
+            right_on=["hero_id", "era_from", "reward_n"],
             how="left",
         )
         .join(
             points,
-            left_on=["hero_id", "ability_points_spent"],
-            right_on=["hero_id", "reward_n"],
+            left_on=["hero_id", "era_from", "ability_points_spent"],
+            right_on=["hero_id", "era_from", "reward_n"],
             how="left",
             suffix="_point",
         )
@@ -680,7 +792,7 @@ def souls_by_source(
 ) -> pl.DataFrame:
     """Total souls by income source across your games of a hero.
 
-    - souls sums the guaranteed and orb portions, the in-game figure
+    - souls sums the guaranteed and orb portions, the in game figure
     - orb_share is the deniable orb portion you secured, percent is share of the total
     - matches limits to specific match ids, like scoping to one game
     """
@@ -758,10 +870,10 @@ def final_stats(parquet_dir: str | Path | None = None, tz: str | None = None) ->
 
 
 def team_damage_ranks(parquet_dir: str | Path | None = None) -> pl.LazyFrame:
-    """Rank every player's hero damage within their team, one row per match player.
+    """Rank players by hero damage within their team, one row per match player.
 
     - player_damage is the final snapshot value
-    - rank 1 is the team's damage chart top, flagged by top_team_damage
+    - rank 1 is the team damage chart top, flagged by top_team_damage
     """
     finals = final_stats(parquet_dir).select("match_id", "account_id", "player_damage")
     teams = scan("players", parquet_dir).select("match_id", "account_id", "team")
@@ -776,28 +888,6 @@ def team_damage_ranks(parquet_dir: str | Path | None = None) -> pl.LazyFrame:
         )
         .with_columns((pl.col("team_damage_rank") == 1).alias("top_team_damage"))
     )
-
-
-def stale_hero_matches(parquet_dir: str | Path | None = None) -> list[int]:
-    """Match IDs played on an older balance patch than the bundled hero stats.
-
-    Flags matches where base health computed from heroes.json exceeds the max
-    health recorded in the snapshots, which can only happen when the hero
-    stats changed after the match.
-    """
-    hero_ids = scan("players", parquet_dir).select("match_id", "account_id", "hero_id")
-    flagged = (
-        scan("stats", parquet_dir)
-        .select("match_id", "account_id", "level", "max_health")
-        .join(hero_ids, on=["match_id", "account_id"])
-        .join(hero_scaling(), on=["hero_id", "level"])
-        .filter((pl.col("max_health") > 0) & (pl.col("base_health") > pl.col("max_health")))
-        .select("match_id")
-        .unique()
-        .collect()
-    )
-
-    return sorted(flagged["match_id"].to_list())
 
 
 def my_deaths(
@@ -958,7 +1048,7 @@ def match_intervals(
     interval_s: int = 300,
     parquet_dir: str | Path | None = None,
 ) -> pl.DataFrame:
-    """Split one player's match into intervals of stat gains.
+    """Split the match for one player into intervals of stat gains.
 
     - snapshots are cumulative, so an interval's gain is its last snapshot
       minus the last snapshot of the interval before it
@@ -1045,7 +1135,7 @@ def damage_intervals(
     parquet_dir: str | Path | None = None,
     stat: str = "damage",
 ) -> pl.DataFrame:
-    """Split one player's damage to heroes into per-source gains per interval.
+    """Split the damage to heroes for one player into per source gains per interval.
 
     - detail rows only, the match screen totals are excluded
     - samples in damage_sources are sparse (about every three minutes), so a
@@ -1120,9 +1210,9 @@ def soul_intervals(
     interval_s: int = 300,
     parquet_dir: str | Path | None = None,
 ) -> pl.DataFrame:
-    """Split one player's souls into per-source gains per interval.
+    """Split the souls for one player into per source gains per interval.
 
-    - value is souls + souls_orbs, the in-game per-source number
+    - value is souls + souls_orbs, the in game per source number
     - soul_sources samples about every three minutes, so a gain lands in the
       interval holding the sample that recorded it
     - one row per source per interval, sources with any souls, ordered by total
@@ -1413,25 +1503,90 @@ def movement_profile(parquet_dir: str | Path | None = None) -> pl.LazyFrame:
     )
 
 
-def hero_scaling() -> pl.LazyFrame:
-    """Per hero per level reference frame built from heroes.json, not parquet.
+def _era_from(value: str) -> dt.datetime:
+    """Parse a stored era from string into a UTC datetime."""
+    parsed = dt.datetime.fromisoformat(value)
 
-    Columns: hero_id, level, required_souls, base_health, spirit_power.
-    Join stats to players on (match_id, account_id) for hero_id, then join
-    this on (hero_id, level) to split level scaling from item stats.
+    return parsed if parsed.tzinfo else parsed.replace(tzinfo=dt.UTC)
+
+
+def _hero_by_era() -> Iterator[tuple[dt.datetime, int | None, heroes.Hero]]:
+    """Yield the era start, client version, and hero resolved for each hero in each balance era."""
+    path = heroes.HERO_HISTORY_PARQUET
+    era_list = history.eras(path)
+
+    if not era_list:
+        for hero in heroes.hero_map().values():
+            yield _ERA_SENTINEL, None, hero
+
+        return
+
+    for from_str, build in era_list:
+        when = _era_from(from_str)
+
+        for hero_id in heroes.hero_map():
+            hero = heroes.hero_asof(hero_id, when, path)
+
+            if hero is not None:
+                yield when, build, hero
+
+
+def _hero_era_starts() -> list[dt.datetime]:
+    """Return each hero balance era start as a UTC datetime, oldest first."""
+    era_list = history.eras(heroes.HERO_HISTORY_PARQUET)
+
+    if not era_list:
+        return [_ERA_SENTINEL]
+
+    return [_era_from(from_str) for from_str, _ in era_list]
+
+
+def _with_hero_era(left: pl.LazyFrame, on: str = "start_time") -> pl.LazyFrame:
+    """Attach the hero balance era live at each row's time as an era_from column."""
+    starts = _hero_era_starts()
+    first = min(starts)
+    era_frame = (
+        pl.LazyFrame({"era_from": starts}, schema={"era_from": pl.Datetime("us", "UTC")})
+        .with_columns(
+            pl.when(pl.col("era_from") == first)
+            .then(pl.lit(_ERA_SENTINEL))
+            .otherwise(pl.col("era_from"))
+            .alias("_join_from")
+        )
+        .sort("_join_from")
+    )
+
+    return (
+        left.sort(on)
+        .join_asof(era_frame, left_on=on, right_on="_join_from", strategy="backward")
+        .drop("_join_from")
+    )
+
+
+def hero_scaling() -> pl.LazyFrame:
+    """Per hero per level base health and spirit power, one block per balance era.
+
+    Columns: era_from, client_version, hero_id, level, required_souls, base_health,
+    spirit_power. base_health and spirit power come from the hero stats live in each
+    era, so old matches join against the tuning that was current when they were played.
+    Use hero_scaling_asof to attach the era-correct rows to match rows by start time.
     """
     rows = [
         {
+            "era_from": era_from,
+            "client_version": build,
             "hero_id": hero.id,
             "level": info.level,
             "required_souls": info.required_souls,
             "base_health": hero.base_health(info.level),
             "spirit_power": hero.spirit_power(info.level),
         }
-        for hero in heroes.hero_map().values()
+        for era_from, build, hero in _hero_by_era()
         for info in hero.levels
     ]
     schema = {
+        "era_from": pl.Datetime("us", "UTC"),
+        "client_version": pl.Int64,
         "hero_id": pl.Int64,
         "level": pl.Int64,
         "required_souls": pl.Int64,
@@ -1440,6 +1595,17 @@ def hero_scaling() -> pl.LazyFrame:
     }
 
     return pl.LazyFrame(rows, schema=schema)
+
+
+def hero_scaling_asof(left: pl.LazyFrame) -> pl.LazyFrame:
+    """Attach era-correct base_health and spirit_power to left rows by start time.
+
+    - left carries hero_id, level, and start_time
+    - as-of joins hero_scaling by (hero_id, level) on the era live at start_time
+    """
+    scaling = hero_scaling().drop("client_version")
+
+    return _asof_era_join(left, scaling, by=["hero_id", "level"])
 
 
 def skill_rating(column: str) -> pl.Expr:

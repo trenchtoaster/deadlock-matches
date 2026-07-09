@@ -67,7 +67,7 @@ def _filters(badge: int | None, since: str | None, until: str | None = None) -> 
 def get_item_stats(
     hero_id: int, badge: int | None = None, since: str | None = None
 ) -> list[dict[str, Any]]:
-    """Win, loss, and buy time rows for each of a hero's items."""
+    """Download win, loss, and buy time rows for each item on a hero."""
     return api.get_json(
         f"v1/analytics/item-stats?hero_id={hero_id}" + _filters(badge, since), max_age=api.DAY
     )

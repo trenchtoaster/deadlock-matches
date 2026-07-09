@@ -1,8 +1,47 @@
+import datetime as dt
 import re
 
 import pytest
 
-from deadlock_matches import abilities
+from deadlock_matches import abilities, history
+
+
+def _ability_history(path, first, second):
+    def era(damage):
+        return {
+            "ability_slash": {
+                "id": 1,
+                "name": "Slash",
+                "class_name": "ability_slash",
+                "hero": 52,
+                "kind": "ability",
+                "properties": {"damage": damage},
+            }
+        }
+
+    history.write(
+        path,
+        [
+            {"from": "2026-01-01T00:00:00", "build": 1, "records": era(first)},
+            {"from": "2026-07-01T00:00:00", "build": 2, "records": era(second)},
+        ],
+    )
+
+
+def test_ability_asof_picks_the_era(tmp_path):
+    path = tmp_path / "ability_history.parquet"
+    _ability_history(path, 60, 75)
+
+    assert abilities.ability_asof("ability_slash", dt.date(2026, 6, 20), path).properties["damage"] == 60
+    assert abilities.ability_asof("ability_slash", dt.date(2026, 7, 2), path).properties["damage"] == 75
+
+
+def test_ability_asof_without_history_falls_back_to_bundled(tmp_path):
+    real = next(iter(abilities.ability_map()))
+    missing = tmp_path / "none.parquet"
+
+    assert abilities.ability_asof(real, dt.date(2026, 7, 2), missing).class_name == real
+    assert abilities.ability_asof("no_such_class", dt.date(2026, 7, 2), missing) is None
 
 
 def test_ability_map_loads_real_file():

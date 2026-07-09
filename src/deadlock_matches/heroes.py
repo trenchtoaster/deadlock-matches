@@ -1,7 +1,8 @@
-"""Maps hero IDs to names and base stats from the assets API data."""
+"""Resolve hero IDs to names and base stats from the assets API data."""
 
 from __future__ import annotations
 
+import datetime as dt
 import functools
 import json
 import re
@@ -9,12 +10,15 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
+from deadlock_matches import history
+
 HEROES_JSON = Path(__file__).parent / "data" / "heroes.json"
+HERO_HISTORY_PARQUET = Path(__file__).parent / "data" / "hero_history.parquet"
 
 
 @dataclass(frozen=True, slots=True)
 class CostBonus:
-    """One step of a shop category's investment bonus curve."""
+    """One step of the investment bonus curve for a shop category."""
 
     souls: int
     bonus: float
@@ -22,7 +26,7 @@ class CostBonus:
 
 @dataclass(frozen=True, slots=True)
 class LevelInfo:
-    """One row of a hero's level table."""
+    """One row of the hero level table."""
 
     level: int
     required_souls: int
@@ -187,6 +191,23 @@ def hero_name(hero_id: int, path: Path = HEROES_JSON) -> str:
     return hero.name if hero else f"id{hero_id}"
 
 
+def hero_asof(
+    hero_id: int, when: dt.datetime | dt.date, path: Path = HERO_HISTORY_PARQUET
+) -> Hero | None:
+    """Return the hero stats and scaling in effect at the given time.
+
+    - latest era on or before `when`
+    - times older than all history get the earliest era
+    - no history at all falls back to the bundled current snapshot
+    """
+    if not history.has_history(path):
+        return hero_map().get(hero_id)
+
+    rec = history.record_asof(path, hero_id, when)
+
+    return Hero.from_record(rec) if rec else None
+
+
 def normalize_name(name: str) -> str:
     """Lowercases a display name and strips everything but letters and digits.
 
@@ -197,7 +218,7 @@ def normalize_name(name: str) -> str:
 
 
 def hero_id_by_name(name: str, path: Path = HEROES_JSON) -> int | None:
-    """Finds the hero ID for a display name ("Mirage", "mo krill"), or None."""
+    """Look up the hero ID for a display name ("Mirage", "mo krill")."""
     wanted = normalize_name(name)
 
     for hero in hero_map(path).values():

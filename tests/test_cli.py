@@ -1006,6 +1006,38 @@ def test_schema_command_prints_sample_rows(capsys, tmp_path):
     assert "shape: (5, 16)" in out
 
 
+def test_schema_command_samples_asset_table(capsys, tmp_path):
+    (tmp_path / "assets").mkdir()
+    schemas.conform(
+        "item_history",
+        [
+            {
+                "item_id": 7,
+                "name": "Monster Rounds",
+                "class_name": "upgrade_x",
+                "cost": 800,
+                "slot": "weapon",
+                "tier": 1,
+                "is_active": False,
+                "description": None,
+                "era_from": dt.datetime(2026, 1, 1, tzinfo=dt.UTC),
+                "client_version": 6076,
+            }
+        ],
+    ).write_parquet(tmp_path / "assets" / "item_history.parquet")
+
+    main(
+        ["--parquet", str(tmp_path), "schema", "item_history", "--sample"],
+        config=tmp_path / "c.toml",
+    )
+
+    out = capsys.readouterr().out
+
+    assert "Sample rows from" in out
+    assert "assets/item_history.parquet" in out
+    assert "Monster Rounds" in out
+
+
 def test_schema_sample_needs_table(capsys):
     main(["schema", "--sample"])
 
@@ -1046,9 +1078,10 @@ def test_new_matches_trigger_parquet_rebuild(tmp_path, capsys):
     out = capsys.readouterr().out
 
     assert "+2 new" in out
-    assert "parquet files from 2 matches" in out
-    assert (pq / "matches.parquet").exists()
-    assert (pq / "damage.parquet").exists()
+    assert "Added 2 new matches" in out
+    assert (pq / "matches").is_dir()
+    assert (pq / "damage").is_dir()
+    assert next((pq / "matches").glob("*.parquet"), None) is not None
 
 
 def test_no_new_matches_skips_rebuild(tmp_path, capsys):
@@ -1472,3 +1505,68 @@ def test_accounts_command_suggests_main_when_config_empty(capsys, tmp_path):
 
     assert "main = 42" in block
     assert "alt1 = 43" in block
+
+
+def test_backfill_without_confirm_only_warns(monkeypatch, capsys):
+    called = []
+
+    for fn in (
+        "build_item_history",
+        "build_hero_history",
+        "build_ability_history",
+        "build_rank_history",
+    ):
+        monkeypatch.setattr(assets, fn, lambda **kw: called.append(True))
+
+    main(["backfill"], config="none.json")
+
+    out = capsys.readouterr().out
+
+    assert "--confirm" in out
+    assert called == []
+
+
+def test_backfill_confirm_rebuilds_and_reports(monkeypatch, capsys):
+    counts = {
+        "build_item_history": 33,
+        "build_hero_history": 25,
+        "build_ability_history": 40,
+        "build_rank_history": 1,
+    }
+
+    for fn, n in counts.items():
+        monkeypatch.setattr(assets, fn, lambda n=n, **kw: n)
+
+    main(["backfill", "--confirm"], config="none.json")
+
+    out = capsys.readouterr().out
+
+    for name in ("items", "heroes", "abilities", "ranks"):
+        assert name in out
+
+    assert "40 eras" in out
+
+
+def test_hero_card_as_of_shows_era_label(capsys, tmp_path):
+    main(["hero", "Mirage", "--as-of", "2026-02-01"], config=tmp_path / "none.json")
+
+    out = capsys.readouterr().out
+
+    assert "as of 2026-02-01" in out
+
+
+def test_hero_card_changes_lists_patches(capsys, tmp_path):
+    main(["hero", "Mirage", "--changes"], config=tmp_path / "none.json")
+
+    out = capsys.readouterr().out
+
+    assert "change history" in out
+    assert "build" in out
+
+
+def test_item_card_changes_lists_patches(capsys, tmp_path):
+    main(["item", "Monster Rounds", "--changes"], config=tmp_path / "none.json")
+
+    out = capsys.readouterr().out
+
+    assert "change history" in out

@@ -62,7 +62,7 @@ main = 111222333
 - commands that read your matches archive the cache into `~/.local/share/deadlock-matches/matches/` (`%LOCALAPPDATA%\deadlock-matches\matches` on Windows)
   - Steam's cache only keeps the last 10,000 files it used for all of Steam combined - archiving the matches ensures you do not lose historical data
   - opening game history and clicking a match puts it back in the cache (or keeps it there), so it works as recovery too
-- newly archived matches also trigger an automatic parquet rebuild, so `deadlock export` is only needed to force one
+- newly archived matches update the parquet tables automatically. Only the new matches get read each run and running `deadlock export` yourself stays quick. `deadlock export --full` rebuilds every table from scratch after a backfill or a schema change
 
 ## CLI
 
@@ -70,7 +70,7 @@ main = 111222333
 
 These commands answer common questions from the parquet tables. Adding a command for every possible question is not feasible, so please see the section below on writing your own queries or using LLM agents if something is missing.
 
-The commands in this section read your own local match archive and parquet tables. After them come the hero, ability, and item lookups, and then the commands that pull top players and public stats from [deadlock-api](https://api.deadlock-api.com).
+The sections below group the commands by what they read. **Match analysis** reads your own local match archive and parquet tables. **Heroes, abilities, and items** reads the cached game data. **Top players and public stats** pulls from [deadlock-api](https://api.deadlock-api.com).
 
 A few flags repeat across commands:
 
@@ -83,9 +83,11 @@ A few flags repeat across commands:
 - `--hero Mirage` filters a report to one hero (required for the top player commands since they pull from the leaderboard). Quote names with spaces: `--hero "Mo & Krill"`, though capitals and punctuation are optional (`--hero "mo krill"` works too)
 - `--min-rating Oracle` limits public stats to lobbies at that average skill rating or higher. `winrate` and `item` default to Eternus, `meta` counts every rating, and `all` disables the filter
 
+## Match analysis
+
 ### `uv run deadlock accounts`
 
-- the Steam accounts on this PC that have run Deadlock, with the account IDs `config.toml` wants
+- the Steam accounts on this PC that have run Deadlock, with the account IDs you put in `config.toml`
 - reads Steam's `userdata/` folders and remembered logins, so it works before any matches are processed
 - ends with a ready-to-paste `[accounts]` block for the accounts `config.toml` does not name yet
 - the suggested names are neutral on purpose: your account name (the private login) is best kept out of `config.toml`, since the names you pick there are printed in report headers
@@ -428,6 +430,37 @@ Passive  (cooldown 15s)
   bullets reloaded                         100%
   charge-up time                            14s
 ```
+
+### Past patches: `--as-of` and `--changes`
+
+The repo ships a versioned history of every hero, ability, item, and rank going back to 2026-01-01, one era per patch that changed a value. The cards read the current patch by default, but every hero, ability, and item card takes two flags that read that history instead.
+
+`--as-of DATE` shows the card as the game was on a past date. Mirage's gun was stronger in February than it is now:
+
+```
+Mirage  (as of 2026-02-01)
+  bullet damage        15.2  (Promises Kept)
+  gun dps              41.5
+  ammo                   16
+  bullets per sec      2.72
+  reload time           2.6
+```
+
+`--changes` lists every patch that touched this hero, ability, or item, with the fields that moved. It reads the same history the cards do, so nothing extra needs downloading:
+
+```
+Mirage  (hero change history, 25 eras tracked)
+
+  2026-01-01  build 6076  first tracked
+
+  2026-03-06  build 6359
+    level_up.base_bullet_damage_from_level 0.5 -> 0.3
+
+  2026-03-10  build 6384
+    cost_bonuses.vitality.0.bonus      75 -> 84
+```
+
+The same history feeds the analysis queries: an old match is scored against the hero, item, and ability tuning that was live when it was played, not today's. It is browsable too, `deadlock export` writes the flattened `item_history`, `hero_history`, `ability_history`, and `rank_history` tables and `deadlock schema item_history --sample` reads them.
 
 ## Top players and public stats
 

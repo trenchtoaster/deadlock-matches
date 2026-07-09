@@ -1,7 +1,8 @@
-"""Maps ability and weapon class names to display names and base numbers from the assets API data."""
+"""Resolve ability and weapon class names to display names and base numbers from the assets API data."""
 
 from __future__ import annotations
 
+import datetime as dt
 import functools
 import json
 from dataclasses import dataclass, field
@@ -11,9 +12,10 @@ from typing import TYPE_CHECKING, Any
 if TYPE_CHECKING:
     from collections.abc import Iterator
 
-from deadlock_matches import heroes, items
+from deadlock_matches import heroes, history, items
 
 ABILITIES_JSON = Path(__file__).parent / "data" / "abilities.json"
+ABILITY_HISTORY_PARQUET = Path(__file__).parent / "data" / "ability_history.parquet"
 
 
 @dataclass(frozen=True, slots=True)
@@ -56,7 +58,7 @@ class Ability:
         )
 
     def stat(self, name: str, tier: int = 0) -> float:
-        """Applies flat upgrade bonuses to a property's base value through a tier."""
+        """Apply flat upgrade bonuses to the base value of a property through a tier."""
         value = float(self.properties.get(name, 0.0))
 
         for up in self._tier_upgrades(tier):
@@ -73,10 +75,10 @@ class Ability:
         return value
 
     def scaling_at(self, name: str, tier: int = 0) -> dict[str, float]:
-        """Applies scale upgrades to a property's scaling ({tech_power: 0.3}) through a tier.
+        """Apply scale upgrades to the scaling of a property ({tech_power: 0.3}) through a tier.
 
-        An upgrade with no stat of its own applies to the property's scaling
-        stat, tech_power when it has none.
+        An upgrade with no stat of its own applies to the scaling stat of the
+        property, tech_power when it has none.
         """
         info = self.scaling.get(name)
         default_stat = info["stat"] if info else "tech_power"
@@ -101,7 +103,7 @@ class Ability:
         return self.scaling_at(name, tier).get("tech_power", 0.0)
 
     def _tier_upgrades(self, tier: int) -> Iterator[dict[str, Any]]:
-        """Yields the upgrade entries through a tier."""
+        """Iterate the upgrade entries through a tier."""
         for entries in self.upgrades[:tier]:
             yield from entries
 
@@ -114,10 +116,27 @@ def ability_map(path: Path = ABILITIES_JSON) -> dict[str, Ability]:
     return {rec["class_name"]: Ability.from_record(rec) for rec in records}
 
 
+def ability_asof(
+    class_name: str, when: dt.datetime | dt.date, path: Path = ABILITY_HISTORY_PARQUET
+) -> Ability | None:
+    """Return the ability tuning in effect at the given time.
+
+    - latest era on or before `when`
+    - times older than all history get the earliest era
+    - no history at all falls back to the bundled current snapshot
+    """
+    if not history.has_history(path):
+        return ability_map().get(class_name)
+
+    rec = history.record_asof(path, class_name, when)
+
+    return Ability.from_record(rec) if rec else None
+
+
 def ability_by_name(
     name: str, hero_id: int | None = None, path: Path = ABILITIES_JSON
 ) -> Ability | None:
-    """Finds an ability or gun by display name ("Dust Devil", "djinns mark").
+    """Look up an ability or gun by display name ("Dust Devil", "djinns mark").
 
     Pass hero_id when the name exists on several heroes, without it an
     ambiguous name raises ValueError.
@@ -139,12 +158,12 @@ def ability_by_name(
 
 
 def for_hero(hero_id: int, path: Path = ABILITIES_JSON) -> tuple[Ability, ...]:
-    """Lists a hero's abilities."""
+    """List the abilities for a hero."""
     return tuple(a for a in ability_map(path).values() if a.hero == hero_id and a.kind == "ability")
 
 
 def hero_gun(hero_id: int, path: Path = ABILITIES_JSON) -> Ability | None:
-    """Finds the gun and weapon stats for a hero."""
+    """Look up the gun and weapon stats for a hero."""
     for ability in ability_map(path).values():
         if ability.hero == hero_id and ability.kind == "weapon":
             return ability
@@ -153,10 +172,10 @@ def hero_gun(hero_id: int, path: Path = ABILITIES_JSON) -> Ability | None:
 
 
 def hero_alt_gun(hero_id: int, path: Path = ABILITIES_JSON) -> Ability | None:
-    """Finds a hero's alt-fire weapon if they have a second firing mode.
+    """Look up the alt-fire weapon for a hero with a second firing mode.
 
-    The alt record shares the primary's display name or has none, so it
-    can't be reached by name.
+    The alt record shares the primary display name or has none, so it
+    cannot be reached by name.
     """
     for ability in ability_map(path).values():
         if (

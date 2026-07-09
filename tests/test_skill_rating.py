@@ -1,6 +1,33 @@
+import datetime as dt
 import json
 
-from deadlock_matches import assets, skill_rating
+from deadlock_matches import assets, history, skill_rating
+
+
+def test_rank_asof_picks_the_era(tmp_path):
+    path = tmp_path / "rank_history.parquet"
+
+    def era(name):
+        return {"11": {"tier": 11, "name": name}}
+
+    history.write(
+        path,
+        [
+            {"from": "2026-01-01T00:00:00", "build": 1, "records": era("Eternus")},
+            {"from": "2026-07-01T00:00:00", "build": 2, "records": era("Eternal")},
+        ],
+    )
+
+    assert skill_rating.rank_asof(11, dt.date(2026, 6, 20), path) == "Eternus"
+    assert skill_rating.rank_asof(11, dt.date(2026, 7, 2), path) == "Eternal"
+
+
+def test_rank_asof_without_history_falls_back_to_bundled(tmp_path):
+    missing = tmp_path / "none.parquet"
+
+    assert skill_rating.rank_asof(11, dt.date(2026, 7, 2), missing) == skill_rating.tier_map()[11]
+    assert skill_rating.rank_asof(999, dt.date(2026, 7, 2), missing) is None
+
 
 RANK_REC = {
     "tier": 7,

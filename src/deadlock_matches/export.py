@@ -8,15 +8,26 @@ from __future__ import annotations
 
 import datetime as dt
 import re
+import shutil
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 import polars as pl
 
-from deadlock_matches import abilities, extract, heroes, items, paths, schemas, timeline
+from deadlock_matches import (
+    abilities,
+    asset_tables,
+    extract,
+    heroes,
+    items,
+    paths,
+    schemas,
+    timeline,
+)
 
 if TYPE_CHECKING:
-    from collections.abc import Collection, Iterable
+    from collections.abc import Collection, Iterable, Iterator
 
     from deadlock_matches.extract import MatchInfo
 
@@ -98,7 +109,7 @@ def _to_length(values: Any, n: int) -> list:
 
 
 def _movement_frame(info: MatchInfo, account_id: int, path: Any) -> pl.DataFrame:
-    """One movement row per second for one player, with the quantized track decoded to world units."""
+    """Build one movement row per second for one player, converting the stored path to world units."""
     mp = info.match_paths
     sx = (path.x_max - path.x_min) / mp.x_resolution if mp.x_resolution else 0.0
     sy = (path.y_max - path.y_min) / mp.y_resolution if mp.y_resolution else 0.0
@@ -192,31 +203,19 @@ def _delivery(class_name: str, by_class: dict[str, items.Item] | None = None) ->
 
 def build_tables(
     infos: Iterable[MatchInfo],
-    assets_history: Path | None = None,
     exclude: Collection[str] = (),
 ) -> dict[str, pl.DataFrame]:
     """Build the parquet tables from MatchInfo messages.
 
     - builds matches, players, stats, soul_sources, item_events, damage,
       damage_sources, mid_boss, objectives, and deaths
-    - item_events.attribution: 'proc' = has its own damage lines (Scourge, Escalating Exposure),
-      'stat' = never shows up as a source, value hides in other rows (Boundless Spirit, Echo Shard)
-    - empirical over the batch, not a hardcoded list
-    - item cost/tier/slot resolve against the dated assets snapshot in effect at
-      match time (item_events.assets_date), so rebuilds don't reprice history
+    - item cost/tier/slot resolve against the committed item history era live at
+      match time, so rebuilds price each match on its own patch
+    - proc vs stat attribution is derived at read time from damage, see queries.item_attribution
     - exclude skips tables by name (the exclude list in config.toml), which
       keeps the big per-second movement table out of the rebuild
-
-    assets_history is the dated snapshot folder, defaults to the standard data directory.
     """
     infos = list(infos)
-
-    proc_classes = {
-        info.damage_matrix.source_details.source_name[i]
-        for info in infos
-        for i, st in enumerate(info.damage_matrix.source_details.stat_type)
-        if st == 0 and info.damage_matrix.source_details.source_name[i].startswith("upgrade_")
-    }
 
     matches: list[dict] = []
     players: list[dict] = []
@@ -232,9 +231,7 @@ def build_tables(
 
     for info in infos:
         start_time = dt.datetime.fromtimestamp(info.start_time, dt.UTC)
-        snapshot, snapshot_day = items.snapshot_asof(start_time, assets_history)
-        assets_date = dt.date.fromisoformat(snapshot_day) if snapshot_day else None
-        im = items.item_map(snapshot)
+        im = items.item_map_asof(start_time)
         by_class = {i.class_name: i for i in im.values() if i.class_name}
 
         matches.append(
@@ -362,10 +359,6 @@ def build_tables(
                         "tier": item.tier if item else None,
                         "sold_time_s": it.sold_time_s,
                         "flags": it.flags,
-                        "attribution": (
-                            "proc" if item and item.class_name in proc_classes else "stat"
-                        ),
-                        "assets_date": assets_date,
                     }
                 )
         details = info.damage_matrix.source_details
@@ -443,36 +436,273 @@ def build_tables(
     return {name: df for name, df in tables.items() if name not in exclude}
 
 
+@dataclass
+class ExportResult:
+    """Row counts per table plus how many matches were decoded and skipped."""
+
+    counts: dict[str, int] = field(default_factory=dict)
+    decoded: int = 0
+    skipped: int = 0
+
+
+def _match_month(info: MatchInfo) -> str:
+    """Partition key for a match: the UTC month it started in as YYYY-MM."""
+    started = dt.datetime.fromtimestamp(info.start_time, dt.UTC)
+
+    return started.strftime("%Y-%m")
+
+
+def _archive_paths(archive_dir: Path) -> list[Path]:
+    """Archived .bin files in ascending match_id order (match ids climb with start time)."""
+    return sorted(archive_dir.glob("*.bin"), key=lambda p: int(p.name.split("_")[0]))
+
+
+def _decode_matches(paths: Iterable[Path]) -> Iterator[MatchInfo]:
+    """Decode the given archive files in order and skip any that fail to parse."""
+    for path in paths:
+        try:
+            yield extract.load(path)
+
+        except ValueError:
+            continue
+
+
+def exported_match_ids(out_dir: Path) -> set[int]:
+    """Match ids already written to the matches table. Empty before the table exists."""
+    from deadlock_matches import queries
+
+    if not queries.table_exists("matches", out_dir):
+        return set()
+
+    exported = queries.scan("matches", out_dir).select("match_id").collect()
+
+    return set(exported["match_id"].to_list())
+
+
+def _new_archive_paths(archive_dir: Path, exported: set[int]) -> list[Path]:
+    """Archive files in ascending id order whose match_id is not already in the tables."""
+    fresh = []
+
+    for path in _archive_paths(archive_dir):
+        match_id = int(path.name.split("_")[0])
+
+        if match_id not in exported:
+            fresh.append(path)
+
+    return fresh
+
+
+def write_partitioned(name: str, df: pl.DataFrame, month: str, out_dir: Path) -> int:
+    """Merge one month of rows into out_dir/<name>/<month>.parquet and return the rows merged in.
+
+    - reads the existing month file, drops the batch's match_ids, concats the new rows
+    - the concat is strict vertical, so a schema drift raises before the file is touched
+    - writes a temp file and renames it, so a crash mid-write leaves the old file intact
+    - match_id is the identity, so re-running the same batch leaves the content unchanged
+    """
+    directory = out_dir / name
+    directory.mkdir(parents=True, exist_ok=True)
+
+    target = directory / f"{month}.parquet"
+
+    if target.exists():
+        existing = pl.read_parquet(target)
+        batch_ids = df["match_id"].unique().to_list()
+        preserved = existing.filter(~pl.col("match_id").is_in(batch_ids))
+        merged = pl.concat([preserved, df], how="vertical")
+
+    else:
+        merged = df
+
+    expected = set(schemas.TABLES[name])
+
+    if set(merged.columns) != expected:
+        msg = f"{name} {month} columns drifted from schemas.py, run a full rebuild"
+        raise ValueError(msg)
+
+    tmp = directory / f"{month}.parquet.tmp"
+    merged.write_parquet(tmp)
+    Path(tmp).replace(target)
+
+    return len(df)
+
+
+def _flush_month(
+    batch: list[MatchInfo],
+    month: str,
+    out_dir: Path,
+    exclude: Collection[str],
+    counts: dict[str, int],
+) -> None:
+    """Build one month's matches and merge each table into its month partition."""
+    for name, df in build_tables(batch, exclude).items():
+        written = write_partitioned(name, df, month, out_dir)
+        counts[name] = counts.get(name, 0) + written
+
+
+def export_infos(
+    infos: Iterable[MatchInfo],
+    out_dir: Path,
+    exclude: Collection[str],
+) -> dict[str, int]:
+    """Build and write tables one match-start month at a time so memory stays bounded to one month.
+
+    - infos must arrive so a month is contiguous and ascending match_id order does that
+    - each month flushes to its partitions before the next month is decoded
+    """
+    counts: dict[str, int] = {}
+    current_month: str | None = None
+    batch: list[MatchInfo] = []
+
+    for info in infos:
+        month = _match_month(info)
+
+        if current_month is not None and month != current_month:
+            _flush_month(batch, current_month, out_dir, exclude, counts)
+            batch = []
+
+        current_month = month
+        batch.append(info)
+
+    if batch and current_month is not None:
+        _flush_month(batch, current_month, out_dir, exclude, counts)
+
+    return counts
+
+
+def clear_partition(name: str, out_dir: Path) -> None:
+    """Remove a table's month directory and any legacy single file before a full rebuild."""
+    directory = out_dir / name
+
+    if directory.is_dir():
+        shutil.rmtree(directory)
+
+    (out_dir / f"{name}.parquet").unlink(missing_ok=True)
+
+
+def _reshape_to_schema(name: str, df: pl.DataFrame) -> pl.DataFrame:
+    """Fit old rows to the current schema and drop columns we no longer support."""
+    exprs = []
+
+    for col, coldef in schemas.TABLES[name].items():
+        if col in df.columns:
+            exprs.append(pl.col(col).cast(coldef.dtype))
+
+        else:
+            exprs.append(pl.lit(None).cast(coldef.dtype).alias(col))
+
+    return df.select(exprs)
+
+
+def migrate_to_partitions(out_dir: Path, exclude: Collection[str] = ()) -> None:
+    """Split a legacy single-file store into month partitions without decoding anything again.
+
+    - reads the rows already on disk and writes them into the month partitions so nothing is lost
+    - old columns we no longer support are dropped to match the current schema
+    - each row's month comes from its match's start time in the matches table
+    - the legacy single file is removed once its rows are written to the month partitions
+    """
+    matches_file = out_dir / "matches.parquet"
+
+    if not matches_file.exists():
+        return
+
+    months = pl.read_parquet(matches_file).select(
+        "match_id", pl.col("start_time").dt.strftime("%Y-%m").alias("_month")
+    )
+
+    for name in schemas.PARTITIONED:
+        if name in exclude:
+            continue
+
+        legacy = out_dir / f"{name}.parquet"
+
+        if not legacy.exists():
+            continue
+
+        tagged = pl.read_parquet(legacy).join(months, on="match_id", how="inner")
+
+        for month in sorted(tagged["_month"].unique().to_list()):
+            part = _reshape_to_schema(name, tagged.filter(pl.col("_month") == month))
+            write_partitioned(name, part, month, out_dir)
+
+        legacy.unlink()
+
+
+def _write_asset_tables(out_dir: Path, counts: dict[str, int]) -> None:
+    """Flatten the committed asset history into out_dir/assets and record each table's row count."""
+    asset_dir = out_dir / "assets"
+    asset_dir.mkdir(parents=True, exist_ok=True)
+
+    for name, df in asset_tables.all_asset_tables().items():
+        df.write_parquet(asset_dir / f"{name}.parquet")
+        counts[name] = len(df)
+
+
 def export_all(
     archive_dir: str | Path | None = None,
     out_dir: str | Path | None = None,
-    assets_history: Path | None = None,
     exclude: Collection[str] = (),
-) -> dict[str, int]:
-    """Rebuild every parquet table from the archived .bin matches.
+) -> ExportResult:
+    """Rebuild every parquet table from scratch by streaming one month at a time.
 
-    - all three directories default to the standard locations (the match
-      archive, PARQUET_DIR, and the dated assets history)
-    - excluded tables are skipped AND their leftover parquet files removed,
-      so an old copy never goes stale next to fresh tables
+    - both directories default to the standard locations (the match archive and PARQUET_DIR)
+    - each built table is cleared first so a match dropped from the archive also leaves the tables
+    - excluded tables are left untouched rather than deleted, so opting movement out keeps its history
+    - the versioned asset tables flatten out of the committed history into out_dir/assets
     """
     archive_dir = extract.ARCHIVE_DIR if archive_dir is None else Path(archive_dir)
     out_dir = PARQUET_DIR if out_dir is None else Path(out_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
 
-    infos = []
-    for path in sorted(archive_dir.glob("*.bin")):
-        try:
-            infos.append(extract.load(path))
-        except ValueError:
-            continue
+    for name in schemas.PARTITIONED:
+        if name not in exclude:
+            clear_partition(name, out_dir)
 
-    counts = {}
-    for name, df in build_tables(infos, assets_history, exclude).items():
-        df.write_parquet(out_dir / f"{name}.parquet")
-        counts[name] = len(df)
+    counts = export_infos(_decode_matches(_archive_paths(archive_dir)), out_dir, exclude)
 
-    for name in exclude:
-        (out_dir / f"{name}.parquet").unlink(missing_ok=True)
+    _write_asset_tables(out_dir, counts)
 
-    return counts
+    return ExportResult(counts=counts, decoded=counts.get("matches", 0), skipped=0)
+
+
+def is_legacy_layout(out_dir: Path) -> bool:
+    """A pre-partition store where matches is still a single file instead of a month directory."""
+    return (out_dir / "matches.parquet").exists() and not (out_dir / "matches").is_dir()
+
+
+def export_new(
+    archive_dir: str | Path | None = None,
+    out_dir: str | Path | None = None,
+    exclude: Collection[str] = (),
+) -> ExportResult:
+    """Export only the matches not already in the tables and append them to their month partitions.
+
+    - reads the exported match_ids from the matches table and an empty table means a full build
+    - a legacy single-file store is re-laid-out into partitions first, without decoding anything
+    - decodes only the .bin files whose match_id is new so processed matches are never re-read
+    - old month partitions are left alone and only the months the new matches fall in are rewritten
+    """
+    archive_dir = extract.ARCHIVE_DIR if archive_dir is None else Path(archive_dir)
+    out_dir = PARQUET_DIR if out_dir is None else Path(out_dir)
+    out_dir.mkdir(parents=True, exist_ok=True)
+
+    if is_legacy_layout(out_dir):
+        migrate_to_partitions(out_dir, exclude)
+
+    exported = exported_match_ids(out_dir)
+
+    if not exported:
+        return export_all(archive_dir, out_dir, exclude)
+
+    paths = _new_archive_paths(archive_dir, exported)
+
+    if not paths:
+        return ExportResult(counts={}, decoded=0, skipped=len(exported))
+
+    counts = export_infos(_decode_matches(paths), out_dir, exclude)
+
+    if not (out_dir / "assets").is_dir():
+        _write_asset_tables(out_dir, counts)
+
+    return ExportResult(counts=counts, decoded=counts.get("matches", 0), skipped=len(exported))

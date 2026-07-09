@@ -19,7 +19,7 @@ BUCKETS = {
 
 
 def _window(args: argparse.Namespace) -> str:
-    """The since/until part of the header line."""
+    """Build the since/until part of the header line."""
     parts = []
 
     if args.since:

@@ -2,14 +2,38 @@
 
 from __future__ import annotations
 
+import datetime as dt
 from typing import TYPE_CHECKING, Any
 
-from deadlock_matches import abilities, heroes, items
+from deadlock_matches import abilities, heroes, history, items
 
 if TYPE_CHECKING:
     import argparse
+    from pathlib import Path
 
 UNITS_PER_METER = 39.37
+
+
+def _as_of_note(when: dt.date | None) -> str:
+    """Return a trailing as-of label for a card header, or empty when current."""
+    return f"  (as of {when:%Y-%m-%d})" if when is not None else ""
+
+
+def _hero_asof(hero_id: int, when: dt.date | None) -> heroes.Hero | None:
+    """Resolve a hero from the era live at when, or the current snapshot when None."""
+    if when is None:
+        return heroes.hero_map().get(hero_id)
+
+    return heroes.hero_asof(hero_id, when) or heroes.hero_map().get(hero_id)
+
+
+def _ability_asof(gun: abilities.Ability | None, when: dt.date | None) -> abilities.Ability | None:
+    """Resolve a weapon ability as of when, keeping the current one when None or missing."""
+    if gun is None or when is None:
+        return gun
+
+    return abilities.ability_asof(gun.class_name, when) or gun
+
 
 BOON_LABELS = {
     "base_health_from_level": "health",
@@ -23,9 +47,9 @@ BOON_LABELS = {
 }
 
 
-def _gun_lines(hero_id: int, bullet_bonus: float) -> None:
+def _gun_lines(hero_id: int, bullet_bonus: float, when: dt.date | None = None) -> None:
     """Print bullet damage and dps with a boon bonus applied."""
-    gun = abilities.hero_gun(hero_id)
+    gun = _ability_asof(abilities.hero_gun(hero_id), when)
 
     if not gun or not gun.weapon.get("bullet_damage"):
         return
@@ -42,9 +66,9 @@ def _gun_lines(hero_id: int, bullet_bonus: float) -> None:
     print(f"  gun dps          {dps:>8.1f}")
 
 
-def _alt_gun_lines(hero_id: int) -> None:
-    """Print the alt-fire weapon's damage for heroes with a second firing mode."""
-    gun = abilities.hero_alt_gun(hero_id)
+def _alt_gun_lines(hero_id: int, when: dt.date | None = None) -> None:
+    """Print the alt-fire weapon damage for heroes with a second firing mode."""
+    gun = _ability_asof(abilities.hero_alt_gun(hero_id), when)
 
     if not gun or not gun.weapon.get("bullet_damage"):
         return
@@ -60,13 +84,13 @@ def _alt_gun_lines(hero_id: int) -> None:
     print(f"  ammo             {w.get('clip_size', 0):>8}")
 
 
-def _hero_base_card(hero: heroes.Hero, hero_id: int) -> None:
+def _hero_base_card(hero: heroes.Hero, hero_id: int, when: dt.date | None = None) -> None:
     """Print base stats and what each boon adds."""
     light, heavy = hero.melee_damage(1)
 
-    print(hero.name)
-    _gun_lines(hero_id, 0.0)
-    gun = abilities.hero_gun(hero_id)
+    print(f"{hero.name}{_as_of_note(when)}")
+    _gun_lines(hero_id, 0.0, when)
+    gun = _ability_asof(abilities.hero_gun(hero_id), when)
 
     if gun and gun.weapon:
         w = gun.weapon
@@ -82,7 +106,7 @@ def _hero_base_card(hero: heroes.Hero, hero_id: int) -> None:
         if speed := w.get("bullet_speed"):
             print(f"  bullet velocity  {speed / UNITS_PER_METER:>8.0f}")
 
-    _alt_gun_lines(hero_id)
+    _alt_gun_lines(hero_id, when)
 
     print()
     print(f"  light melee      {light:>8.1f}")
@@ -156,19 +180,28 @@ def hero_report(args: argparse.Namespace) -> None:
         print(f"Unknown hero: {args.hero}")
         return
 
-    hero = heroes.hero_map()[hero_id]
+    if getattr(args, "changes", False):
+        print_changes(heroes.hero_name(hero_id), "hero", heroes.HERO_HISTORY_PARQUET, hero_id)
+        return
+
+    when = getattr(args, "as_of", None)
+    hero = _hero_asof(hero_id, when)
+
+    if hero is None:
+        print(f"Unknown hero: {args.hero}")
+        return
 
     if args.souls is None and args.level is None:
-        _hero_base_card(hero, hero_id)
+        _hero_base_card(hero, hero_id, when)
         return
 
     level = args.level if args.level is not None else hero.level_for_souls(args.souls)
     stats = hero.boon_stats(level)
 
     if args.souls is not None:
-        print(f"{hero.name} at {args.souls:,} souls: level {level}")
+        print(f"{hero.name} at {args.souls:,} souls: level {level}{_as_of_note(when)}")
     else:
-        print(f"{hero.name} at level {level}")
+        print(f"{hero.name} at level {level}{_as_of_note(when)}")
 
     print(f"  max health       {stats['max_health']:>8,.0f}")
     print(f"  spirit power     {stats['spirit_power']:>8.1f}")
@@ -176,7 +209,7 @@ def hero_report(args: argparse.Namespace) -> None:
     print(f"  ability unlocks  {stats['ability_unlocks']:>8}")
     print(f"  light melee      {stats['light_melee_damage']:>8.1f}")
     print(f"  heavy melee      {stats['heavy_melee_damage']:>8.1f}")
-    _gun_lines(hero_id, stats["bullet_damage_bonus"])
+    _gun_lines(hero_id, stats["bullet_damage_bonus"], when)
 
 
 def _item_stat_line(item: items.Item, prop: str, indent: str) -> str | None:
@@ -198,9 +231,9 @@ def _item_stat_line(item: items.Item, prop: str, indent: str) -> str | None:
     return f"{indent}{label:<34} {shown:>10}"
 
 
-def item_card(item: items.Item) -> None:
+def item_card(item: items.Item, when: dt.date | None = None) -> None:
     """Prints the shop card for an item, innate stats first, then each passive or active section."""
-    print(f"{item.name}  ({item.slot} tier {item.tier}, {item.cost:,} souls)")
+    print(f"{item.name}  ({item.slot} tier {item.tier}, {item.cost:,} souls){_as_of_note(when)}")
 
     names = [c.name for c in map(items.item_by_class_name, item.components) if c]
 
@@ -250,7 +283,7 @@ def item_card(item: items.Item) -> None:
 
 
 def _scale_label(stat: str) -> str:
-    """Maps tech_power to spirit and other stats to spaced words."""
+    """Turn tech_power into spirit and other stats into spaced words."""
     if stat == "tech_power":
         return "spirit"
 
@@ -285,7 +318,7 @@ def _ability_context(hero: heroes.Hero | None, level: int) -> dict[str, float]:
 def _resolved_value(
     ability: abilities.Ability, prop: str, tier: int, ctx: dict[str, float]
 ) -> float:
-    """Applies the context stats to a property's value at a tier."""
+    """Apply the context stats to the value of a property at a tier."""
     value = ability.stat(prop, tier)
 
     for stat, scale in ability.scaling_at(prop, tier).items():
@@ -329,7 +362,7 @@ def _tier_changes(ability: abilities.Ability, n: int, ctx: dict[str, float]) -> 
 
 
 def _ability_names(hero_id: int) -> list[str]:
-    """The hero's four signature abilities, the names the ability command takes."""
+    """List the four signature abilities for a hero, the names the ability command takes."""
     return [a.name for a in abilities.for_hero(hero_id) if "ability_melee" not in a.class_name]
 
 
@@ -355,7 +388,15 @@ def ability_report(args: argparse.Namespace) -> None:
         print(f"Unknown ability: {args.ability}")
         return
 
-    hero = heroes.hero_map().get(ability.hero) if ability.hero else None
+    if getattr(args, "changes", False):
+        print_changes(
+            ability.name, ability.kind, abilities.ABILITY_HISTORY_PARQUET, ability.class_name
+        )
+        return
+
+    when = getattr(args, "as_of", None)
+    ability = _ability_asof(ability, when)
+    hero = _hero_asof(ability.hero, when) if ability.hero else None
     level = 1
 
     if hero and args.level is not None:
@@ -427,3 +468,64 @@ def ability_report(args: argparse.Namespace) -> None:
                 print(f"      {changes}")
         else:
             print(f"\n  T{n}  {changes}")
+
+
+def _flatten(value: Any, prefix: str = "") -> list[tuple[str, Any]]:
+    """Flatten a nested record into (dotted path, scalar) leaves."""
+    if isinstance(value, dict):
+        return [pair for k, v in value.items() for pair in _flatten(v, f"{prefix}{k}.")]
+
+    if isinstance(value, list):
+        return [pair for i, v in enumerate(value) for pair in _flatten(v, f"{prefix}{i}.")]
+
+    return [(prefix.rstrip("."), value)]
+
+
+def _fmt(value: Any) -> str:
+    """Format one leaf value for a change line, trimming long text."""
+    if value is None:
+        return "-"
+
+    if isinstance(value, float):
+        return f"{value:g}"
+
+    text = str(value)
+
+    return text if len(text) <= 40 else f"{text[:37]}..."
+
+
+def _record_diff(prev: dict[str, Any], flat: dict[str, Any]) -> list[tuple[str, Any, Any]]:
+    """Return the leaves that changed between two flattened records, sorted by path."""
+    keys = set(prev) | set(flat)
+
+    return sorted((k, prev.get(k), flat.get(k)) for k in keys if prev.get(k) != flat.get(k))
+
+
+def print_changes(name: str, kind: str, path: Path, record_id: str | int) -> None:
+    """Print the recorded change timeline for one asset, one block per era that changed it."""
+    series = history.record_history(path, record_id)
+
+    if not series:
+        print(f"No recorded history for {name}")
+        return
+
+    print(f"{name}  ({kind} change history, {len(series)} eras tracked)")
+    prev: dict[str, Any] | None = None
+
+    for frm, build, rec in series:
+        flat = dict(_flatten(rec))
+
+        if prev is None:
+            print(f"\n  {frm[:10]}  build {build}  first tracked")
+        else:
+            changed = _record_diff(prev, flat)
+
+            if not changed:
+                continue
+
+            print(f"\n  {frm[:10]}  build {build}")
+
+            for key, old, new in changed:
+                print(f"    {key:<34} {_fmt(old)} -> {_fmt(new)}")
+
+        prev = flat

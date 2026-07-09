@@ -212,7 +212,7 @@ def _span(row: dict[str, Any]) -> str:
 
 
 def _match_player(match_id: int, args: argparse.Namespace, tz: str) -> pl.DataFrame:
-    """Find one player's row in a match, by hero name or your accounts."""
+    """Look up the row for one player in a match, by hero name or your accounts."""
     lf = queries.scan("players", args.parquet).filter(pl.col("match_id") == match_id)
 
     if args.hero is not None:
@@ -228,7 +228,7 @@ def _match_player(match_id: int, args: argparse.Namespace, tz: str) -> pl.DataFr
 
 
 def match_report(args: argparse.Namespace, config: str | Path | None = None) -> None:
-    """Break one player's match into intervals of souls, damage, and last hits."""
+    """Break the match for one player into intervals of souls, damage, and last hits."""
     if args.interval <= 0:
         print("--interval must be a positive number of minutes")
         return
@@ -323,7 +323,7 @@ def match_report(args: argparse.Namespace, config: str | Path | None = None) -> 
 
 
 def _objective_events(row: dict[str, Any], args: argparse.Namespace) -> list[tuple[int, str]]:
-    """List what fell and when, worded from the player's side."""
+    """List what fell and when, worded from the player point of view."""
     yours = row["team"]
     events = []
 
@@ -426,9 +426,9 @@ def abilities_report(row: dict[str, Any], args: argparse.Namespace) -> None:
 
 
 def souls_report(row: dict[str, Any], args: argparse.Namespace) -> None:
-    """Print one player's souls by source per interval, then the farm grouping.
+    """Print the souls by source per interval for one player, then the farm grouping.
 
-    - source rows use the in-game souls-screen labels, ordered by match total
+    - source rows use the in game souls-screen labels, ordered by match total
     - the group block splits souls into lane, roaming, combat, objectives,
       catch-up, and other, the way you earned them
     """
@@ -487,13 +487,13 @@ def souls_report(row: dict[str, Any], args: argparse.Namespace) -> None:
         print(f"  {group:<{width}}{cells}{group_total:>9,}{percent:>7}")
 
     print(
-        f"\n  Total is gross souls earned by source, the in-game souls breakdown. "
+        f"\n  Total is gross souls earned by source, the in game souls breakdown. "
         f"Net worth ({row['net_worth']:,}) adds starting souls and subtracts souls lost to deaths."
     )
 
 
 def damage_source_table(row: dict[str, Any], args: argparse.Namespace) -> None:
-    """Print one player's per-source intervals: damage, or healing plus prevented healing."""
+    """Print the per source intervals for one player, damage or healing plus prevented healing."""
     if not queries.table_exists("damage_sources", args.parquet):
         print("No damage_sources table yet, run `deadlock export`")
         return
@@ -516,7 +516,7 @@ def _source_intervals(
     groups: bool = True,
     required: bool = True,
 ) -> bool:
-    """Print one stat's per-source interval table, like the in-game source graph.
+    """Print the per source interval table for one stat.
 
     - groups adds the Gun/Abilities/Items block under the total
     - a stat with no rows prints the error only when required
@@ -631,7 +631,7 @@ def winrate_report(args: argparse.Namespace, config: str | Path | None = None) -
 
 
 def _hero_baseline_line(hero: str, rating: str, since: str | None) -> None:
-    """Print the hero's public win rate under the daily table.
+    """Print the public win rate for a hero under the daily table.
 
     Prints nothing when the API is unreachable, so the command still works offline.
     """

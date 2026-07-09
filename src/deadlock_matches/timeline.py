@@ -1,4 +1,4 @@
-"""Minute-by-minute stat curves from a match's cumulative stats snapshots.
+"""Minute by minute stat data from the match cumulative stats snapshots.
 
 - accepts local protobuf players and the api's json players (same shape)
 - values between snapshots are linearly interpolated, and checkpoints past a
@@ -99,7 +99,7 @@ def _field(obj: Any, key: str, default: Any = None) -> Any:
 
 
 def _value(snap: Any, stat: str) -> float:
-    """A snapshot's value for a raw field or a named stat from STATS."""
+    """Read the snapshot value for a raw field or a named stat from STATS."""
     spec = STATS.get(stat)
 
     if spec and spec.sources:

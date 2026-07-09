@@ -232,10 +232,10 @@ def load(path: str | Path) -> MatchInfo:
 
 
 def from_api_json(match_info: dict[str, Any]) -> MatchInfo:
-    """Parse the api's match_info json into the same MatchInfo the cache files yield.
+    """Parse the API match_info json into the same MatchInfo the cache files yield.
 
     Verified identical, field for field, to what the cache files yield. Wire
-    fields our .proto doesn't define yet are dropped, which the cache path
-    can't read either.
+    fields our .proto does not define yet are dropped, which the cache path
+    cannot read either.
     """
     return json_format.ParseDict(match_info, MatchInfo(), ignore_unknown_fields=True)

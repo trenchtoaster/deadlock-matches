@@ -34,7 +34,7 @@ def _config(path: str | Path | None = None) -> dict[str, Any]:
 
 
 def _accounts_table(path: str | Path | None) -> dict[str, Any]:
-    """The [accounts] table from config.toml, {} when unset.
+    """Read the [accounts] table from config.toml, {} when unset.
 
     - anything but a table (like accounts = [42]) exits with the expected shape
     """

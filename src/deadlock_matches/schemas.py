@@ -9,6 +9,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Any
 
 import polars as pl
@@ -47,13 +48,56 @@ STAT_FIELDS = _stat_field_names()
 MATCH_ID = Column(pl.Int64, "Valve match id, increasing over time")
 ACCOUNT_ID = Column(pl.Int64, "Steam32 account ID of the player")
 
+ERA_FROM = Column(
+    pl.Datetime("us", "UTC"), "Release time of the client build that started this era"
+)
+CLIENT_VERSION = Column(pl.Int64, "Steam client build id the era began at (the patch version)")
+
+WEAPON_HISTORY_FIELDS = (
+    "bullet_damage",
+    "bullets",
+    "clip_size",
+    "cycle_time",
+    "reload_duration",
+    "bullets_per_second",
+    "damage_per_second",
+    "bullet_speed",
+    "crit_bonus_start",
+    "crit_bonus_end",
+    "crit_bonus_start_range",
+    "crit_bonus_end_range",
+    "damage_falloff_start_range",
+    "damage_falloff_end_range",
+    "damage_falloff_end_scale",
+    "range",
+)
+
+WEAPON_FIELD_DESCRIPTIONS = {
+    "bullet_damage": "Damage per bullet",
+    "bullets": "Bullets fired per shot",
+    "clip_size": "Rounds in a full clip",
+    "cycle_time": "Seconds between shots",
+    "reload_duration": "Reload time in seconds",
+    "bullets_per_second": "Bullets fired per second",
+    "damage_per_second": "Sustained damage per second",
+    "bullet_speed": "Bullet travel speed in units per second",
+    "crit_bonus_start": "Headshot damage bonus at close range",
+    "crit_bonus_end": "Headshot damage bonus at long range",
+    "crit_bonus_start_range": "Range where the headshot bonus starts falling off",
+    "crit_bonus_end_range": "Range where the headshot bonus reaches its far value",
+    "damage_falloff_start_range": "Range where bullet damage starts falling off",
+    "damage_falloff_end_range": "Range where bullet damage reaches its floor",
+    "damage_falloff_end_scale": "Damage multiplier at the falloff floor",
+    "range": "Maximum useful bullet range",
+}
+
 
 class Table:
     """Base for table models, where spec() collects the Column attributes in order."""
 
     @classmethod
     def spec(cls) -> dict[str, Column]:
-        """The table's columns as {name: Column}, in declaration order."""
+        """Collect the table columns as {name: Column}, in declaration order."""
         return {name: v for name, v in vars(cls).items() if isinstance(v, Column)}
 
 
@@ -179,20 +223,12 @@ class ItemEvents(Table):
     item = Column(pl.String, "Item display name, null for unknown/removed items")
     cost = Column(
         pl.Int64,
-        "Shop price in souls from the assets snapshot in effect at match time (see assets_date)",
+        "Shop price in souls from the committed item history era live at match time",
     )
     slot = Column(pl.String, "Shop slot: weapon/vitality/spirit")
     tier = Column(pl.Int64, "Item tier 1-4")
     sold_time_s = Column(pl.Int64, "When it left the inventory (sold or consumed), 0 if kept")
     flags = Column(pl.Int64, "1 = consumed as a component of an upgrade, NOT a sell, 0 = normal")
-    attribution = Column(
-        pl.String,
-        "How the item's value shows up in damage: 'proc' = has its own damage rows (Scourge, Escalating Exposure), 'stat' = value hides inside other rows (Boundless Spirit, Echo Shard)",
-    )
-    assets_date = Column(
-        pl.Date,
-        "Date of the dated assets snapshot that priced this row, null = bundled current snapshot (no history yet covered this match)",
-    )
 
 
 class Damage(Table):
@@ -270,7 +306,7 @@ class MidBoss(Table):
 
 
 class Objectives(Table):
-    """One row per objective: guardians, walkers, base guardians, shrines, and the patron."""
+    """One row per objective, covering guardians, walkers, base guardians, shrines, and the patron."""
 
     match_id = MATCH_ID
     team = Column(pl.Int64, "Team the objective belonged to")
@@ -347,6 +383,152 @@ class Downloads(Table):
     )
 
 
+class ItemHistory(Table):
+    """One row per item per era."""
+
+    item_id = Column(pl.Int64, "Numeric item id")
+    name = Column(pl.String, "Item display name")
+    class_name = Column(pl.String, "Engine class name, stable across patches")
+    cost = Column(pl.Int64, "Shop price in souls")
+    slot = Column(pl.String, "Shop slot: weapon/vitality/spirit")
+    tier = Column(pl.Int64, "Item tier 1-4")
+    is_active = Column(pl.Boolean, "Whether the item has an active use")
+    description = Column(pl.String, "Cleaned shop description text")
+    era_from = ERA_FROM
+    client_version = CLIENT_VERSION
+
+
+class ItemComponentHistory(Table):
+    """One row per component an item builds from, per era."""
+
+    item_id = Column(pl.Int64, "Numeric id of the upgrade item")
+    position = Column(pl.Int64, "Component order in the build, starting at 0")
+    component_class_name = Column(pl.String, "Engine class name of the component item")
+    era_from = ERA_FROM
+    client_version = CLIENT_VERSION
+
+
+class HeroHistory(Table):
+    """One row per hero per era."""
+
+    hero_id = Column(pl.Int64, "Numeric hero id")
+    name = Column(pl.String, "Hero display name")
+    class_name = Column(pl.String, "Engine class name, stable across patches")
+    hero_type = Column(pl.String, "Hero type tag from the assets API")
+    gun_tag = Column(pl.String, "Weapon archetype tag")
+    complexity = Column(pl.Int64, "Complexity rating shown in hero select")
+    player_selectable = Column(pl.Boolean, "Whether players can pick the hero")
+    disabled = Column(pl.Boolean, "Whether the hero is disabled")
+    era_from = ERA_FROM
+    client_version = CLIENT_VERSION
+
+
+class HeroLevelHistory(Table):
+    """One row per hero level per era."""
+
+    hero_id = Column(pl.Int64, "Numeric hero id")
+    level = Column(pl.Int64, "Hero level, starting at 1")
+    required_souls = Column(pl.Int64, "Total souls earned to reach this level")
+    standard_upgrade = Column(pl.Boolean, "Whether this level applies the standard stat boon")
+    era_from = ERA_FROM
+    client_version = CLIENT_VERSION
+
+
+class HeroStatHistory(Table):
+    """One row per hero starting stat per era."""
+
+    hero_id = Column(pl.Int64, "Numeric hero id")
+    stat = Column(pl.String, "Starting stat name (max_health, light_melee_damage, ...)")
+    value = Column(pl.Float64, "Starting value of the stat")
+    era_from = ERA_FROM
+    client_version = CLIENT_VERSION
+
+
+class HeroLevelUpHistory(Table):
+    """One row per hero boon stat per era."""
+
+    hero_id = Column(pl.Int64, "Numeric hero id")
+    stat = Column(
+        pl.String, "Stat that grows each standard level (base_health_from_level, tech_power, ...)"
+    )
+    per_level_value = Column(pl.Float64, "Amount the stat gains per standard level")
+    era_from = ERA_FROM
+    client_version = CLIENT_VERSION
+
+
+class AbilityHistory(Table):
+    """One row per ability or gun per era."""
+
+    ability_class = Column(pl.String, "Engine class name of the ability or gun")
+    id = Column(pl.Int64, "Numeric ability id")
+    name = Column(pl.String, "Ability display name")
+    hero = Column(pl.Int64, "Numeric id of the hero that owns it, null for shared guns")
+    kind = Column(pl.String, "ability or weapon")
+    description = Column(pl.String, "Cleaned ability card text")
+    era_from = ERA_FROM
+    client_version = CLIENT_VERSION
+
+
+class AbilityPropertyHistory(Table):
+    """One row per ability property per era, base value merged with scaling."""
+
+    ability_class = Column(pl.String, "Engine class name of the ability or gun")
+    property = Column(pl.String, "Property name (impact_damage, ability_cooldown, ...)")
+    value = Column(pl.Float64, "Base value of the property, null when it only scales")
+    scale_stat = Column(pl.String, "Stat the property scales with, null when it does not scale")
+    scale = Column(pl.Float64, "Scale factor applied to scale_stat")
+    era_from = ERA_FROM
+    client_version = CLIENT_VERSION
+
+
+class AbilityUpgradeHistory(Table):
+    """One row per tier upgrade entry per era."""
+
+    ability_class = Column(pl.String, "Engine class name of the ability or gun")
+    tier = Column(pl.Int64, "Upgrade tier 1-3")
+    property = Column(pl.String, "Property the upgrade changes")
+    bonus = Column(pl.Float64, "Amount the upgrade adds or multiplies")
+    type = Column(
+        pl.String,
+        "How the bonus applies (add_to_base, multiply_base, add_to_scale, ...), null for add_to_base",
+    )
+    stat = Column(pl.String, "Stat a scale upgrade targets, null when it uses the property default")
+    era_from = ERA_FROM
+    client_version = CLIENT_VERSION
+
+
+class AbilityWeaponHistory(Table):
+    """One row per gun per era with the full weapon stat block."""
+
+    ability_class = Column(pl.String, "Engine class name of the gun")
+    era_from = ERA_FROM
+    client_version = CLIENT_VERSION
+
+    @classmethod
+    def spec(cls) -> dict[str, Column]:
+        """Slot the weapon stat columns between the class name and the era grain."""
+        base = super().spec()
+        weapon = {
+            f: Column(pl.Float64, WEAPON_FIELD_DESCRIPTIONS[f]) for f in WEAPON_HISTORY_FIELDS
+        }
+
+        return {
+            "ability_class": base["ability_class"],
+            **weapon,
+            "era_from": base["era_from"],
+            "client_version": base["client_version"],
+        }
+
+
+class RankHistory(Table):
+    """One row per badge tier per era."""
+
+    tier = Column(pl.Int64, "Badge tier number")
+    name = Column(pl.String, "Rank name (Initiate, Eternus, ...)")
+    era_from = ERA_FROM
+    client_version = CLIENT_VERSION
+
+
 TABLES: dict[str, dict[str, Column]] = {
     "matches": Matches.spec(),
     "players": Players.spec(),
@@ -360,7 +542,83 @@ TABLES: dict[str, dict[str, Column]] = {
     "movement": Movement.spec(),
     "deaths": Deaths.spec(),
     "downloads": Downloads.spec(),
+    "item_history": ItemHistory.spec(),
+    "item_component_history": ItemComponentHistory.spec(),
+    "hero_history": HeroHistory.spec(),
+    "hero_level_history": HeroLevelHistory.spec(),
+    "hero_stat_history": HeroStatHistory.spec(),
+    "hero_level_up_history": HeroLevelUpHistory.spec(),
+    "ability_history": AbilityHistory.spec(),
+    "ability_property_history": AbilityPropertyHistory.spec(),
+    "ability_upgrade_history": AbilityUpgradeHistory.spec(),
+    "ability_weapon_history": AbilityWeaponHistory.spec(),
+    "rank_history": RankHistory.spec(),
 }
+
+ASSET_TABLES = frozenset(
+    {
+        "item_history",
+        "item_component_history",
+        "hero_history",
+        "hero_level_history",
+        "hero_stat_history",
+        "hero_level_up_history",
+        "ability_history",
+        "ability_property_history",
+        "ability_upgrade_history",
+        "ability_weapon_history",
+        "rank_history",
+    }
+)
+
+
+PARTITIONED = frozenset(TABLES) - ASSET_TABLES - {"downloads"}
+
+
+IDENTITY: dict[str, tuple[str, ...]] = {
+    "matches": ("match_id",),
+    "players": ("match_id", "account_id"),
+    "stats": ("match_id", "account_id", "time_stamp_s"),
+    "soul_sources": ("match_id", "account_id", "time_stamp_s", "source"),
+    "item_events": ("match_id", "account_id", "game_time_s", "item_id"),
+    "damage": ("match_id", "dealer_account_id", "target_player_slot", "source_class", "stat"),
+    "damage_sources": (
+        "match_id",
+        "dealer_account_id",
+        "source_class",
+        "stat",
+        "vs_heroes",
+        "time_stamp_s",
+    ),
+    "mid_boss": ("match_id", "destroyed_time_s"),
+    "objectives": ("match_id", "team", "objective_id"),
+    "movement": ("match_id", "account_id", "game_time_s"),
+    "deaths": ("match_id", "account_id", "game_time_s"),
+}
+
+
+def is_partitioned(table: str) -> bool:
+    """Whether a table is stored as a directory of month files rather than a single parquet."""
+    return table in PARTITIONED
+
+
+def partition_dir(table: str, parquet_dir: str | Path) -> Path:
+    """Directory that holds a partitioned table's per-month parquet files."""
+    return Path(parquet_dir) / table
+
+
+def table_path(table: str, parquet_dir: str | Path) -> Path:
+    """Path to a single-file table parquet (asset tables live under the assets subfolder).
+
+    Partitioned tables live in a directory instead. Callers that need to read them
+    go through queries.scan, which tolerates both layouts.
+    """
+    parquet_dir = Path(parquet_dir)
+
+    if table in ASSET_TABLES:
+        return parquet_dir / "assets" / f"{table}.parquet"
+
+    return parquet_dir / f"{table}.parquet"
 
 
 def conform(name: str, rows: list[dict] | pl.DataFrame) -> pl.DataFrame:
