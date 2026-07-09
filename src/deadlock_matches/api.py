@@ -22,6 +22,7 @@ Full API surface: https://api.deadlock-api.com/docs
 
 from __future__ import annotations
 
+import collections
 import json
 import shutil
 import time
@@ -36,6 +37,8 @@ CACHE_DIR = paths.cache_dir() / "api"
 DATA_DIR = paths.data_dir() / "deadlock-matches/api"
 
 DAY = 86_400
+
+fetch_counts: collections.Counter[str] = collections.Counter()
 
 
 def _filename(path: str) -> str:
@@ -70,6 +73,7 @@ def get_json(
     - permanent stores the body in the data directory instead and never
       refetches, for immutable responses like match metadata
     - an expired entry is still served when the network is down
+    - fetch_counts tallies cached and downloaded responses for progress reporting
     """
     target = data_path(path) if permanent else cache_path(path)
     target.parent.mkdir(parents=True, exist_ok=True)
@@ -81,6 +85,7 @@ def get_json(
         max_age = None
 
     if use_cache and target.exists() and not _expired(target, max_age):
+        fetch_counts["cached"] += 1
         return json.loads(target.read_text(encoding="utf-8"))
 
     req = urllib.request.Request(f"{BASE}/{path}", headers={"User-Agent": "deadlock-matches/1.0"})
@@ -90,10 +95,12 @@ def get_json(
             data = json.load(r)
     except OSError:
         if use_cache and target.exists():
+            fetch_counts["cached"] += 1
             return json.loads(target.read_text(encoding="utf-8"))
 
         raise
 
+    fetch_counts["downloaded"] += 1
     target.write_text(json.dumps(data), encoding="utf-8")
 
     return data

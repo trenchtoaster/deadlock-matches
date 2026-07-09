@@ -1630,6 +1630,7 @@ def test_accounts_command_suggests_main_when_config_empty(capsys, tmp_path):
 
 def test_backfill_without_confirm_only_warns(monkeypatch, capsys):
     called = []
+    monkeypatch.setattr(assets, "client_version_dates", lambda **kw: {1: "2026-01-05T00:00:00"})
 
     for fn in (
         "build_item_history",
@@ -1639,7 +1640,7 @@ def test_backfill_without_confirm_only_warns(monkeypatch, capsys):
     ):
         monkeypatch.setattr(assets, fn, lambda **kw: called.append(True))
 
-    main(["backfill"], config="none.json")
+    main(["assets", "--backfill"], config="none.json")
 
     out = capsys.readouterr().out
 
@@ -1648,6 +1649,7 @@ def test_backfill_without_confirm_only_warns(monkeypatch, capsys):
 
 
 def test_backfill_confirm_rebuilds_and_reports(monkeypatch, capsys):
+    monkeypatch.setattr(assets, "client_version_dates", lambda **kw: {1: "2026-01-05T00:00:00"})
     counts = {
         "build_item_history": 33,
         "build_hero_history": 25,
@@ -1658,7 +1660,7 @@ def test_backfill_confirm_rebuilds_and_reports(monkeypatch, capsys):
     for fn, n in counts.items():
         monkeypatch.setattr(assets, fn, lambda n=n, **kw: n)
 
-    main(["backfill", "--confirm"], config="none.json")
+    main(["assets", "--backfill", "--confirm"], config="none.json")
 
     out = capsys.readouterr().out
 

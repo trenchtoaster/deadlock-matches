@@ -1,7 +1,6 @@
 import datetime as dt
 import json
-
-import pytest
+import urllib.error
 
 from deadlock_matches import abilities, assets, heroes, items
 
@@ -536,30 +535,90 @@ def test_build_item_history_captures_a_revert(tmp_path, monkeypatch):
     assert items.item_asof(10, dt.datetime(2026, 1, 3), path).cost == 500
 
 
-def test_load_build_raises_on_persistent_failure(monkeypatch):
+def test_load_build_skips_a_persistent_failure(monkeypatch):
     monkeypatch.setattr(assets.time, "sleep", lambda *_: None)
+    calls = []
 
     def load(build):
+        calls.append(build)
         raise OSError("500")
 
-    with pytest.raises(RuntimeError, match="client build 2"):
-        assets._load_build(2, {}, load, tries=2)
+    cache = {}
+
+    assert assets._load_build(2, cache, load, tries=2) is None
+    assert len(calls) == 2
+    assert cache[2] is None
 
 
-def test_build_asset_history_aborts_when_a_build_keeps_failing(tmp_path, monkeypatch):
+def test_load_build_skips_a_404_without_retrying(monkeypatch):
+    monkeypatch.setattr(assets.time, "sleep", lambda *_: None)
+    calls = []
+
+    def load(build):
+        calls.append(build)
+        raise urllib.error.HTTPError("url", 404, "not found", None, None)
+
+    assert assets._load_build(2, {}, load, tries=4) is None
+    assert len(calls) == 1
+
+
+def test_load_build_retries_a_transient_500(monkeypatch):
+    monkeypatch.setattr(assets.time, "sleep", lambda *_: None)
+    calls = []
+
+    def load(build):
+        calls.append(build)
+
+        if len(calls) == 1:
+            raise urllib.error.HTTPError("url", 500, "server error", None, None)
+
+        return {"10": {"cost": 500}}
+
+    assert assets._load_build(2, {}, load, tries=4) == {"10": {"cost": 500}}
+    assert len(calls) == 2
+
+
+def test_build_item_history_skips_a_build_the_api_cannot_serve(tmp_path, monkeypatch):
     monkeypatch.setattr(assets.time, "sleep", lambda *_: None)
     builds = {b: f"2026-01-0{b}T00:00:00" for b in (1, 2, 3)}
+    items_at = {1: _item_recs(500), 3: _item_recs(800)}
 
     def get_json(path, **kw):
         if "steam-info/all" in path:
             return [{"client_version": b, "version_datetime": d} for b, d in builds.items()]
 
         if "client_version=2" in path:
-            raise OSError("500")
+            raise urllib.error.HTTPError("url", 500, "server error", None, None)
 
-        return _item_recs(500)
+        build = int(path.rsplit("=", 1)[1])
+
+        return items_at[build]
 
     monkeypatch.setattr(assets.api, "get_json", get_json)
 
-    with pytest.raises(RuntimeError, match="client build 2"):
-        assets.build_item_history(start_date="2026-01-01", path=tmp_path / "item_history.parquet")
+    seen = []
+    path = tmp_path / "item_history.parquet"
+    n = assets.build_item_history(
+        start_date="2026-01-01", path=path, progress=lambda *a: seen.append(a)
+    )
+
+    assert n == 2
+    assert items.item_asof(10, dt.datetime(2026, 1, 2), path).cost == 500
+    assert items.item_asof(10, dt.datetime(2026, 1, 3), path).cost == 800
+    assert seen[-1] == (3, 3, [2])
+
+
+def test_build_item_history_reports_progress_per_build(tmp_path, monkeypatch):
+    builds = {b: f"2026-01-0{b}T00:00:00" for b in (1, 2, 3)}
+    monkeypatch.setattr(
+        assets.api, "get_json", _fake_assets(builds, {b: _item_recs(500) for b in builds})
+    )
+
+    seen = []
+    assets.build_item_history(
+        start_date="2026-01-01",
+        path=tmp_path / "item_history.parquet",
+        progress=lambda *a: seen.append(a),
+    )
+
+    assert seen == [(1, 3, []), (2, 3, []), (3, 3, [])]

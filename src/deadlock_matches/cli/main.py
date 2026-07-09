@@ -382,19 +382,16 @@ def build_parser(config: str | Path | None = None) -> argparse.ArgumentParser:
         "accounts", help="Steam accounts on this PC that have run Deadlock, for config.toml"
     )
 
-    sub.add_parser("assets", help="redownload heroes.json / items.json (run after a patch)")
-
-    bf = sub.add_parser(
-        "backfill",
-        help="rebuild the committed item and hero price history from the API (maintainer)",
+    at = sub.add_parser("assets", help="redownload heroes.json / items.json (run after a patch)")
+    at.add_argument(
+        "--backfill",
+        action="store_true",
+        help="rebuild the committed asset history from every patch instead (maintainer)",
     )
-    bf.add_argument(
+    at.add_argument(
         "--confirm",
         action="store_true",
-        help="run it, otherwise the command only says what it would do",
-    )
-    bf.add_argument(
-        "--start-date", default="2026-01-01", help="earliest patch date to scan (YYYY-MM-DD)"
+        help="run the backfill, otherwise it only says what it would do",
     )
 
     sc = sub.add_parser("schema", help="column docs for the parquet tables (the data dictionary)")
@@ -509,10 +506,10 @@ def main(argv: Sequence[str] | None = None, config: str | Path | None = None) ->
         meta.meta_report(args)
     elif args.cmd == "accounts":
         data.list_accounts(args, config)
+    elif args.cmd == "assets" and args.backfill:
+        data.rebuild_history(args)
     elif args.cmd == "assets":
         data.refresh_assets(args)
-    elif args.cmd == "backfill":
-        data.rebuild_history(args)
     else:
         data.match_history(args, config)
 

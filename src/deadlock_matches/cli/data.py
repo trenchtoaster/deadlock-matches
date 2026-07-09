@@ -10,6 +10,7 @@ import polars as pl
 
 from deadlock_matches import (
     abilities,
+    api,
     assets,
     export,
     extract,
@@ -292,7 +293,11 @@ def refresh_assets(_args: argparse.Namespace) -> None:
 
 
 def rebuild_history(args: argparse.Namespace) -> None:
-    """Rebuild the committed item, hero, ability, and rank history from the assets API."""
+    """Rebuild the committed item, hero, ability, and rank history from the assets API.
+
+    Refreshes the build list first so a backfill run right after a patch sees the
+    new build instead of a day-old cached list.
+    """
     builders = [
         ("items", items.ITEM_HISTORY_PARQUET, assets.build_item_history),
         ("heroes", heroes.HERO_HISTORY_PARQUET, assets.build_hero_history),
@@ -300,15 +305,17 @@ def rebuild_history(args: argparse.Namespace) -> None:
         ("ranks", skill_rating.RANK_HISTORY_PARQUET, assets.build_rank_history),
     ]
 
+    assets.client_version_dates(max_age=0)
+
     if not args.confirm:
         print("Rebuilding the committed asset history tables:")
 
         for name, path, _ in builders:
             print(f"  {name:<9} {len(history.eras(path))} eras at {_tilde(path)}")
 
-        builds = sum(d >= args.start_date for d in assets.client_version_dates().values())
+        builds = sum(d >= assets.HISTORY_START for d in assets.client_version_dates().values())
         print(
-            f"\nThis scans every client build since {args.start_date} ({builds} builds per "
+            f"\nThis scans every client build since {assets.HISTORY_START} ({builds} builds per "
             f"asset type) and overwrites those committed files."
         )
         print("The API calls are cached after the first run, so a rerun is cheap.")
@@ -319,9 +326,33 @@ def rebuild_history(args: argparse.Namespace) -> None:
 
     for name, path, build in builders:
         before = len(history.eras(path))
-        eras = build(start_date=args.start_date)
+        api.fetch_counts.clear()
+        missing: list[int] = []
+
+        def show(
+            done: int,
+            total: int,
+            skipped: list[int],
+            name: str = name,
+            missing: list[int] = missing,
+        ) -> None:
+            missing[:] = skipped
+            cached = api.fetch_counts["cached"]
+            downloaded = api.fetch_counts["downloaded"]
+            line = (
+                f"  {name:<9} {done}/{total} builds"
+                f" ({cached} cached, {downloaded} downloaded, {len(skipped)} missing)"
+            )
+            print(f"\r{line:<76}", end="", flush=True)
+
+        eras = build(progress=show)
         size = path.stat().st_size / 1024 if path.is_file() else 0.0
-        print(f"  {name:<9} {before} -> {eras} eras  {size:.0f} KB at {_tilde(path)}")
+        line = f"  {name:<9} {before} -> {eras} eras  {size:.0f} KB at {_tilde(path)}"
+        print(f"\r{line:<76}")
+
+        if missing:
+            builds = ", ".join(str(b) for b in missing)
+            print(f"    no asset data for client build {builds}, skipped")
 
     print("\nReview the diff and commit the updated tables.")
 

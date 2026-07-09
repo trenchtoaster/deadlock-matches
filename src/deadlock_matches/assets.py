@@ -6,6 +6,7 @@ import hashlib
 import json
 import re
 import time
+import urllib.error
 from typing import TYPE_CHECKING, Any
 
 from deadlock_matches import abilities, api, heroes, history, items, skill_rating
@@ -13,6 +14,8 @@ from deadlock_matches import abilities, api, heroes, history, items, skill_ratin
 if TYPE_CHECKING:
     from collections.abc import Callable
     from pathlib import Path
+
+HISTORY_START = "2026-01-01"
 
 HERO_FIELDS = (
     "id",
@@ -312,9 +315,9 @@ def _ability_snapshot(rec: dict[str, Any], kind: str) -> dict[str, Any]:
     return out
 
 
-def client_version_dates() -> dict[int, str]:
+def client_version_dates(max_age: float = api.DAY) -> dict[int, str]:
     """Return the release datetime for each Steam client build."""
-    records = api.get_json("v1/assets/steam-info/all", max_age=api.DAY)
+    records = api.get_json("v1/assets/steam-info/all", max_age=max_age)
 
     return {r["client_version"]: r["version_datetime"] for r in records}
 
@@ -326,14 +329,16 @@ def _versioned(endpoint: str, build: int) -> list[dict[str, Any]]:
 
 def _load_build(
     build: int,
-    cache: dict[int, dict],
+    cache: dict[int, dict | None],
     load: Callable[[int], dict[str, Any]],
     tries: int = 4,
-) -> dict:
+) -> dict | None:
     """Return the projected records at one client build, retrying transient failures.
 
-    Raises when the build keeps failing so a backfill never records an era start
-    from a different build than the one dated.
+    - a 404 means the API never extracted assets for the build, skipped without retrying
+    - a build that keeps failing is also skipped so one broken build on the API side
+      cannot abort a whole backfill
+    - a skipped build never substitutes a neighbor, its records are just absent
     """
     if build in cache:
         return cache[build]
@@ -343,14 +348,21 @@ def _load_build(
             cache[build] = load(build)
             return cache[build]
 
-        except OSError as exc:
-            if k == tries - 1:
-                msg = f"assets API failed for client build {build} after {tries} tries"
-                raise RuntimeError(msg) from exc
+        except urllib.error.HTTPError as exc:
+            if exc.code == 404 or k == tries - 1:
+                break
 
             time.sleep(0.4 * (k + 1))
 
-    return cache[build]
+        except OSError:
+            if k == tries - 1:
+                break
+
+            time.sleep(0.4 * (k + 1))
+
+    cache[build] = None
+
+    return None
 
 
 def _digest(records: dict[str, Any]) -> str:
@@ -358,34 +370,20 @@ def _digest(records: dict[str, Any]) -> str:
     return hashlib.sha256(json.dumps(records, sort_keys=True).encode()).hexdigest()
 
 
-def _change_starts(
-    builds: list[int], cache: dict[int, dict], load: Callable[[int], dict[str, Any]]
-) -> list[int]:
-    """Return each build index whose projected records differ from the build before it.
-
-    Walks every build so a value that changes and reverts between two builds is
-    still captured, which a bisection over the endpoints would miss.
-    """
-    starts: list[int] = []
-    prev: str | None = None
-
-    for i, build in enumerate(builds):
-        digest = _digest(_load_build(build, cache, load))
-
-        if digest != prev:
-            starts.append(i)
-            prev = digest
-
-    return starts
-
-
 def build_asset_history(
-    load: Callable[[int], dict[str, Any]], path: Path, start_date: str = "2026-01-01"
+    load: Callable[[int], dict[str, Any]],
+    path: Path,
+    start_date: str = HISTORY_START,
+    progress: Callable[[int, int, list[int]], None] | None = None,
 ) -> int:
     """Build a committed asset history by scanning every client build for change points.
 
     - load(build) returns the {id: record} map at a client build
     - one era per patch that changed any stored record
+    - walks every build so a value that changes and reverts between two builds is
+      still captured, which a bisection over the endpoints would miss
+    - builds the API has no data for are skipped, the scan continues from the next one
+    - progress(done, total, skipped_builds) is called after every build
     """
     dates = client_version_dates()
     builds = sorted(b for b, d in dates.items() if d >= start_date)
@@ -394,15 +392,25 @@ def build_asset_history(
         msg = f"no client builds on or after {start_date}"
         raise ValueError(msg)
 
-    cache: dict[int, dict] = {}
-    states = [
-        {
-            "from": dates[builds[i]],
-            "build": builds[i],
-            "records": _load_build(builds[i], cache, load),
-        }
-        for i in _change_starts(builds, cache, load)
-    ]
+    cache: dict[int, dict | None] = {}
+    states: list[dict[str, Any]] = []
+    skipped: list[int] = []
+    prev: str | None = None
+
+    for done, build in enumerate(builds, start=1):
+        records = _load_build(build, cache, load)
+
+        if records is None:
+            skipped.append(build)
+        else:
+            digest = _digest(records)
+
+            if digest != prev:
+                states.append({"from": dates[build], "build": build, "records": records})
+                prev = digest
+
+        if progress is not None:
+            progress(done, len(builds), skipped)
 
     history.write(path, states)
 
@@ -427,7 +435,11 @@ def _endpoint_load(
     return load
 
 
-def build_item_history(start_date: str = "2026-01-01", path: Path | None = None) -> int:
+def build_item_history(
+    start_date: str = HISTORY_START,
+    path: Path | None = None,
+    progress: Callable[[int, int, list[int]], None] | None = None,
+) -> int:
     """Build the committed item history from the assets API.
 
     - one era per patch that changed any item field
@@ -436,10 +448,14 @@ def build_item_history(start_date: str = "2026-01-01", path: Path | None = None)
     path = items.ITEM_HISTORY_PARQUET if path is None else path
     load = _endpoint_load("v1/assets/items/by-type/upgrade", _item_snapshot, _by_id)
 
-    return build_asset_history(load, path, start_date)
+    return build_asset_history(load, path, start_date, progress)
 
 
-def build_hero_history(start_date: str = "2026-01-01", path: Path | None = None) -> int:
+def build_hero_history(
+    start_date: str = HISTORY_START,
+    path: Path | None = None,
+    progress: Callable[[int, int, list[int]], None] | None = None,
+) -> int:
     """Build the committed hero history from the assets API.
 
     - one era per patch that changed any hero field
@@ -448,7 +464,7 @@ def build_hero_history(start_date: str = "2026-01-01", path: Path | None = None)
     path = heroes.HERO_HISTORY_PARQUET if path is None else path
     load = _endpoint_load("v1/assets/heroes", _hero_snapshot, _by_id)
 
-    return build_asset_history(load, path, start_date)
+    return build_asset_history(load, path, start_date, progress)
 
 
 def _ability_load(build: int) -> dict[str, Any]:
@@ -463,7 +479,11 @@ def _ability_load(build: int) -> dict[str, Any]:
     return out
 
 
-def build_ability_history(start_date: str = "2026-01-01", path: Path | None = None) -> int:
+def build_ability_history(
+    start_date: str = HISTORY_START,
+    path: Path | None = None,
+    progress: Callable[[int, int, list[int]], None] | None = None,
+) -> int:
     """Build the committed ability history from the assets API.
 
     - one era per patch that changed any ability or gun field
@@ -471,7 +491,7 @@ def build_ability_history(start_date: str = "2026-01-01", path: Path | None = No
     """
     path = abilities.ABILITY_HISTORY_PARQUET if path is None else path
 
-    return build_asset_history(_ability_load, path, start_date)
+    return build_asset_history(_ability_load, path, start_date, progress)
 
 
 def _rank_record(record: dict[str, Any]) -> dict[str, Any]:
@@ -484,7 +504,11 @@ def _by_tier(record: dict[str, Any]) -> str:
     return str(record["tier"])
 
 
-def build_rank_history(start_date: str = "2026-01-01", path: Path | None = None) -> int:
+def build_rank_history(
+    start_date: str = HISTORY_START,
+    path: Path | None = None,
+    progress: Callable[[int, int, list[int]], None] | None = None,
+) -> int:
     """Build the committed rank history from the assets API.
 
     - one era per patch that renamed or added a rank tier
@@ -493,7 +517,7 @@ def build_rank_history(start_date: str = "2026-01-01", path: Path | None = None)
     path = skill_rating.RANK_HISTORY_PARQUET if path is None else path
     load = _endpoint_load("v1/assets/ranks", _rank_record, _by_tier)
 
-    return build_asset_history(load, path, start_date)
+    return build_asset_history(load, path, start_date, progress)
 
 
 def refresh_abilities(path: Path | None = None) -> int:
