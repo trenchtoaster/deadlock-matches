@@ -1,13 +1,15 @@
 import ast
 from pathlib import Path
 
+import pytest
+
 from deadlock_matches import config, queries, schemas
 
-NOTEBOOK = Path(__file__).parent.parent / "notebooks" / "getting_started.py"
+NOTEBOOKS = sorted((Path(__file__).parent.parent / "notebooks").glob("*.py"))
 
 
-def notebook_tree():
-    return ast.parse(NOTEBOOK.read_text(encoding="utf-8"))
+def notebook_tree(path):
+    return ast.parse(path.read_text(encoding="utf-8"))
 
 
 def attribute_names(tree, module):
@@ -20,25 +22,28 @@ def attribute_names(tree, module):
     }
 
 
-def test_notebook_parses():
-    notebook_tree()
+@pytest.mark.parametrize("path", NOTEBOOKS, ids=lambda p: p.name)
+def test_notebook_parses(path):
+    notebook_tree(path)
 
 
-def test_query_helpers_exist():
-    for name in attribute_names(notebook_tree(), "queries"):
+@pytest.mark.parametrize("path", NOTEBOOKS, ids=lambda p: p.name)
+def test_query_helpers_exist(path):
+    for name in attribute_names(notebook_tree(path), "queries"):
         assert hasattr(queries, name), f"queries.{name} does not exist"
 
 
-def test_config_helpers_exist():
-    for name in attribute_names(notebook_tree(), "config"):
+@pytest.mark.parametrize("path", NOTEBOOKS, ids=lambda p: p.name)
+def test_config_helpers_exist(path):
+    for name in attribute_names(notebook_tree(path), "config"):
         assert hasattr(config, name), f"config.{name} does not exist"
 
 
-def test_table_names_are_real():
-    tree = notebook_tree()
+@pytest.mark.parametrize("path", NOTEBOOKS, ids=lambda p: p.name)
+def test_table_names_are_real(path):
     table_calls = ("scan", "table_exists")
 
-    for node in ast.walk(tree):
+    for node in ast.walk(notebook_tree(path)):
         if not isinstance(node, ast.Call):
             continue
 

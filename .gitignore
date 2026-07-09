@@ -28,3 +28,6 @@ tests/cli_sweep.sh
 
 # Claude Code local permissions
 .claude/settings.local.json
+
+# Throwaway analysis notebooks
+notebooks/scratch_*.py
