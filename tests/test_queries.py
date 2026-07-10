@@ -581,6 +581,7 @@ def test_hero_scaling_frame():
 
 def test_hero_damage_keeps_only_detail_rows_on_heroes(pq):
     df = queries.hero_damage(parquet_dir=pq, tz="America/Chicago").collect()
+    df = df.sort("damage", descending=True)
 
     assert df["source_class"].to_list() == ["citadel_weapon_mirage", "upgrade_crackshot"]
     assert df["target_account_id"].to_list() == [43, 43]

@@ -127,6 +127,8 @@ uv run deadlock sync                      # rebuild parquet tables; --full from 
 
 Prefer `deadlock sync` + polars over looping protobufs for win rates, damage totals, souls curves, item timing. Tables rebuild automatically whenever a data command archives new matches, so run a quick `deadlock history` first and the tables are guaranteed fresh; `deadlock sync --full` forces a full rebuild (needed after changing `export.py`). Sync filters to the config accounts — it refuses to run without an `[accounts]` table and refuses `--account` ids not in it. `--archive`/`--parquet` point any command at non-default dirs. Tables live in `~/.local/share/deadlock-matches/parquet/`.
 
+Importing the package pins the polars engine affinity to streaming (`engine.py`), so every collect stays memory-bounded on the big tables. The streaming engine does NOT keep row order through joins or group_by — sort explicitly before printing or asserting on order, never rely on file order surviving a join. Float sums can also differ in the last bits between runs.
+
 ### queries.py helper catalog
 
 Start ad-hoc polars from these instead of rewriting boilerplate. This is the canonical list — the module map points here.

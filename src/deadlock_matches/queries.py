@@ -582,6 +582,7 @@ def ability_upgrades(
             "level",
             "required_souls",
         )
+        .sort("match_id", "account_id", "game_time_s")
     )
 
 
@@ -1113,6 +1114,7 @@ def match_intervals(
         .with_columns(pl.col(f) - pl.col(f).shift(1).fill_null(0) for f in fields)
         .join(events, on="interval", how="left")
         .with_columns(pl.col("kills", "deaths").fill_null(0))
+        .sort("interval")
     )
 
     return (
