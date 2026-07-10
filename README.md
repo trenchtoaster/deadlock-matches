@@ -173,7 +173,7 @@ uv run deadlock match
 - the final scoreboard of a single match and the per-5-minute interval data for your character by default
 - `deadlock match 12345678` reads that match from your tables, `deadlock match` your most recent one. `--hero Wraith` follows another player from the match instead (your games keep all 12 players), and `--interval 10` changes the bucket size
 - the scoreboard shows the match screen numbers while the interval columns come from the minute snapshots, so the Last hits totals can differ slightly. Troopers and Neutrals split the interval Last hits column
-- to read a top player's game, download it first (`deadlock download --match <id>` or `--account <id>`) and point match at those tables: `deadlock --parquet ~/.local/share/deadlock-matches/parquet-players match <id> --hero Mirage`
+- a game that is not yours works too: `deadlock download --match <id>` pulls it into the players tables once, and `deadlock match <id> --hero Wraith` reads it from there automatically
 
 ```
 Match 12345678: Mirage, win, 2026-07-08 07:16, 36:03

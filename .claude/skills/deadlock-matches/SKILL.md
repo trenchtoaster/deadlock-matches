@@ -42,7 +42,9 @@ uv run deadlock match [12345678] [--hero Wraith] [--interval 10] [--souls|--dama
                                           # no id = your most recent match, --hero picks any
                                           # player in the match instead of you (your games keep
                                           # all 12 players; a match none of your accounts played
-                                          # never reaches the tables, use download --match);
+                                          # never reaches your tables — download --match pulls it
+                                          # into the players tables and match falls back to them
+                                          # by itself when the id is not in your tables);
                                           # --souls swaps the columns for souls by source, like the
                                           # in-game souls graph (in-game screen labels, hidden
                                           # sources only when nonzero), plus a Lane/Roaming/Combat/
@@ -101,11 +103,15 @@ uv run deadlock movement --hero Mirage    # slide/dash/air movement profile vs t
 uv run deadlock hero Mirage --souls 25000 # boon stats at a soul breakpoint (health, spirit,
                                           # melee, gun damage, AP), --level N works too,
                                           # no breakpoint = base card + per boon gains
-uv run deadlock ability "Dust Devil" [--hero Mirage] [--souls 25000]
+uv run deadlock ability "Dust Devil" [--hero Mirage] [--souls 25000 | --spirit 100]
                                           # ability/gun numbers: base, spirit scaling, and a
                                           # section per tier with the values it changes;
                                           # --souls/--level resolves boon scaling (spirit,
-                                          # melee); --hero for names on several heroes
+                                          # melee); --spirit N resolves at a total spirit
+                                          # power instead (the in-game stat, items included)
+                                          # and rejects --souls/--level since the total
+                                          # already includes boons; --hero for names on
+                                          # several heroes
 uv run deadlock meta [--hero Mirage] [--by rating|day|week|month] [--min-rating Eternus] [--since 2026-06-01] [--until 2026-07-01]
                                           # public hero win/pick rates from deadlock-api.com;
                                           # --by rating = per skill rating (Oracle 3), day/week/month = trends

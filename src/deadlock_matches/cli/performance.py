@@ -3,11 +3,13 @@
 from __future__ import annotations
 
 import datetime as dt
+from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 import polars as pl
 
 from deadlock_matches import (
+    export,
     extract,
     heroes,
     meta,
@@ -24,7 +26,6 @@ from deadlock_matches.config import config_timezone, format_accounts
 
 if TYPE_CHECKING:
     import argparse
-    from pathlib import Path
 
 
 def _cell(value: float | None, width: int = 8, *, sign: bool = False) -> str:
@@ -222,6 +223,33 @@ def _span(row: dict[str, Any]) -> str:
     return f"{row['start_s'] // 60}-{-(-row['end_s'] // 60)}m"
 
 
+def _players_store_fallback(match_id: int, args: argparse.Namespace) -> bool:
+    """Point args.parquet at the players tables when they hold the match.
+
+    - only jumps from the default store, an explicit --parquet stays respected
+    """
+    if Path(args.parquet) != export.PARQUET_DIR:
+        return False
+
+    if not queries.table_exists("players", players.PARQUET_DIR):
+        return False
+
+    found = (
+        queries.scan("players", players.PARQUET_DIR)
+        .filter(pl.col("match_id") == match_id)
+        .head(1)
+        .collect()
+    )
+
+    if found.is_empty():
+        return False
+
+    args.parquet = players.PARQUET_DIR
+    print(f"Reading match {match_id} from the players tables at {paths.tilde(players.PARQUET_DIR)}")
+
+    return True
+
+
 def _match_player(match_id: int, args: argparse.Namespace, tz: str) -> pl.DataFrame:
     """Look up the row for one player in a match, by hero name or your accounts."""
     lf = queries.scan("players", args.parquet).filter(pl.col("match_id") == match_id)
@@ -365,6 +393,9 @@ def match_report(args: argparse.Namespace, config: str | Path | None = None) -> 
 
     game = _match_player(match_id, args, tz)
 
+    if game.is_empty() and args.match_id is not None and _players_store_fallback(match_id, args):
+        game = _match_player(match_id, args, tz)
+
     if game.is_empty():
         in_match = (
             queries.scan("players", args.parquet)
@@ -381,10 +412,9 @@ def match_report(args: argparse.Namespace, config: str | Path | None = None) -> 
             else:
                 print(f"Match {match_id} is not in the archive")
 
-            print(f"`deadlock download --match {match_id}` builds it in the players tables, then")
             print(
-                f"`deadlock --parquet {paths.tilde(players.PARQUET_DIR)} "
-                f"match {match_id} --hero <name>` reads it"
+                f"`deadlock download --match {match_id}` pulls it into the players tables, "
+                "then rerun this command"
             )
         elif args.hero is not None:
             print(f"No {args.hero} in match {match_id}: " + ", ".join(sorted(in_match["hero"])))

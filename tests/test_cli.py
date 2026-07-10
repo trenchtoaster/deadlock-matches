@@ -894,6 +894,46 @@ def test_match_id_not_found(capsys, tmp_path):
     assert "deadlock download --match 999" in out
 
 
+def test_match_reads_downloaded_matches_from_the_players_store(capsys, tmp_path, monkeypatch):
+    cache = tmp_path / "cache"
+    cache.mkdir()
+    write_cache_entry(cache, match_id=100, stats=[(300, 3000)])
+
+    foreign_cache = tmp_path / "foreign-cache"
+    foreign_cache.mkdir()
+    write_cache_entry(foreign_cache, match_id=500, account=99, stats=[(300, 4000)])
+    foreign_arc = tmp_path / "foreign-arc"
+    extract.archive(foreign_cache, foreign_arc)
+    store = tmp_path / "players-store"
+    export.export_all(foreign_arc, store)
+
+    monkeypatch.setattr(export, "PARQUET_DIR", tmp_path / "pq")
+    monkeypatch.setattr(players, "PARQUET_DIR", store)
+
+    cfg = tmp_path / "config.toml"
+    cfg.write_text('timezone = "America/Chicago"\n[accounts]\nyou = 42\n')
+    args = ["--cache", str(cache), "--archive", str(tmp_path / "arc")]
+    main([*args, "match", "500", "--hero", "Mirage"], config=cfg)
+
+    out = capsys.readouterr().out
+
+    assert "Reading match 500 from the players tables" in out
+    assert "Match 500: Mirage, win," in out
+
+
+def test_match_explicit_parquet_never_falls_back(capsys, tmp_path):
+    cache = tmp_path / "cache"
+    cache.mkdir()
+    write_cache_entry(cache, match_id=100, stats=[(300, 3000)])
+
+    run_main(tmp_path, "match", "500", "--hero", "Mirage")
+
+    out = capsys.readouterr().out
+
+    assert "Reading match 500" not in out
+    assert "Match 500 is not in the archive" in out
+
+
 def test_match_id_archived_but_not_yours(capsys, tmp_path):
     cache = tmp_path / "cache"
     cache.mkdir()
