@@ -257,6 +257,60 @@ def load(path: str | Path) -> MatchInfo:
     return decode(parse_cache_file(path).raw)
 
 
+PARTY_FIELD = 16
+
+
+def _read_varint(data: bytes, i: int) -> tuple[int, int]:
+    """Decode one varint starting at i and return (value, next index)."""
+    value = 0
+    shift = 0
+
+    while True:
+        byte = data[i]
+        i += 1
+        value |= (byte & 0x7F) << shift
+        shift += 7
+
+        if not byte & 0x80:
+            return value, i
+
+
+def player_party(player: Any) -> int | None:
+    """Read the party id from field 16 (currently removed).
+
+    Valve dropped the field mid-March 2026, so it survives only as an
+    unknown field on older archived matches. 0 = queued solo, players
+    sharing a nonzero id queued together, None = the field is gone.
+    """
+    data = player.SerializeToString()
+    i = 0
+
+    while i < len(data):
+        tag, i = _read_varint(data, i)
+        number, wire_type = tag >> 3, tag & 7
+
+        if wire_type == 0:
+            value, i = _read_varint(data, i)
+
+            if number == PARTY_FIELD:
+                return value
+
+        elif wire_type == 1:
+            i += 8
+
+        elif wire_type == 2:
+            length, i = _read_varint(data, i)
+            i += length
+
+        elif wire_type == 5:
+            i += 4
+
+        else:
+            return None
+
+    return None
+
+
 def from_api_json(match_info: dict[str, Any]) -> MatchInfo:
     """Parse the API match_info json into the same MatchInfo the cache files yield.
 

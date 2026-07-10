@@ -170,6 +170,66 @@ def test_iter_matches_orders_numerically(tmp_path):
     assert found == ["100_1.bin", "9_1.bin"]
 
 
+def inject_party(player, party):
+    raw = player.SerializeToString() + bytes([0x80, 0x01, party])
+    player.Clear()
+    player.MergeFromString(raw)
+
+
+def test_player_party_recovered_from_unknown_field():
+    info = pb.CMsgMatchMetaDataContents().match_info
+    p = info.players.add()
+    p.account_id = 42
+    p.kills = 5
+    inject_party(p, 3)
+
+    assert extract.player_party(p) == 3
+    assert p.account_id == 42
+
+
+def test_player_party_zero_means_solo():
+    info = pb.CMsgMatchMetaDataContents().match_info
+    p = info.players.add()
+    p.account_id = 42
+    inject_party(p, 0)
+
+    assert extract.player_party(p) == 0
+
+
+def test_player_party_none_when_field_absent():
+    info = pb.CMsgMatchMetaDataContents().match_info
+    p = info.players.add()
+    p.account_id = 42
+    p.kills = 5
+
+    assert extract.player_party(p) is None
+
+
+def test_player_party_survives_archive_round_trip(tmp_path):
+    contents = pb.CMsgMatchMetaDataContents()
+    info = contents.match_info
+    info.match_id = 77
+    p = info.players.add()
+    p.account_id = 42
+    inject_party(p, 2)
+
+    meta = pb.CMsgMatchMetaData()
+    meta.version = 1
+    meta.match_id = 77
+    meta.match_details = contents.SerializeToString()
+
+    cache = tmp_path / "cache"
+    cache.mkdir()
+    write_cache_file(cache, match_id=77, salt=1, raw=meta.SerializeToString())
+    arc = tmp_path / "arc"
+
+    extract.archive(cache, arc)
+
+    loaded = extract.load(arc / "77_1.bin")
+
+    assert extract.player_party(loaded.players[0]) == 2
+
+
 def write_steam_tree(tmp_path, deadlock=(42, 43), other=(), vdf=None):
     root = tmp_path / "Steam"
     (root / "appcache/httpcache").mkdir(parents=True)
@@ -197,7 +257,7 @@ def vdf_block(steam32, login, persona, timestamp):
     )
 
 
-def test_steam_accounts_reads_userdata_and_names(tmp_path):
+def test_steam_accounts(tmp_path):
     vdf = '"users"\n{\n' + vdf_block(42, "mainlogin", "Main Guy", 200) + "}\n"
     cache = write_steam_tree(tmp_path, deadlock=(42, 43), vdf=vdf)
 
@@ -212,7 +272,7 @@ def test_steam_accounts_reads_userdata_and_names(tmp_path):
     assert found[1].last_login == 0
 
 
-def test_steam_accounts_skips_non_deadlock_and_junk_folders(tmp_path):
+def test_steam_accounts_skips_unrelated_folders(tmp_path):
     cache = write_steam_tree(tmp_path, deadlock=(42, 0), other=(99, "anonymous"))
 
     found = extract.steam_accounts(cache)

@@ -101,11 +101,20 @@ uv run deadlock download --hero Mirage [--account 111222333] [--match 12345678]
                                           # then read a top player's game with:
                                           # deadlock --parquet <parquet-players dir> match <id> --hero Mirage
 uv run deadlock winrate [--days N] [--since 2026-07-01] [--by week] [--hero Mirage] [--min-rating Oracle]
-                                          # daily W/L, MVP/Key Player counts, net wins;
+                                          # daily W/L, MVP/Key Player counts, net wins, and a
+                                          # Lobby column (average lobby rating, averaged in
+                                          # subrank steps so means never land between levels);
                                           # --by week/month rolls days into bigger buckets;
                                           # never hand-roll this in polars. --hero adds the
                                           # hero's public win rate (deadlock-api.com, Eternus+
-                                          # default) under the table; skipped offline
+                                          # default) under the table; skipped offline.
+                                          # a footer separates games with an abandon (who left:
+                                          # you/ally/enemy with each record, reconnects) plus
+                                          # the record without them — abandoned games stay in
+                                          # the table, they are still real wins and losses.
+                                          # not_scored games are left OUT of the table and
+                                          # reported under it (match history still shows their
+                                          # result)
 uv run deadlock deaths [--hero Mirage] [--days N] [--radius 2000]
                                           # deaths by game time, top killers; with movement
                                           # exported also solo/outnumbered context
@@ -177,6 +186,8 @@ Start ad-hoc polars from these instead of rewriting boilerplate. This is the can
 - `ability_upgrades()` — ability unlocks/upgrades in spend order with the level and soul requirement for each unlock or cumulative AP spend
 - `hero_scaling()` — per-hero-per-level reference frame (base_health, spirit_power, required_souls) with one row per patch era; `hero_scaling_asof(left)` as-of joins it by (hero_id, level) on start_time
 - `skill_rating(column)` — maps a badge level column to labels ("Emissary 4")
+- `abandon_record()` — one row per scored match in the same window where someone abandoned: `you`/`ally`/`enemy` flag who left, `returned` = the leaver reconnected. The ONLY reconnect evidence is damage growth between samples after the abandon — queued builds keep auto-buying with passive souls while a player is disconnected, deaths happen to an idle hero, and kills are deliberately not counted. Backs the winrate footer
+- `unscored_record()` — the not_scored games the winrate table leaves out (same window filters, match history still shows their result)
 - `my_deaths()` — deaths joined to your games (hero/won/day)
 - `death_context(radius=2000)` — adds allies/enemies/solo/outnumbered at the death second (raises unless movement is exported — check `table_exists("movement")` first)
 - `snapshot_players(hero)` — your games as timeline-ready blocks read from parquet (feeds `timeline.compare` without looping protobufs; `deadlock compare` uses it for your side since 2026-07-07)
@@ -273,7 +284,7 @@ Modules are organized by data source, not by layer: `queries.py` answers questio
 
 Everything in `src/deadlock_matches/`:
 
-- `extract.py` — cache walking, archive sync, protobuf decode (`iter_matches`, `archive`, `load`), local Steam accounts (`steam_accounts`)
+- `extract.py` — cache walking, archive sync, protobuf decode (`iter_matches`, `archive`, `load`), local Steam accounts (`steam_accounts`), and `player_party` (recovers the removed party wire field from old matches, see the players caveats)
 - `cli/` — the `deadlock` entry point, one module per command group: `main.py` (parser, dispatch, `schema`), `data.py` (`history`, `download`, `sync`, `assets` plus the archive snapshot), `performance.py` (`compare`, `winrate`, `deaths`, `movement`), `items.py` (`item`, `builds`), `cards.py` (`hero`, `ability`)
 - `config.py` — config.toml reading and the starter file (`config_accounts`, `config_account_names`, `format_accounts`, `config_players`, `config_exclude`, `config_timezone`, `ensure_config`)
 - `export.py` — parquet tables (`build_tables`) plus the `delivery`/`attribution` classifiers

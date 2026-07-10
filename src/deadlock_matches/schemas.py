@@ -122,6 +122,12 @@ class Matches(Table):
         "Average skill rating of team 1 as a badge level, tier * 10 + level "
         "(112 = Eternus 2, queries.skill_rating maps it), null if unset",
     )
+    not_scored = Column(
+        pl.Boolean,
+        "Valve flagged the match as not scored (usually a safe-to-leave after "
+        "an early abandon), winning_team is still set and match history still "
+        "shows the result",
+    )
 
 
 class Players(Table):
@@ -146,6 +152,14 @@ class Players(Table):
         pl.Int64,
         "The match awards: 1 = MVP (always a winner), 2 and 3 = Key Player "
         "(3 is usually the best loser), 0 = no award",
+    )
+    party = Column(
+        pl.Int64,
+        "Party id within the match, 0 = queued solo, players sharing a nonzero "
+        "id queued together, null after 2026-03-11 (Valve removed the field)",
+    )
+    abandon_time_s = Column(
+        pl.Int64, "Game time in seconds when the player abandoned, null if they stayed"
     )
 
 

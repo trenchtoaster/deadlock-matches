@@ -38,6 +38,27 @@ def rank_asof(
     return rec["name"] if rec else None
 
 
+def subrank_index(badge: int) -> int:
+    """Turn a badge level into a linear subrank count, 6 levels per tier.
+
+    Badge levels skip 7-9 within each tier (95 -> 59), so averaging badges
+    directly lands between levels. Average the indexes instead.
+    """
+    tier, level = divmod(badge, 10)
+
+    return tier * 6 + level
+
+
+def badge_from_subrank(index: int) -> int:
+    """Turn a linear subrank count back into a badge level."""
+    if index <= 0:
+        return 0
+
+    tier = (index - 1) // 6
+
+    return tier * 10 + index - tier * 6
+
+
 def label(badge: int | None, path: Path = SKILL_RATING_JSON) -> str | None:
     """Turn a badge level into a label.
 

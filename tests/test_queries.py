@@ -117,6 +117,29 @@ def build_day_match(match_id, day, *, won):
     return info
 
 
+def build_abandon_match(match_id, *, leaver, abandon_s, won=True, not_scored=False):
+    info = build_match(match_id=match_id)
+    info.winning_team = 1 if won else 0
+    info.not_scored = not_scored
+
+    if leaver == "you":
+        p = info.players[0]
+
+    elif leaver == "enemy":
+        p = info.players[1]
+
+    else:
+        p = info.players.add()
+        p.account_id = 44
+        p.hero_id = 3
+        p.team = pb.k_ECitadelLobbyTeam_Team1
+        p.player_slot = 3
+
+    p.abandon_match_time_s = abandon_s
+
+    return info
+
+
 def build_rank_match(match_id=700):
     info = build_match(match_id=match_id)
 
@@ -323,6 +346,22 @@ def record_pq(tmp_path):
     return tmp_path
 
 
+@pytest.fixture
+def abandon_pq(tmp_path):
+    infos = [
+        build_day_match(1, 0, won=True),
+        build_abandon_match(2, leaver="ally", abandon_s=300, won=False),
+        build_abandon_match(3, leaver="enemy", abandon_s=100, won=True),
+        build_abandon_match(4, leaver="you", abandon_s=1000, won=False),
+        build_abandon_match(5, leaver="enemy", abandon_s=60, won=True, not_scored=True),
+    ]
+
+    for name, df in export.build_tables(infos, exclude=("movement",)).items():
+        df.write_parquet(tmp_path / f"{name}.parquet")
+
+    return tmp_path
+
+
 def test_scan_reads_table(pq):
     assert queries.scan("matches", pq).collect().height == 1
 
@@ -354,7 +393,7 @@ def test_my_games_requires_accounts(pq):
         queries.my_games(pq, accounts=[])
 
 
-def test_daily_record_counts_and_running_total(record_pq):
+def test_daily_record(record_pq):
     df = queries.daily_record(record_pq, accounts=[42], tz="America/Chicago")
 
     assert df["games"].to_list() == [3, 2]
@@ -415,6 +454,118 @@ def test_daily_record_monthly_rollup(tmp_path):
 def test_daily_record_unknown_bucket(record_pq):
     with pytest.raises(ValueError, match="Unknown bucket"):
         queries.daily_record(record_pq, accounts=[42], tz="America/Chicago", by="year")
+
+
+def test_daily_record_lobby_label(tmp_path):
+    info = build_day_match(1, 0, won=True)
+    info.average_badge_team0 = 95
+    info.average_badge_team1 = 91
+
+    for name, df in export.build_tables([info], exclude=("movement",)).items():
+        df.write_parquet(tmp_path / f"{name}.parquet")
+
+    df = queries.daily_record(tmp_path, accounts=[42], tz="America/Chicago")
+
+    assert df["lobby"].to_list() == ["Phantom 3"]
+    assert df["rated_games"].to_list() == [1]
+
+
+def test_daily_record_lobby_null_without_badges(record_pq):
+    df = queries.daily_record(record_pq, accounts=[42], tz="America/Chicago")
+
+    assert df["lobby"].to_list() == [None, None]
+    assert df["rated_games"].to_list() == [0, 0]
+
+
+def test_abandon_record_flags_who_left(abandon_pq):
+    df = queries.abandon_record(abandon_pq, accounts=[42], tz="America/Chicago")
+
+    assert df["match_id"].to_list() == [2, 3, 4]
+    assert df["you"].to_list() == [False, False, True]
+    assert df["ally"].to_list() == [True, False, False]
+    assert df["enemy"].to_list() == [False, True, False]
+    assert df["won"].to_list() == [False, True, False]
+
+
+def test_abandon_record_buys_do_not_mark_returned(abandon_pq):
+    df = queries.abandon_record(abandon_pq, accounts=[42], tz="America/Chicago")
+    returned = dict(zip(df["match_id"], df["returned"], strict=True))
+
+    assert returned == {2: False, 3: False, 4: False}
+
+
+def test_abandon_record_excludes_unscored(abandon_pq):
+    df = queries.abandon_record(abandon_pq, accounts=[42], tz="America/Chicago")
+
+    assert 5 not in df["match_id"].to_list()
+
+
+def test_unscored_record_lists_left_out_games(abandon_pq):
+    df = queries.unscored_record(abandon_pq, accounts=[42], tz="America/Chicago")
+
+    assert df["match_id"].to_list() == [5]
+    assert df["won"].to_list() == [True]
+
+
+def test_unscored_record_empty_when_all_scored(record_pq):
+    df = queries.unscored_record(record_pq, accounts=[42], tz="America/Chicago")
+
+    assert df.is_empty()
+
+
+def test_daily_record_excludes_unscored_and_counts_abandons(abandon_pq):
+    df = queries.daily_record(abandon_pq, accounts=[42], tz="America/Chicago")
+
+    assert df["games"].to_list() == [4]
+    assert df["wins"].to_list() == [2]
+    assert df["abandons"].to_list() == [3]
+
+
+def test_abandon_record_kills_do_not_mark_returned(tmp_path):
+    info = build_abandon_match(9, leaver="enemy", abandon_s=500)
+    d = info.players[0].death_details.add()
+    d.game_time_s = 600
+    d.killer_player_slot = 2
+
+    for name, df in export.build_tables([info], exclude=("movement",)).items():
+        df.write_parquet(tmp_path / f"{name}.parquet")
+
+    df = queries.abandon_record(tmp_path, accounts=[42], tz="America/Chicago")
+
+    assert df["returned"].to_list() == [False]
+
+
+def test_abandon_record_returned_via_damage_growth(tmp_path):
+    info = build_abandon_match(9, leaver="you", abandon_s=400)
+    info.players[0].items[2].game_time_s = 100
+    info.damage_matrix.sample_time_s.extend([600, 1200])
+
+    for name, df in export.build_tables([info], exclude=("movement",)).items():
+        df.write_parquet(tmp_path / f"{name}.parquet")
+
+    df = queries.abandon_record(tmp_path, accounts=[42], tz="America/Chicago")
+
+    assert df["returned"].to_list() == [True]
+
+
+def test_abandon_record_death_after_abandon_is_not_returned(tmp_path):
+    info = build_abandon_match(9, leaver="enemy", abandon_s=500)
+    d = info.players[1].death_details.add()
+    d.game_time_s = 700
+    d.killer_player_slot = 1
+
+    for name, df in export.build_tables([info], exclude=("movement",)).items():
+        df.write_parquet(tmp_path / f"{name}.parquet")
+
+    df = queries.abandon_record(tmp_path, accounts=[42], tz="America/Chicago")
+
+    assert df["returned"].to_list() == [False]
+
+
+def test_abandon_record_empty_without_abandons(record_pq):
+    df = queries.abandon_record(record_pq, accounts=[42], tz="America/Chicago")
+
+    assert df.is_empty()
 
 
 def test_item_value(pq):
@@ -602,7 +753,7 @@ def test_hero_damage_adds_dealer_hero_and_day(pq):
     assert df["day"].to_list() == [LOCAL_DAY, LOCAL_DAY]
 
 
-def test_final_stats_takes_max_and_computes_rates(pq):
+def test_final_stats(pq):
     df = queries.final_stats(pq, tz="America/Chicago").collect()
     me = df.filter(pl.col("account_id") == 42)
 
@@ -1246,13 +1397,12 @@ def test_scan_routes_asset_tables_into_subfolder(tmp_path):
     assert queries.scan("item_history", tmp_path).select(pl.len()).collect().item() == 2
 
 
-def test_asset_asof_picks_era_and_coalesces_prehistory(tmp_path):
+def test_asset_asof_picks_the_era_in_effect(tmp_path):
     _write_item_history(tmp_path)
     left = pl.LazyFrame(
         {
-            "item_id": [7, 7, 7],
+            "item_id": [7, 7],
             "start_time": [
-                dt.datetime(2025, 1, 1, tzinfo=dt.UTC),
                 dt.datetime(2026, 1, 15, tzinfo=dt.UTC),
                 dt.datetime(2026, 3, 1, tzinfo=dt.UTC),
             ],
@@ -1262,5 +1412,15 @@ def test_asset_asof_picks_era_and_coalesces_prehistory(tmp_path):
     out = queries.asset_asof(left, "item_history", by="item_id", parquet_dir=tmp_path)
     out = out.sort("start_time").collect()
 
-    assert out["cost"].to_list() == [500, 500, 800]
-    assert out["client_version"].to_list() == [100, 100, 200]
+    assert out["cost"].to_list() == [500, 800]
+    assert out["client_version"].to_list() == [100, 200]
+
+
+def test_asset_asof_older_than_all_eras_gets_earliest(tmp_path):
+    _write_item_history(tmp_path)
+    left = pl.LazyFrame({"item_id": [7], "start_time": [dt.datetime(2025, 1, 1, tzinfo=dt.UTC)]})
+
+    out = queries.asset_asof(left, "item_history", by="item_id", parquet_dir=tmp_path).collect()
+
+    assert out["cost"].to_list() == [500]
+    assert out["client_version"].to_list() == [100]

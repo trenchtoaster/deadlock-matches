@@ -256,6 +256,7 @@ def build_tables(
             }
         )
 
+                "not_scored": info.not_scored,
         slot_to_account = {p.player_slot: p.account_id for p in info.players}
         path_by_slot = {p.player_slot: p for p in info.match_paths.paths}
 
@@ -307,6 +308,8 @@ def build_tables(
             )
 
             for s in p.stats:
+                    "party": extract.player_party(p),
+                    "abandon_time_s": p.abandon_match_time_s or None,
                 stats.append(
                     {
                         "match_id": info.match_id,
@@ -583,7 +586,7 @@ def write_partitioned(name: str, df: pl.DataFrame, month: str, out_dir: Path) ->
         if set(existing.columns) != expected:
             raise ValueError(drifted)
 
-        batch_ids = df["match_id"].unique().to_list()
+        batch_ids = df.get_column("match_id").unique().to_list()
         preserved = existing.filter(~pl.col("match_id").is_in(batch_ids))
         merged = pl.concat([preserved, df], how="vertical")
 
@@ -692,7 +695,7 @@ def migrate_to_partitions(out_dir: Path, exclude: Collection[str] = ()) -> None:
 
         tagged = pl.read_parquet(legacy).join(months, on="match_id", how="inner")
 
-        for month in sorted(tagged["_month"].unique().to_list()):
+        for month in sorted(tagged.get_column("_month").unique().to_list()):
             part = _reshape_to_schema(name, tagged.filter(pl.col("_month") == month))
             write_partitioned(name, part, month, out_dir)
 

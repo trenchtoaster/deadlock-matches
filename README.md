@@ -409,14 +409,19 @@ uv run deadlock winrate
 - `--hero Mirage` filters to one hero and also adds the public win rate from `deadlock-api.com` under the table, scoped by `--min-rating` (Eternus+ by default)
 
 ```
-  Day           Games    W    L   Win rate   MVP   Key   Net wins   Cumulative net
-  2026-06-30        5    4    1      80.0%     0     2         +3               +2
-  2026-07-01        5    4    1      80.0%     0     0         +3               +5
-  2026-07-02        4    3    1      75.0%     0     1         +2               +7
-  2026-07-03        4    4    0     100.0%     1     0         +4              +11
-  2026-07-04        5    4    1      80.0%     0     1         +3              +14
+  Day           Games    W    L   Win rate         Lobby   MVP   Key  Abandons   Net wins   Cumulative net
+  2026-04-06        4    3    1      75.0%     Phantom 4     1     0                   +2               +2
+  2026-04-07        5    2    3      40.0%     Phantom 5     0     1         1         -1               +1
+  2026-04-08        3    2    1      66.7%   Ascendant 1     0     0                   +1               +2
+  2026-04-09        6    4    2      66.7%     Phantom 5     0     2         1         +2               +4
+  2026-04-10        4    1    3      25.0%     Phantom 6     0     0                   -2               +2
 
-Overall: 32 games, 24-8, 75.0% win rate, +16 net wins, 1 MVP, 4 Key Player.
+Overall: 22 games, 12-10, 54.5% win rate, +2 net wins, 1 MVP, 3 Key Player, Phantom 5 lobbies.
+
+Abandons: 2 games — an ally left 1 (0-1), an enemy left 1 (1-0).
+  Without them: 20 games, 11-9, 55.0% win rate.
+
+Not scored: 1 game left out of the table (safe to leave), 0-1 in match history.
 ```
 
 ### Deaths
@@ -434,6 +439,9 @@ uv run deadlock deaths --hero Mirage
 
   Time        Deaths  /game  Killed in   Solo  Outnum  Enemies
   0-10 min        54    1.1       12.3    37%     37%      2.0
+- Lobby is the average lobby skill rating of the day, averaged in subrank steps
+- games where someone abandoned stay in the table (they are still wins and losses), a footer separates them: who left with each record, how many leavers reconnected and finished, and your record without them
+- games Valve flagged as not scored are left out of the table and reported under it, match history still shows their result
   10-20 min       85    1.7       13.8    39%     47%      2.2
   20-30 min       70    1.4       15.4    40%     43%      2.5
   30+ min         53    1.1       14.7    34%     43%      2.6
@@ -917,6 +925,8 @@ main = 111222333
 since = dt.date(2026, 7, 1)
 
 mine = (
+- `abandon_record()` is one row per match in the same window where someone abandoned, flagging who left and whether they reconnected
+- `unscored_record()` is the games Valve flagged as not scored, which the winrate table leaves out
     queries.my_games(accounts=[main])
     .filter(pl.col("hero") == hero, pl.col("day") >= since)
     .select("match_id", "account_id", "day")

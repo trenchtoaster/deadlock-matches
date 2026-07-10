@@ -899,7 +899,8 @@ def winrate_report(args: argparse.Namespace, config: str | Path | None = None) -
     print(f"Dates below are grouped by {tz} {args.by}.\n")
     print(
         f"  {args.by.capitalize():<12}{'Games':>7}{'W':>5}{'L':>5}"
-        f"{'Win rate':>11}{'MVP':>6}{'Key':>6}{'Net wins':>11}{'Cumulative net':>17}"
+        f"{'Win rate':>11}{'Lobby':>14}{'MVP':>6}{'Key':>6}{'Abandons':>10}"
+        f"{'Net wins':>11}{'Cumulative net':>17}"
     )
 
     for r in df.iter_rows(named=True):
@@ -907,19 +908,36 @@ def winrate_report(args: argparse.Namespace, config: str | Path | None = None) -
 
         print(
             f"  {day!s:<12}{r['games']:>7}{r['wins']:>5}{r['losses']:>5}"
-            f"{r['win_rate']:>10.1f}%{r['mvps']:>6}{r['key_players']:>6}{r['net']:>+11}{r['cum_net']:>+17}"
+            f"{r['win_rate']:>10.1f}%{lobby:>14}{r['mvps']:>6}{r['key_players']:>6}{left:>10}"
+            f"{r['net']:>+11}{r['cum_net']:>+17}"
         )
 
-    games = int(df["games"].sum())
-    wins = int(df["wins"].sum())
+    games = int(df.get_column("games").sum())
+    wins = int(df.get_column("wins").sum())
     rate = wins / games * 100
     net = df.item(-1, "cum_net")
-    mvps = int(df["mvps"].sum())
-    keys = int(df["key_players"].sum())
+    mvps = int(df.get_column("mvps").sum())
+    keys = int(df.get_column("key_players").sum())
+    rated = int(df.get_column("rated_games").sum())
+    lobbies = ""
+
+    if rated:
+        subrank = round(float(df.get_column("subrank_sum").sum()) / rated)
+        average = skill_rating.label(skill_rating.badge_from_subrank(subrank))
+        lobbies = f", {average} lobbies"
 
     print(
         f"\nOverall: {games} games, {wins}-{games - wins}, {rate:.1f}% win rate, "
-        f"{net:+} net wins, {mvps} MVP, {keys} Key Player."
+        f"{net:+} net wins, {mvps} MVP, {keys} Key Player{lobbies}."
+    )
+
+    abandons = queries.abandon_record(
+        args.parquet,
+        accounts=args.account,
+        tz=tz,
+        days=args.days,
+        since=args.since,
+        hero=args.hero,
     )
 
     if args.hero is not None:
@@ -1055,6 +1073,7 @@ def deaths_report(args: argparse.Namespace, config: str | Path | None = None) ->
         if has_context:
             line += (
                 f", {_mean(w, 'solo', 100):.0f}% solo, "
+        _unscored_line(args, tz)
                 f"{_mean(w, 'outnumbered', 100):.0f}% outnumbered"
             )
         print(line, end="")
@@ -1069,6 +1088,8 @@ def deaths_report(args: argparse.Namespace, config: str | Path | None = None) ->
                 killer_account_id=pl.col("account_id"),
                 killer=pl.col("hero"),
             )
+        left = str(r["abandons"]) if r["abandons"] else ""
+        lobby = r["lobby"] or ""
             .collect(),
             on=["match_id", "killer_account_id"],
         )
@@ -1087,10 +1108,77 @@ def deaths_report(args: argparse.Namespace, config: str | Path | None = None) ->
             '\nAlly/enemy context needs the movement table: remove "movement" from '
             '"exclude" in config.toml and run `deadlock sync`'
         )
+    if not abandons.is_empty():
+        _abandon_lines(abandons, games, wins)
+
+    _unscored_line(args, tz)
+
 
 
 MOVEMENT_METRICS = [
     ("slide %", "slide_percent"),
+def _abandon_lines(abandons: pl.DataFrame, games: int, wins: int) -> None:
+    """Print the abandon breakdown under the overall line.
+
+    Abandoned games stay in the table above since they are still scored as
+    wins and losses, these lines just separate them out.
+    """
+    sides = []
+
+    for col, label in (("you", "you left"), ("ally", "an ally left"), ("enemy", "an enemy left")):
+        part = abandons.filter(pl.col(col))
+
+        if part.is_empty():
+            continue
+
+        won = int(part.get_column("won").cast(pl.Int32).sum())
+        sides.append(f"{label} {len(part)} ({won}-{len(part) - won})")
+
+    total = len(abandons)
+    plural = "s" if total != 1 else ""
+    print(f"\nAbandons: {total} game{plural} — {', '.join(sides)}.")
+
+    returned = int(abandons.get_column("returned").cast(pl.Int32).sum())
+
+    if returned:
+        plural = "s" if returned != 1 else ""
+        print(f"  {returned} leaver{plural} reconnected and finished.")
+
+    clean_games = games - total
+    clean_wins = wins - int(abandons.get_column("won").cast(pl.Int32).sum())
+
+    if clean_games > 0:
+        clean_rate = clean_wins / clean_games * 100
+        print(
+            f"  Without them: {clean_games} games, "
+            f"{clean_wins}-{clean_games - clean_wins}, {clean_rate:.1f}% win rate."
+        )
+
+
+def _unscored_line(args: argparse.Namespace, tz: str) -> None:
+    """Print the unscored games the table left out, nothing when there are none."""
+    unscored = queries.unscored_record(
+        args.parquet,
+        accounts=args.account,
+        tz=tz,
+        days=args.days,
+        since=args.since,
+        hero=args.hero,
+    )
+
+    if unscored.is_empty():
+        return
+
+    total = len(unscored)
+    won = int(unscored.get_column("won").cast(pl.Int32).sum())
+    plural = "s" if total != 1 else ""
+
+    print(
+        f"\nNot scored: {total} game{plural} left out of the table (safe to leave), "
+        f"{won}-{total - won} in match history."
+    )
+
+
     ("ground dashes /min", "dashes_min"),
     ("air dashes /min", "air_dashes_min"),
     ("in air %", "in_air_percent"),

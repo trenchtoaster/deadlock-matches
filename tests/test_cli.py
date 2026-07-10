@@ -43,6 +43,9 @@ def write_cache_entry(
     death_log=(),
 ):
     contents = pb.CMsgMatchMetaDataContents()
+    abandon_s=None,
+    not_scored=False,
+    badges=None,
     info = contents.match_info
     info.match_id = match_id
     info.start_time = start_time
@@ -50,12 +53,19 @@ def write_cache_entry(
     info.winning_team = pb.k_ECitadelLobbyTeam_Team1 if won else pb.k_ECitadelLobbyTeam_Team0
 
     p = info.players.add()
+    info.not_scored = not_scored
+
+    if badges is not None:
+        info.average_badge_team0, info.average_badge_team1 = badges
     p.account_id = account
     p.hero_id = 52
     p.team = pb.k_ECitadelLobbyTeam_Team1
 
     if stats:
         p.kills = 5
+    if abandon_s is not None:
+        p.abandon_match_time_s = abandon_s
+
         p.deaths = 2
         p.assists = 8
         p.net_worth = stats[-1][1]
@@ -1271,6 +1281,96 @@ def test_meta_command_rating_distribution(capsys, tmp_path, monkeypatch):
     assert re.search(r"Rating\s+Matches\s+Share", out)
 
 
+def test_winrate_abandon_footer(capsys, tmp_path):
+    cache = tmp_path / "cache"
+    cache.mkdir()
+    write_cache_entry(cache, match_id=100, won=False, abandon_s=700)
+    write_cache_entry(cache, match_id=101)
+
+    run_main(tmp_path, "winrate", "--account", "42")
+
+    out = capsys.readouterr().out
+
+    assert "Abandons" in out.splitlines()[2]
+    assert "Abandons: 1 game — you left 1 (0-1)." in out
+    assert "Without them: 1 games, 1-0, 100.0% win rate." in out
+
+
+def test_winrate_abandon_footer_notes(capsys, tmp_path):
+    cache = tmp_path / "cache"
+    cache.mkdir()
+    write_cache_entry(
+        cache,
+        match_id=100,
+        abandon_s=100,
+        stats=((300, 3000), (600, 6000)),
+        damage=(("citadel_weapon_mirage", [100, 250]),),
+    )
+    write_cache_entry(cache, match_id=101, won=False, not_scored=True)
+
+    run_main(tmp_path, "winrate", "--account", "42")
+
+    out = capsys.readouterr().out
+
+    assert "Overall: 1 games, 1-0" in out
+    assert "Abandons: 1 game — you left 1 (1-0)." in out
+    assert "1 leaver reconnected and finished." in out
+    assert "Not scored: 1 game left out of the table (safe to leave), 0-1 in match history." in out
+    assert "Without them" not in out
+
+
+def test_winrate_unscored_only_window(capsys, tmp_path):
+    cache = tmp_path / "cache"
+    cache.mkdir()
+    write_cache_entry(cache, match_id=100, not_scored=True)
+
+    run_main(tmp_path, "winrate", "--account", "42")
+
+    out = capsys.readouterr().out
+
+    assert "No games found for the configured accounts" in out
+    assert "Not scored: 1 game left out of the table (safe to leave), 1-0 in match history." in out
+
+
+def test_winrate_lobby_column(capsys, tmp_path):
+    cache = tmp_path / "cache"
+    cache.mkdir()
+    write_cache_entry(cache, match_id=100, badges=(95, 91))
+
+    run_main(tmp_path, "winrate", "--account", "42")
+
+    out = capsys.readouterr().out
+
+    assert "Lobby" in out.splitlines()[2]
+    assert "Phantom 3" in out
+    assert "Phantom 3 lobbies." in out
+
+
+def test_winrate_lobby_blank_without_badges(capsys, tmp_path):
+    cache = tmp_path / "cache"
+    cache.mkdir()
+    write_cache_entry(cache, match_id=100)
+
+    run_main(tmp_path, "winrate", "--account", "42")
+
+    out = capsys.readouterr().out
+
+    assert "lobbies" not in out
+
+
+def test_winrate_no_abandon_footer_without_abandons(capsys, tmp_path):
+    cache = tmp_path / "cache"
+    cache.mkdir()
+    write_cache_entry(cache, match_id=100)
+
+    run_main(tmp_path, "winrate", "--account", "42")
+
+    out = capsys.readouterr().out
+
+    assert "Abandons:" not in out
+    assert "Not scored:" not in out
+
+
 def test_meta_command_hero_defaults_to_weekly(capsys, tmp_path, monkeypatch):
     rows = [
         {"hero_id": 52, "bucket": 1782000000, "wins": 6, "losses": 4, "matches": 10},
@@ -1391,7 +1491,7 @@ def test_schema_command_prints_sample_rows(capsys, tmp_path):
     assert "account_id" in out
     assert "Sample rows from" in out
     assert "Mirage" in out
-    assert "shape: (5, 16)" in out
+    assert "shape: (5, 18)" in out
 
 
 def test_schema_command_samples_asset_table(capsys, tmp_path):
@@ -1487,6 +1587,8 @@ def test_no_new_matches_skips_rebuild(tmp_path, capsys):
 
     main(
         ["--cache", str(cache), "--archive", str(arc), "--parquet", str(pq), "history"], config=cfg
+                "party": 0,
+                "abandon_time_s": None,
     )
     capsys.readouterr()
 

@@ -14,6 +14,7 @@ MATCH_ROW = {
     "game_mode": 1,
     "average_badge_team0": 76,
     "average_badge_team1": 83,
+    "not_scored": False,
 }
 
 
@@ -23,7 +24,7 @@ def test_every_column_documented():
             assert col.description, f"{table}.{name} has no description"
 
 
-def test_conform_casts_and_orders():
+def test_conform_casts_to_the_table_schema():
     df = schemas.conform("matches", [MATCH_ROW])
 
     assert df.columns == list(schemas.TABLES["matches"])

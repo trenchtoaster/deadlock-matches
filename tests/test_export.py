@@ -302,6 +302,43 @@ def test_item_events_priced_from_committed_history():
 
 def test_accolades_named_from_snapshot():
     acc = export.build_tables([build_match()])["accolades"]
+def test_matches_not_scored_flag():
+    info = build_match()
+    info.not_scored = True
+
+    matches = export.build_tables([info])["matches"]
+
+    assert matches["not_scored"].to_list() == [True]
+
+
+def test_matches_not_scored_defaults_false():
+    matches = export.build_tables([build_match()])["matches"]
+
+    assert matches["not_scored"].to_list() == [False]
+
+
+def test_players_party_from_wire_field():
+    info = build_match()
+    raw = info.players[0].SerializeToString() + bytes([0x80, 0x01, 2])
+    info.players[0].Clear()
+    info.players[0].MergeFromString(raw)
+
+    players = export.build_tables([info])["players"]
+    parties = dict(zip(players["account_id"], players["party"], strict=True))
+
+    assert parties == {42: 2, 43: None}
+
+
+def test_players_abandon_time():
+    info = build_match()
+    info.players[1].abandon_match_time_s = 367
+
+    players = export.build_tables([info])["players"]
+    abandons = dict(zip(players["account_id"], players["abandon_time_s"], strict=True))
+
+    assert abandons == {42: None, 43: 367}
+
+
 
     kills = acc.filter(pl.col("accolade_id") == 1)
 
