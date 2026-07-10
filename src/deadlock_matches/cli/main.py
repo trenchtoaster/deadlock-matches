@@ -217,6 +217,18 @@ def build_parser(config: str | Path | None = None) -> argparse.ArgumentParser:
         "and Rejuvenator as it fell",
     )
     view.add_argument(
+        "--deaths",
+        action="store_true",
+        help="each death with the killer, the game time, the fight length, the killer "
+        "distance, and the respawn timer",
+    )
+    view.add_argument(
+        "--kills",
+        action="store_true",
+        help="each kill with the victim, the game time, the distance, and the respawn "
+        "it cost them",
+    )
+    view.add_argument(
         "--abilities",
         action="store_true",
         help="ability unlocks and upgrades in game-time order",

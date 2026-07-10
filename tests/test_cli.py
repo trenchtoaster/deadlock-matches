@@ -2,6 +2,7 @@ import argparse
 import bz2
 import datetime as dt
 import re
+import shutil
 import zoneinfo
 
 import polars as pl
@@ -36,6 +37,7 @@ def write_cache_entry(
     ability_items=(),
     objectives=False,
     gold_sources=(),
+    death_log=(),
 ):
     contents = pb.CMsgMatchMetaDataContents()
     info = contents.match_info
@@ -56,12 +58,14 @@ def write_cache_entry(
         p.net_worth = stats[-1][1]
         p.last_hits = 150
         p.denies = 12
+        p.player_slot = 1
 
         enemy = info.players.add()
         enemy.account_id = 77
         enemy.hero_id = 1
         enemy.team = pb.k_ECitadelLobbyTeam_Team0
         enemy.net_worth = stats[-1][1] // 2
+        enemy.player_slot = 2
 
     sources_at = {}
     for t, source, gold, orbs in gold_sources:
@@ -87,10 +91,23 @@ def write_cache_entry(
         it.item_id = item_id
         it.game_time_s = t
 
-    if damage:
-        p.player_slot = 1
-        enemy.player_slot = 2
+    for victim_slot, killer_slot, t in death_log:
+        victim = p if victim_slot == 1 else enemy
+        d = victim.death_details.add()
+        d.game_time_s = t
+        d.time_to_kill_s = 2.5
+        d.death_duration_s = 20
+        d.death_pos.x = 1000.0
+        d.death_pos.y = 2000.0
+        d.death_pos.z = 0.0
 
+        if killer_slot:
+            d.killer_player_slot = killer_slot
+            d.killer_pos.x = 1000.0 + 10 * 39.37
+            d.killer_pos.y = 2000.0
+            d.killer_pos.z = 0.0
+
+    if damage:
         dm = info.damage_matrix
         dm.sample_time_s.extend([300, 600])
         dealer = dm.damage_dealers.add()
@@ -797,6 +814,70 @@ def test_match_souls_flag_without_source_rows(capsys, tmp_path):
     run_main(tmp_path, "match", "--account", "42", "--souls")
 
     assert "has no soul sources in match 100" in capsys.readouterr().out
+
+
+def test_match_deaths_lists_killers_in_time_order(capsys, tmp_path):
+    cache = tmp_path / "cache"
+    cache.mkdir()
+    write_cache_entry(
+        cache,
+        match_id=100,
+        stats=[(300, 3000), (600, 5000)],
+        death_log=((1, 2, 900), (1, 0, 310)),
+    )
+
+    run_main(tmp_path, "match", "100", "--deaths", "--account", "42")
+
+    out = capsys.readouterr().out
+
+    assert "Match 100: Mirage, win," in out
+    assert re.search(r"Time\s+Killed by\s+Killed in\s+Distance\s+Respawn", out)
+    assert re.search(r"5:10\s+not a player\s+2.5s\s+-\s+20s", out)
+    assert re.search(r"15:00\s+Infernus\s+2.5s\s+10m\s+20s", out)
+    assert out.index("not a player") < out.index("Infernus")
+
+
+def test_match_kills_lists_victims(capsys, tmp_path):
+    cache = tmp_path / "cache"
+    cache.mkdir()
+    write_cache_entry(
+        cache,
+        match_id=100,
+        stats=[(300, 3000), (600, 5000)],
+        death_log=((2, 1, 400), (1, 2, 900)),
+    )
+
+    run_main(tmp_path, "match", "100", "--kills", "--account", "42")
+
+    out = capsys.readouterr().out
+
+    assert re.search(r"Time\s+Kill\s+Killed in\s+Distance\s+Respawn", out)
+    assert re.search(r"6:40\s+Infernus\s+2.5s\s+10m\s+20s", out)
+    assert "Killed by" not in out
+
+
+def test_match_deaths_without_the_table(capsys, tmp_path):
+    cache = tmp_path / "cache"
+    cache.mkdir()
+    write_cache_entry(cache, match_id=100, stats=[(300, 3000)])
+
+    run_main(tmp_path, "history")
+    capsys.readouterr()
+    shutil.rmtree(tmp_path / "pq" / "deaths")
+
+    run_main(tmp_path, "match", "100", "--deaths", "--account", "42")
+
+    assert "No deaths table yet" in capsys.readouterr().out
+
+
+def test_match_kills_without_any(capsys, tmp_path):
+    cache = tmp_path / "cache"
+    cache.mkdir()
+    write_cache_entry(cache, match_id=100, stats=[(300, 3000)])
+
+    run_main(tmp_path, "match", "100", "--kills", "--account", "42")
+
+    assert "No kills in this match" in capsys.readouterr().out
 
 
 def test_match_id_not_found(capsys, tmp_path):

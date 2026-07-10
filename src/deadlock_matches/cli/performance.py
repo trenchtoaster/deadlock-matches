@@ -8,6 +8,7 @@ from typing import TYPE_CHECKING, Any
 import polars as pl
 
 from deadlock_matches import heroes, meta, players, queries, schemas, skill_rating, timeline
+from deadlock_matches.cli.cards import UNITS_PER_METER
 from deadlock_matches.cli.data import MVP_LABELS, TEAMS, final_stats
 from deadlock_matches.config import config_timezone, format_accounts
 
@@ -269,6 +270,64 @@ def _final_scoreboard(row: dict[str, Any], args: argparse.Namespace) -> None:
     print()
 
 
+def _killer_meters(d: dict[str, Any]) -> float | None:
+    """Return how far the killer stood from the death in meters."""
+    if d["killer_x"] is None or d["x"] is None:
+        return None
+
+    units = (
+        (d["x"] - d["killer_x"]) ** 2
+        + (d["y"] - d["killer_y"]) ** 2
+        + (d["z"] - d["killer_z"]) ** 2
+    ) ** 0.5
+
+    return units / UNITS_PER_METER
+
+
+def death_log_report(row: dict[str, Any], args: argparse.Namespace, *, kills: bool) -> None:
+    """Print each death in the match for one player, from the victim or the killer side."""
+    if not queries.table_exists("deaths", args.parquet):
+        print("No deaths table yet, run `deadlock sync --full`")
+        return
+
+    heroes_in_match = (
+        queries.scan("players", args.parquet)
+        .filter(pl.col("match_id") == row["match_id"])
+        .select("account_id", "hero")
+        .collect()
+    )
+    hero_names = dict(heroes_in_match.iter_rows())
+
+    log = queries.scan("deaths", args.parquet).filter(pl.col("match_id") == row["match_id"])
+
+    if kills:
+        log = log.filter(pl.col("killer_account_id") == row["account_id"])
+    else:
+        log = log.filter(pl.col("account_id") == row["account_id"])
+
+    log = log.sort("game_time_s").collect()
+
+    if log.is_empty():
+        print("No kills in this match" if kills else "No deaths in this match")
+        return
+
+    who = "Kill" if kills else "Killed by"
+    print(f"\n  {'Time':<7} {who:<14} {'Killed in':>9} {'Distance':>9} {'Respawn':>8}")
+
+    for d in log.iter_rows(named=True):
+        minutes, seconds = divmod(d["game_time_s"], 60)
+        other = d["account_id"] if kills else d["killer_account_id"]
+        name = hero_names.get(other, "not a player")
+        ttk = d["time_to_kill_s"]
+        fight = f"{ttk:.1f}s" if ttk is not None and ttk >= 0 else "-"
+        meters = _killer_meters(d)
+        distance = f"{meters:,.0f}m" if meters is not None else "-"
+        print(
+            f"  {f'{minutes}:{seconds:02d}':<7} {name:<14} {fight:>9} {distance:>9} "
+            f"{d['death_duration_s']:>7}s"
+        )
+
+
 def match_report(args: argparse.Namespace, config: str | Path | None = None) -> None:
     """Break the match for one player into intervals of souls, damage, and last hits."""
     if args.interval <= 0:
@@ -331,6 +390,10 @@ def match_report(args: argparse.Namespace, config: str | Path | None = None) -> 
 
     if args.abilities:
         abilities_report(row, args)
+        return
+
+    if args.deaths or args.kills:
+        death_log_report(row, args, kills=args.kills)
         return
 
     if args.damage or args.healing:

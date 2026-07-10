@@ -27,7 +27,7 @@ uv run deadlock history [--days N] [--since 2026-07-01]
                                           # result, K/D/A, souls, damage, timestamp, and match id,
                                           # newest last, last 10 games by default. Run it to get
                                           # the match id that match/download take
-uv run deadlock match [12345678] [--hero Wraith] [--interval 10] [--souls|--damage|--healing|--teams|--abilities]
+uv run deadlock match [12345678] [--hero Wraith] [--interval 10] [--souls|--damage|--healing|--teams|--abilities|--deaths|--kills]
                                           # prints the 12-player final scoreboard (lobby average,
                                           # K/D/A, souls, damage, obj damage, healing, prevented,
                                           # last hits, denies, resolved player starred), then that
@@ -35,6 +35,10 @@ uv run deadlock match [12345678] [--hero Wraith] [--interval 10] [--souls|--dama
                                           # souls (+/min), K/D/A, damage dealt/taken, obj damage,
                                           # healing + prevented healing, last hits (troopers +
                                           # neutrals split out), and denies, with a Total row;
+                                          # --deaths logs each death (killer, game time, fight
+                                          # length, killer distance in meters, respawn timer) and
+                                          # --kills the same from the killer side, straight from
+                                          # the deaths table with no movement join;
                                           # no id = your most recent match, --hero picks any
                                           # player in the match instead of you (works on matches
                                           # you only viewed, every player's snapshots are archived);

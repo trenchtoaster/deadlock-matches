@@ -23,9 +23,13 @@ The complex protobuf data is parsed to simple parquet tables on your computer. T
 
 ## Setup
 
-- works on Linux and Windows (the cache path is detected automatically)
-- install [uv](https://docs.astral.sh/uv/)
-- clone this repository
+Works on Linux and Windows, the cache path is detected automatically. Two ways to install:
+
+- `uv tool install deadlock-matches` installs the `deadlock` command on its own. [uv](https://docs.astral.sh/uv/) downloads Python 3.14 for it if you do not have one. `pip install deadlock-matches` works too if you are already on Python 3.14.
+- clone this repository and use `uv run deadlock` instead. Pick this if you want the marimo notebook, the Claude Code skill, or the source next to your queries.
+
+The examples in this README use the `uv run deadlock` form from a clone. With a tool or pip install the prefix goes away and the commands are just `deadlock history`, `deadlock sync`, and so on.
+
 - run `uv run deadlock accounts` to get set up. It writes a starter `config.toml` and lists the Steam accounts on your PC with their account IDs (the "Steam32" ID), so paste the ones that are you into the config.
   - the name is just a label so you can use your Steam account name, profile name, or just a nickname like "main" or "alt"
   - the name can be used for any `--account` filter as well, like `--account main`
@@ -134,6 +138,8 @@ alt1 = 123456789
 - `--healing`: the same by-source view for your healing, plus a second table for the healing your anti-heal items prevented. The game never shows either per source, and the totals match the Healing and Prevented columns
 - `--teams`: both teams per interval, souls and the running lead, then every objective and Rejuvenator event timestamp
 - `--abilities`: ability unlocks and upgrades in the order you spent them, with the level and required souls for that unlock or cumulative AP spend
+- `--deaths`: each death with who killed you, the game time, how long the fight lasted, and your respawn timer
+- `--kills`: the same log from the killer side, each kill with the victim and the respawn it cost them
 - the scoreboard shows the match screen numbers while the interval columns come from the minute snapshots, so the Last hits totals can differ slightly. Troopers and Neutrals split the interval Last hits column
 - to read a top player's game, download it first (`deadlock download --match <id>` or `--account <id>`) and point match at those tables: `deadlock --parquet ~/.local/share/deadlock-matches/parquet-players match <id> --hero Mirage`
 

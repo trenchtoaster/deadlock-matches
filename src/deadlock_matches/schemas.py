@@ -346,7 +346,11 @@ class Deaths(Table):
     match_id = MATCH_ID
     account_id = ACCOUNT_ID
     game_time_s = Column(pl.Int64, "When the death happened, seconds from match start")
-    time_to_kill_s = Column(pl.Float64, "How long the killing burst took, in seconds")
+    time_to_kill_s = Column(
+        pl.Float64,
+        "How long the fight that ended in this death lasted, in seconds. It spans "
+        "the whole engagement including partial recoveries, not just the final burst",
+    )
     death_duration_s = Column(pl.Int64, "Respawn timer in seconds")
     killer_account_id = Column(pl.Int64, "Who got the kill, null when the killer was not a player")
     x = Column(pl.Float64, "Death x position in world units")
