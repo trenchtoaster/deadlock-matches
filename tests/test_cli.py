@@ -38,34 +38,38 @@ def write_cache_entry(
     ability_items=(),
     item_events=(),
     accolades=(),
+    buffs=(),
+    stacks=(),
+    custom_stats=(),
+    shots=None,
     objectives=False,
     gold_sources=(),
     death_log=(),
-):
-    contents = pb.CMsgMatchMetaDataContents()
     abandon_s=None,
     not_scored=False,
     badges=None,
+):
+    contents = pb.CMsgMatchMetaDataContents()
     info = contents.match_info
     info.match_id = match_id
     info.start_time = start_time
     info.duration_s = 1800
     info.winning_team = pb.k_ECitadelLobbyTeam_Team1 if won else pb.k_ECitadelLobbyTeam_Team0
-
-    p = info.players.add()
     info.not_scored = not_scored
 
     if badges is not None:
         info.average_badge_team0, info.average_badge_team1 = badges
+
+    p = info.players.add()
     p.account_id = account
     p.hero_id = 52
     p.team = pb.k_ECitadelLobbyTeam_Team1
 
-    if stats:
-        p.kills = 5
     if abandon_s is not None:
         p.abandon_match_time_s = abandon_s
 
+    if stats:
+        p.kills = 5
         p.deaths = 2
         p.assists = 8
         p.net_worth = stats[-1][1]
@@ -120,6 +124,30 @@ def write_cache_entry(
         acc.accolade_stat_value = value
         acc.accolade_threshold_achieved = threshold
 
+    for pickup, count, permanent in buffs:
+        b = p.power_up_buffs.add()
+        b.type = pickup
+        b.value = count
+        b.is_permanent = permanent
+
+    for ability_id, value, is_enemy in stacks:
+        st = (enemy if is_enemy else p).ability_stats.add()
+        st.ability_id = ability_id
+        st.ability_value = value
+
+    for stat_id, (name, _) in enumerate(custom_stats, start=1):
+        reg = info.custom_user_stats.add()
+        reg.name = name
+        reg.id = stat_id
+
+    for stat_id, (_, value) in enumerate(custom_stats, start=1):
+        cs = p.stats[-1].custom_user_stats.add()
+        cs.id = stat_id
+        cs.value = value
+
+    if shots is not None:
+        p.stats[-1].shots_hit, p.stats[-1].shots_missed = shots
+
     for victim_slot, killer_slot, t in death_log:
         victim = p if victim_slot == 1 else enemy
         d = victim.death_details.add()
@@ -139,18 +167,26 @@ def write_cache_entry(
     if damage:
         dm = info.damage_matrix
         dm.sample_time_s.extend([300, 600])
-        dealer = dm.damage_dealers.add()
-        dealer.dealer_player_slot = 1
+        dealers = {}
 
         for j, entry in enumerate(damage):
-            name, values, *stat = entry
+            name, values, *rest = entry
             dm.source_details.source_name.append(name)
-            dm.source_details.stat_type.append(stat[0] if stat else 0)
+            dm.source_details.stat_type.append(rest[0] if rest else 0)
+            dealer_slot = rest[1] if len(rest) > 1 else 1
+            target_slot = rest[2] if len(rest) > 2 else 2
+
+            dealer = dealers.get(dealer_slot)
+
+            if dealer is None:
+                dealer = dm.damage_dealers.add()
+                dealer.dealer_player_slot = dealer_slot
+                dealers[dealer_slot] = dealer
 
             src = dealer.damage_sources.add()
             src.source_details_index = j
             t = src.damage_to_players.add()
-            t.target_player_slot = 2
+            t.target_player_slot = target_slot
             t.damage.extend(values)
 
     if objectives:
@@ -875,6 +911,283 @@ def test_match_accolades_flag_prints_stat_awards(capsys, tmp_path):
     assert "thresholds cleared" in out
 
 
+def test_match_buffs_flag_prints_buff_table(capsys, tmp_path):
+    cache = tmp_path / "cache"
+    cache.mkdir()
+    write_cache_entry(
+        cache,
+        match_id=100,
+        stats=[(300, 3000)],
+        buffs=[
+            ("hp_permanent_pickup_lv2", 3, True),
+            ("cd_permanent_pickup", 2, True),
+            ("gun_powerup_pickup", 4, False),
+        ],
+    )
+
+    run_main(tmp_path, "match", "--account", "42", "--buffs")
+
+    out = capsys.readouterr().out
+
+    assert "Permanent buffs" in out
+    assert re.search(r"max health\s+0\s+3\s+0\s+3\s+\+60", out)
+    assert re.search(r"cooldown reduction\s+2\s+0\s+0\s+2\s+\+1%", out)
+    assert re.search(r"spirit power\s+0\s+0\s+0\s+0\s+-", out)
+    assert "Bridge buffs" in out
+    assert re.search(r"weapon\s+4", out)
+    assert "gun_powerup_pickup" not in out
+    assert "patch the match was played on" in out
+
+
+def test_match_buffs_flag_prints_sources(capsys, tmp_path):
+    cache = tmp_path / "cache"
+    cache.mkdir()
+    write_cache_entry(
+        cache,
+        match_id=100,
+        stats=[(300, 3000)],
+        buffs=[("hp_permanent_pickup", 16, True)],
+        accolades=[(14, 2, 0)],
+        custom_stats=[("PowerUp Permanent", 5), ("PowerUp Gold", 20)],
+        objectives=True,
+    )
+
+    run_main(tmp_path, "match", "--account", "42", "--buffs")
+
+    out = capsys.readouterr().out
+
+    assert "Sources" in out
+    assert re.search(r"statues collected\s+5\s+20 broken", out)
+    assert re.search(r"sinner jackpots\s+2\s+\+8", out)
+    assert re.search(r"mid boss kills\s+1\s+\+2 to the whole team", out)
+    assert re.search(r"other sources\s+\+1 \(urn runs and light melee jackpots\)", out)
+
+
+def test_match_buffs_flag_without_any_collected(capsys, tmp_path):
+    cache = tmp_path / "cache"
+    cache.mkdir()
+    write_cache_entry(cache, match_id=100, stats=[(300, 3000)])
+
+    run_main(tmp_path, "match", "--account", "42", "--buffs")
+
+    out = capsys.readouterr().out
+
+    assert "No buffs for Mirage in match 100" in out
+
+
+def test_match_stacks_flag_prints_every_player(capsys, tmp_path):
+    cache = tmp_path / "cache"
+    cache.mkdir()
+    write_cache_entry(
+        cache,
+        match_id=100,
+        stats=[(300, 3000)],
+        stacks=[(3074274290, 16, False), (2521902222, 154, True)],
+    )
+
+    run_main(tmp_path, "match", "--account", "42", "--stacks")
+
+    out = capsys.readouterr().out
+
+    assert "Stacks" in out
+    assert re.search(r"Mirage \*\s+ally\s+Trophy Collector\s+16", out)
+    assert re.search(r"Infernus\s+enemy\s+Sticky Bomb\s+154", out)
+    assert "track stacks" in out
+
+
+def test_match_stacks_flag_without_any_counters(capsys, tmp_path):
+    cache = tmp_path / "cache"
+    cache.mkdir()
+    write_cache_entry(cache, match_id=100, stats=[(300, 3000)])
+
+    run_main(tmp_path, "match", "--account", "42", "--stacks")
+
+    out = capsys.readouterr().out
+
+    assert "No stack counters in match 100" in out
+
+
+COUNTERSPELL = 1414025773
+
+
+def test_match_combat_flag_prints_gunfight_and_ranges(capsys, tmp_path):
+    cache = tmp_path / "cache"
+    cache.mkdir()
+    write_cache_entry(
+        cache,
+        match_id=100,
+        stats=[(300, 3000)],
+        custom_stats=[
+            ("Enemy Hero Accuracy##Shots", 1000),
+            ("Enemy Hero Accuracy##Hits", 250),
+            ("Enemy Hero Accuracy##Headshots", 50),
+            ("Enemy Hero Accuracy - Incoming##Shots", 800),
+            ("Enemy Hero Accuracy - Incoming##Hits", 200),
+            ("Outgoing Bullet Dist##10", 3000),
+            ("Outgoing Bullet Dist##20", 1000),
+            ("Enemy Hero Falloff##No Falloff", 75),
+            ("Enemy Hero Falloff##Partial Falloff", 25),
+        ],
+        shots=(1400, 600),
+    )
+
+    run_main(tmp_path, "match", "--account", "42", "--combat")
+
+    out = capsys.readouterr().out
+
+    assert "Aim vs heroes" in out
+    assert re.search(r"Mirage \*\s+ally\s+1,000\s+25\.0%\s+20\.0%", out)
+    assert "Enemy team at you: 800 shots, 200 (25%) hits, 0 (0%) headshots" in out
+    assert "Accuracy with troopers and everything else included: 70%" in out
+    assert "Gunfight" not in out
+    assert "Damage by range" in out
+    assert re.search(r"0-10m\s+3,000 \(75%\)", out)
+    assert re.search(r"10-20m\s+1,000 \(25%\)", out)
+    assert "Falloff on your hits: 75% none, 25% partial, 0% max" in out
+    assert "Falloff on hits taken" not in out
+
+
+def test_match_combat_flag_parry_lines(capsys, tmp_path):
+    cache = tmp_path / "cache"
+    cache.mkdir()
+    write_cache_entry(
+        cache,
+        match_id=100,
+        stats=[(300, 3000)],
+        custom_stats=[("Parry Success", 4), ("Parry Miss", 2)],
+        item_events=[(COUNTERSPELL, 884, 0, 0)],
+        damage=[
+            ("ability_melee_inferno", [100, 400], 0, 2, 1),
+            ("citadel_weapon_hornet", [50, 900], 0, 2, 1),
+        ],
+    )
+
+    run_main(tmp_path, "match", "--account", "42", "--combat")
+
+    out = capsys.readouterr().out
+
+    assert "Parries" in out
+    assert "Successful 4, missed 2" in out
+    assert "Melee damage taken (light/heavy melee): 400, most from Infernus (400)" in out
+    assert "Counterspell bought at 14:44" in out
+
+
+def test_match_combat_flag_hero_counters(capsys, tmp_path):
+    cache = tmp_path / "cache"
+    cache.mkdir()
+    write_cache_entry(
+        cache,
+        match_id=100,
+        stats=[(300, 3000)],
+        custom_stats=[
+            ("Celeste##RadiantDaggerTimeAt_0_stacks", 900),
+            ("Celeste##RadiantDaggerTimeAt_2_stacks", 300),
+            ("Apollo##HeroDamagePreventedWithUlt", 350),
+        ],
+    )
+
+    run_main(tmp_path, "match", "--account", "42", "--combat")
+
+    out = capsys.readouterr().out
+
+    assert "Radiant Dagger uptime" in out
+    assert re.search(r"0\s+15:00\s+75%", out)
+    assert re.search(r"2\s+5:00\s+25%", out)
+    assert "Hero damage prevented with ult: 350" in out
+
+
+def test_match_combat_flag_souls_lines_and_exclusions(capsys, tmp_path):
+    cache = tmp_path / "cache"
+    cache.mkdir()
+    write_cache_entry(
+        cache,
+        match_id=100,
+        stats=[(300, 3000)],
+        custom_stats=[
+            ("Comeback Gold", 1200),
+            ("Comeback Gold Koth", 267),
+            ("Unspent Gold Minutes", 60000),
+            ("Unspent AP Minutes", 45),
+            ("PowerUp Gold", 35),
+            ("Additional Wait Trooper Spawn", 0),
+        ],
+    )
+
+    run_main(tmp_path, "match", "--account", "42", "--combat")
+
+    out = capsys.readouterr().out
+
+    assert "Comeback souls: 1,200" in out
+    assert "Unstable Rift comeback: 267" in out
+    assert "Souls held unspent on average: 2,000" in out
+    assert "Ability points held unspent on average: 1.5" in out
+    assert "PowerUp" not in out
+    assert "Additional Wait Trooper Spawn" not in out
+
+
+def test_match_combat_flag_without_any_stats(capsys, tmp_path):
+    cache = tmp_path / "cache"
+    cache.mkdir()
+    write_cache_entry(cache, match_id=100, stats=[(300, 3000)])
+
+    run_main(tmp_path, "match", "--account", "42", "--combat")
+
+    out = capsys.readouterr().out
+
+    assert "No combat stats for Mirage in match 100" in out
+
+
+def test_match_combat_flag_ranks_the_lobby_by_aim(capsys, tmp_path):
+    cache = tmp_path / "cache"
+    cache.mkdir()
+    write_cache_entry(
+        cache,
+        match_id=100,
+        stats=[(300, 3000)],
+        custom_stats=[
+            ("Enemy Hero Accuracy##Shots", 1000),
+            ("Enemy Hero Accuracy##Hits", 400),
+            ("Enemy Hero Accuracy##Headshots", 100),
+        ],
+        damage=[
+            ("citadel_weapon_hornet", [400, 700]),
+            ("citadel_weapon_hornet_crit", [100, 300]),
+        ],
+    )
+
+    run_main(tmp_path, "match", "--account", "42", "--combat")
+
+    out = capsys.readouterr().out
+
+    assert "Aim vs heroes" in out
+    assert re.search(r"Mirage \*\s+ally\s+1,000\s+40\.0%\s+25\.0%\s+700\s+300", out)
+    assert "Rates count heroes only" in out
+    assert "two bullet series from the damage graph" in out
+    assert "percentile" not in out.lower()
+
+
+def test_match_scoreboard_shows_buff_totals(capsys, tmp_path):
+    cache = tmp_path / "cache"
+    cache.mkdir()
+    write_cache_entry(
+        cache,
+        match_id=100,
+        stats=[(300, 3000)],
+        buffs=[
+            ("hp_permanent_pickup", 5, True),
+            ("wp_permanent_pickup_lv3", 2, True),
+            ("gun_powerup_pickup", 4, False),
+        ],
+    )
+
+    run_main(tmp_path, "match", "--account", "42")
+
+    out = capsys.readouterr().out
+
+    assert re.search(r"Denies\s+Buffs", out)
+    assert re.search(r"Mirage \*.*\s7\n", out)
+
+
 def test_match_souls_flag_prints_source_and_group_table(capsys, tmp_path):
     cache = tmp_path / "cache"
     cache.mkdir()
@@ -1156,6 +1469,9 @@ def test_match_views_mutually_exclusive(tmp_path):
     with pytest.raises(SystemExit):
         build_parser(tmp_path / "config.toml").parse_args(["match", "--accolades", "--items"])
 
+    with pytest.raises(SystemExit):
+        build_parser(tmp_path / "config.toml").parse_args(["match", "--buffs", "--souls"])
+
 
 def test_winrate_prints_daily_table(capsys, tmp_path):
     cache = tmp_path / "cache"
@@ -1171,6 +1487,96 @@ def test_winrate_prints_daily_table(capsys, tmp_path):
     assert "grouped by America/Chicago day" in out
     assert "Cumulative net" in out
     assert "Overall: 3 games, 2-1, 66.7% win rate, +1 net wins, 0 MVP, 0 Key Player." in out
+
+
+def test_winrate_abandon_footer(capsys, tmp_path):
+    cache = tmp_path / "cache"
+    cache.mkdir()
+    write_cache_entry(cache, match_id=100, won=False, abandon_s=700)
+    write_cache_entry(cache, match_id=101)
+
+    run_main(tmp_path, "winrate", "--account", "42")
+
+    out = capsys.readouterr().out
+
+    assert "Abandons" in out.splitlines()[2]
+    assert "Abandons: 1 game — you left 1 (0-1)." in out
+    assert "Without them: 1 games, 1-0, 100.0% win rate." in out
+
+
+def test_winrate_abandon_footer_notes(capsys, tmp_path):
+    cache = tmp_path / "cache"
+    cache.mkdir()
+    write_cache_entry(
+        cache,
+        match_id=100,
+        abandon_s=100,
+        stats=((300, 3000), (600, 6000)),
+        damage=(("citadel_weapon_mirage", [100, 250]),),
+    )
+    write_cache_entry(cache, match_id=101, won=False, not_scored=True)
+
+    run_main(tmp_path, "winrate", "--account", "42")
+
+    out = capsys.readouterr().out
+
+    assert "Overall: 1 games, 1-0" in out
+    assert "Abandons: 1 game — you left 1 (1-0)." in out
+    assert "1 leaver reconnected and finished." in out
+    assert "Not scored: 1 game left out of the table (safe to leave), 0-1 in match history." in out
+    assert "Without them" not in out
+
+
+def test_winrate_unscored_only_window(capsys, tmp_path):
+    cache = tmp_path / "cache"
+    cache.mkdir()
+    write_cache_entry(cache, match_id=100, not_scored=True)
+
+    run_main(tmp_path, "winrate", "--account", "42")
+
+    out = capsys.readouterr().out
+
+    assert "No games found for the configured accounts" in out
+    assert "Not scored: 1 game left out of the table (safe to leave), 1-0 in match history." in out
+
+
+def test_winrate_lobby_column(capsys, tmp_path):
+    cache = tmp_path / "cache"
+    cache.mkdir()
+    write_cache_entry(cache, match_id=100, badges=(95, 91))
+
+    run_main(tmp_path, "winrate", "--account", "42")
+
+    out = capsys.readouterr().out
+
+    assert "Lobby" in out.splitlines()[2]
+    assert "Phantom 3" in out
+    assert "Phantom 3 lobbies." in out
+
+
+def test_winrate_lobby_blank_without_badges(capsys, tmp_path):
+    cache = tmp_path / "cache"
+    cache.mkdir()
+    write_cache_entry(cache, match_id=100)
+
+    run_main(tmp_path, "winrate", "--account", "42")
+
+    out = capsys.readouterr().out
+
+    assert "lobbies" not in out
+
+
+def test_winrate_no_abandon_footer_without_abandons(capsys, tmp_path):
+    cache = tmp_path / "cache"
+    cache.mkdir()
+    write_cache_entry(cache, match_id=100)
+
+    run_main(tmp_path, "winrate", "--account", "42")
+
+    out = capsys.readouterr().out
+
+    assert "Abandons:" not in out
+    assert "Not scored:" not in out
 
 
 def test_winrate_weekly_table(capsys, tmp_path):
@@ -1281,96 +1687,6 @@ def test_meta_command_rating_distribution(capsys, tmp_path, monkeypatch):
     assert re.search(r"Rating\s+Matches\s+Share", out)
 
 
-def test_winrate_abandon_footer(capsys, tmp_path):
-    cache = tmp_path / "cache"
-    cache.mkdir()
-    write_cache_entry(cache, match_id=100, won=False, abandon_s=700)
-    write_cache_entry(cache, match_id=101)
-
-    run_main(tmp_path, "winrate", "--account", "42")
-
-    out = capsys.readouterr().out
-
-    assert "Abandons" in out.splitlines()[2]
-    assert "Abandons: 1 game — you left 1 (0-1)." in out
-    assert "Without them: 1 games, 1-0, 100.0% win rate." in out
-
-
-def test_winrate_abandon_footer_notes(capsys, tmp_path):
-    cache = tmp_path / "cache"
-    cache.mkdir()
-    write_cache_entry(
-        cache,
-        match_id=100,
-        abandon_s=100,
-        stats=((300, 3000), (600, 6000)),
-        damage=(("citadel_weapon_mirage", [100, 250]),),
-    )
-    write_cache_entry(cache, match_id=101, won=False, not_scored=True)
-
-    run_main(tmp_path, "winrate", "--account", "42")
-
-    out = capsys.readouterr().out
-
-    assert "Overall: 1 games, 1-0" in out
-    assert "Abandons: 1 game — you left 1 (1-0)." in out
-    assert "1 leaver reconnected and finished." in out
-    assert "Not scored: 1 game left out of the table (safe to leave), 0-1 in match history." in out
-    assert "Without them" not in out
-
-
-def test_winrate_unscored_only_window(capsys, tmp_path):
-    cache = tmp_path / "cache"
-    cache.mkdir()
-    write_cache_entry(cache, match_id=100, not_scored=True)
-
-    run_main(tmp_path, "winrate", "--account", "42")
-
-    out = capsys.readouterr().out
-
-    assert "No games found for the configured accounts" in out
-    assert "Not scored: 1 game left out of the table (safe to leave), 1-0 in match history." in out
-
-
-def test_winrate_lobby_column(capsys, tmp_path):
-    cache = tmp_path / "cache"
-    cache.mkdir()
-    write_cache_entry(cache, match_id=100, badges=(95, 91))
-
-    run_main(tmp_path, "winrate", "--account", "42")
-
-    out = capsys.readouterr().out
-
-    assert "Lobby" in out.splitlines()[2]
-    assert "Phantom 3" in out
-    assert "Phantom 3 lobbies." in out
-
-
-def test_winrate_lobby_blank_without_badges(capsys, tmp_path):
-    cache = tmp_path / "cache"
-    cache.mkdir()
-    write_cache_entry(cache, match_id=100)
-
-    run_main(tmp_path, "winrate", "--account", "42")
-
-    out = capsys.readouterr().out
-
-    assert "lobbies" not in out
-
-
-def test_winrate_no_abandon_footer_without_abandons(capsys, tmp_path):
-    cache = tmp_path / "cache"
-    cache.mkdir()
-    write_cache_entry(cache, match_id=100)
-
-    run_main(tmp_path, "winrate", "--account", "42")
-
-    out = capsys.readouterr().out
-
-    assert "Abandons:" not in out
-    assert "Not scored:" not in out
-
-
 def test_meta_command_hero_defaults_to_weekly(capsys, tmp_path, monkeypatch):
     rows = [
         {"hero_id": 52, "bucket": 1782000000, "wins": 6, "losses": 4, "matches": 10},
@@ -1479,6 +1795,8 @@ def test_schema_command_prints_sample_rows(capsys, tmp_path):
                 "last_hits": 10,
                 "denies": 0,
                 "mvp_rank": 0,
+                "party": 0,
+                "abandon_time_s": None,
             }
             for i in range(6)
         ],
@@ -1587,8 +1905,6 @@ def test_no_new_matches_skips_rebuild(tmp_path, capsys):
 
     main(
         ["--cache", str(cache), "--archive", str(arc), "--parquet", str(pq), "history"], config=cfg
-                "party": 0,
-                "abandon_time_s": None,
     )
     capsys.readouterr()
 
@@ -2043,7 +2359,7 @@ def run_accounts(tmp_path, cache, config_text=""):
     main([*base, "accounts"], config=cfg)
 
 
-def test_accounts_command_lists_and_suggests(capsys, tmp_path):
+def test_accounts_command_lists_logins(capsys, tmp_path):
     vdf = (
         '"users"\n{\n'
         f'\t"{42 + STEAM64_BASE}"\n\t{{\n'
@@ -2061,6 +2377,23 @@ def test_accounts_command_lists_and_suggests(capsys, tmp_path):
     assert "mainlogin" in out
     assert "Main Guy" in out
     assert "main" in out
+
+
+def test_accounts_command_suggests_unconfigured_alts(capsys, tmp_path):
+    vdf = (
+        '"users"\n{\n'
+        f'\t"{42 + STEAM64_BASE}"\n\t{{\n'
+        '\t\t"AccountName"\t\t"mainlogin"\n'
+        '\t\t"PersonaName"\t\t"Main Guy"\n'
+        '\t\t"Timestamp"\t\t"200"\n'
+        "\t}\n}\n"
+    )
+    cache = write_steam_tree(tmp_path, deadlock=(42, 43), vdf=vdf)
+
+    run_accounts(tmp_path, cache, "[accounts]\nmain = 42\n")
+
+    out = capsys.readouterr().out
+
     assert "[accounts]" in out
     assert "alt1 = 43" in out
     assert "42" not in out.split("[accounts]")[1]
@@ -2109,12 +2442,7 @@ def test_backfill_without_confirm_only_warns(monkeypatch, capsys):
     called = []
     monkeypatch.setattr(assets, "client_version_dates", lambda **kw: {1: "2026-01-05T00:00:00"})
 
-    for fn in (
-        "build_item_history",
-        "build_hero_history",
-        "build_ability_history",
-        "build_rank_history",
-    ):
+    for _name, _path, fn in data.HISTORY_BUILDERS:
         monkeypatch.setattr(assets, fn, lambda **kw: called.append(True))
 
     main(["assets", "--backfill"], config="none.json")
@@ -2125,26 +2453,27 @@ def test_backfill_without_confirm_only_warns(monkeypatch, capsys):
     assert called == []
 
 
-def test_backfill_confirm_rebuilds_and_reports(monkeypatch, capsys):
+def test_backfill_confirm_runs_every_builder(monkeypatch, capsys):
     monkeypatch.setattr(assets, "client_version_dates", lambda **kw: {1: "2026-01-05T00:00:00"})
-    counts = {
-        "build_item_history": 33,
-        "build_hero_history": 25,
-        "build_ability_history": 40,
-        "build_rank_history": 1,
-    }
 
-    for fn, n in counts.items():
+    for n, (_name, _path, fn) in enumerate(data.HISTORY_BUILDERS, start=30):
         monkeypatch.setattr(assets, fn, lambda n=n, **kw: n)
 
     main(["assets", "--backfill", "--confirm"], config="none.json")
 
     out = capsys.readouterr().out
 
-    for name in ("items", "heroes", "abilities", "ranks"):
+    for name, _path, _fn in data.HISTORY_BUILDERS:
         assert name in out
 
-    assert "40 eras" in out
+    assert "30 eras" in out
+
+
+def test_history_builders_cover_every_build_function():
+    in_assets = {n for n in vars(assets) if n.startswith("build_") and n.endswith("_history")}
+    listed = {fn for _name, _path, fn in data.HISTORY_BUILDERS}
+
+    assert in_assets - {"build_asset_history"} == listed
 
 
 def test_hero_card_as_of_shows_era_label(capsys, tmp_path):

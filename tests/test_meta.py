@@ -26,7 +26,7 @@ def _stats():
     ]
 
 
-def test_rank_items_filters_small_samples_and_sorts():
+def test_rank_items():
     ranked = meta.rank_items(_stats(), min_matches=1000)
 
     assert ranked[0]["name"] == "Boundless Spirit"
@@ -47,7 +47,7 @@ def test_verdict_unknown_item_raises():
         meta.verdict(_stats(), "Nope")
 
 
-def test_min_badge_maps_ranks_and_all():
+def test_min_badge():
     assert meta.min_badge("Eternus") == 111
     assert meta.min_badge("archon") == 71
     assert meta.min_badge("all") is None
@@ -121,7 +121,7 @@ def test_get_hero_stats_bucket_and_until_in_url(monkeypatch):
     assert seen["path"] == "v1/analytics/hero-stats?bucket=avg_badge&max_unix_timestamp=1782864000"
 
 
-def test_hero_meta_rates_and_sort():
+def test_hero_meta():
     rows = [
         {"hero_id": 1, "wins": 40, "losses": 60, "matches": 100},
         {"hero_id": 2, "wins": 80, "losses": 20, "matches": 100},
@@ -200,7 +200,18 @@ def test_synergies_merges_both_purchase_orders():
     assert syn["pairs"][0]["pair_win_rate"] == 65.0
 
 
-def test_synergies_vs_solo_and_min_matches():
+def test_synergies_scores_pairs_against_solo():
+    boundless = _item_id("Boundless Spirit")
+    pairs = [{"item_ids": [EE, boundless], "wins": 650, "losses": 350, "matches": 1000}]
+
+    syn = meta.synergies(pairs, _stats(), "Escalating Exposure", min_matches=500)
+
+    assert syn["solo"] == 53.4
+    assert syn["pairs"][0]["name"] == "Boundless Spirit"
+    assert round(syn["pairs"][0]["vs_solo"], 1) == 11.6
+
+
+def test_synergies_drops_small_pairs():
     boundless = _item_id("Boundless Spirit")
     echo = _item_id("Echo Shard")
     pairs = [
@@ -210,7 +221,4 @@ def test_synergies_vs_solo_and_min_matches():
 
     syn = meta.synergies(pairs, _stats(), "Escalating Exposure", min_matches=500)
 
-    assert syn["solo"] == 53.4
-    assert len(syn["pairs"]) == 1
-    assert syn["pairs"][0]["name"] == "Boundless Spirit"
-    assert round(syn["pairs"][0]["vs_solo"], 1) == 11.6
+    assert [p["name"] for p in syn["pairs"]] == ["Boundless Spirit"]

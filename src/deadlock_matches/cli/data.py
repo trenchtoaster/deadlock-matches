@@ -21,6 +21,7 @@ from deadlock_matches import (
     players,
     queries,
     skill_rating,
+    statues,
 )
 from deadlock_matches.config import (
     config_account_names,
@@ -252,6 +253,7 @@ def refresh_assets(_args: argparse.Namespace) -> None:
     n_abilities = assets.refresh_abilities()
     n_tiers = assets.refresh_skill_rating()
     n_accolades = assets.refresh_accolades()
+    n_statues = assets.refresh_statues()
 
     new_items = {i.name for i in items.item_map().values()}
     new_heroes = {h.name for h in heroes.hero_map().values()}
@@ -261,6 +263,7 @@ def refresh_assets(_args: argparse.Namespace) -> None:
     print(f"abilities.json: {n_abilities} abilities/guns")
     print(f"skill_rating.json: {n_tiers} skill rating tiers")
     print(f"accolades.json: {n_accolades} accolades")
+    print(f"statues.json: {n_statues} statue pickups")
 
     for name in sorted(new_heroes - old_heroes):
         print(f"  new hero: {name}")
@@ -275,25 +278,29 @@ def refresh_assets(_args: argparse.Namespace) -> None:
         print(f"  gone item: {name}")
 
 
+HISTORY_BUILDERS = (
+    ("items", items.ITEM_HISTORY_PARQUET, "build_item_history"),
+    ("heroes", heroes.HERO_HISTORY_PARQUET, "build_hero_history"),
+    ("abilities", abilities.ABILITY_HISTORY_PARQUET, "build_ability_history"),
+    ("ranks", skill_rating.RANK_HISTORY_PARQUET, "build_rank_history"),
+    ("statues", statues.STATUE_HISTORY_PARQUET, "build_statue_history"),
+)
+
+
 def rebuild_history(args: argparse.Namespace) -> None:
-    """Rebuild the committed item, hero, ability, and rank history from the assets API.
+    """Rebuild the committed item, hero, ability, rank, and statue history from the assets API.
 
-    Refreshes the build list first so a backfill run right after a patch sees the
-    new build instead of a day-old cached list.
+    - refreshes the build list first so a backfill run right after a patch sees the
+      new build instead of a day-old cached list
+    - builder functions resolve by name at run time so tests can patch every entry
+      of HISTORY_BUILDERS without knowing the names
     """
-    builders = [
-        ("items", items.ITEM_HISTORY_PARQUET, assets.build_item_history),
-        ("heroes", heroes.HERO_HISTORY_PARQUET, assets.build_hero_history),
-        ("abilities", abilities.ABILITY_HISTORY_PARQUET, assets.build_ability_history),
-        ("ranks", skill_rating.RANK_HISTORY_PARQUET, assets.build_rank_history),
-    ]
-
     assets.client_version_dates(max_age=0)
 
     if not args.confirm:
         print("Rebuilding the committed asset history tables:")
 
-        for name, path, _ in builders:
+        for name, path, _ in HISTORY_BUILDERS:
             print(f"  {name:<9} {len(history.eras(path))} eras at {_tilde(path)}")
 
         builds = sum(d >= assets.HISTORY_START for d in assets.client_version_dates().values())
@@ -307,7 +314,8 @@ def rebuild_history(args: argparse.Namespace) -> None:
 
         return
 
-    for name, path, build in builders:
+    for name, path, builder in HISTORY_BUILDERS:
+        build = getattr(assets, builder)
         before = len(history.eras(path))
         api.fetch_counts.clear()
         missing: list[int] = []

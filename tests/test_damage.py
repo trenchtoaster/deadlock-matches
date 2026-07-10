@@ -79,14 +79,21 @@ def test_dealer_with_no_damage_block():
     assert damage.damage_from_source(info, 200, "Bullet") == 0.0
 
 
-def test_damage_by_source_ranks_and_excludes_objective():
+def test_damage_by_source_ranks_by_total():
     info = build_match()
 
     agg = damage.damage_by_source(info, 100)
 
     assert agg["Bullet"] == 3000
-    assert agg["upgrade_escalating_exposure"] == 809
     assert list(agg) == ["Bullet", "upgrade_escalating_exposure"]
+
+
+def test_damage_by_source_excludes_objective_damage():
+    info = build_match()
+
+    agg = damage.damage_by_source(info, 100)
+
+    assert agg["upgrade_escalating_exposure"] == 809
 
 
 def test_item_damage_by_display_name():

@@ -1030,6 +1030,111 @@ def souls_by_source(
     )
 
 
+def custom_stats(
+    stat: str | None = None,
+    group: str | None = None,
+    accounts: Sequence[int] | None = None,
+    matches: Sequence[int] | None = None,
+    *,
+    final: bool = True,
+    parquet_dir: str | Path | None = None,
+    tz: str | None = None,
+) -> pl.LazyFrame:
+    """Read the stat counters the game tracks but never shows, with hero/won and local day joined on.
+
+    - snapshot rows like the stats table, final=True (the default) keeps one
+      row per stat with the last snapshot value
+    - stat and group filter by name, accounts and matches narrow the rows
+    - values are cumulative counts except the Bullet Stats group, which holds
+      percents re-computed each snapshot, so never diff those
+    """
+    frame = scan("custom_stats", parquet_dir)
+
+    if stat is not None:
+        frame = frame.filter(pl.col("stat") == stat)
+
+    if group is not None:
+        frame = frame.filter(pl.col("group") == group)
+
+    if accounts is not None:
+        frame = frame.filter(pl.col("account_id").is_in(list(accounts)))
+
+    if matches is not None:
+        frame = frame.filter(pl.col("match_id").is_in(list(matches)))
+
+    if final:
+        frame = frame.group_by("match_id", "account_id", "group", "stat").agg(
+            pl.col("value").sort_by("time_stamp_s").last()
+        )
+
+    frame = frame.join(
+        scan("players", parquet_dir).select("match_id", "account_id", "hero", "won"),
+        on=["match_id", "account_id"],
+        how="left",
+    )
+
+    return _local_day(frame, parquet_dir, tz)
+
+
+def aim_rates(
+    hero: str | None = None,
+    accounts: Sequence[int] | None = None,
+    min_shots: int = 100,
+    min_games: int = 50,
+    parquet_dir: str | Path | None = None,
+    tz: str | None = None,
+) -> pl.DataFrame:
+    """Rank each game of a hero by aim against heroes, as percentiles across the archive.
+
+    - hit_percentile and headshot_percentile rank within the hero, 99 = top 1 percent
+    - percentiles rank the whole archive before the accounts filter applies
+    - min_shots drops low-volume games
+    - percentiles are null until the archive holds min_games of the hero, a
+      small archive ranks against too few games to mean anything (hero_games
+      carries the population)
+    """
+    lf = custom_stats(group="Enemy Hero Accuracy", parquet_dir=parquet_dir, tz=tz).select(
+        "match_id", "account_id", "hero", "won", "day", "stat", "value"
+    )
+
+    if hero is not None:
+        lf = lf.filter(pl.col("hero") == hero)
+
+    frame = (
+        lf.collect()
+        .pivot(on="stat", index=["match_id", "account_id", "hero", "won", "day"], values="value")
+        .fill_null(0)
+        .filter(pl.col("Shots") >= min_shots)
+    )
+
+    frame = (
+        frame.with_columns(
+            hit_rate=(100 * pl.col("Hits") / pl.col("Shots")),
+            headshot_rate=(100 * pl.col("Headshots") / pl.col("Hits").clip(1)),
+            hero_games=pl.len().over("hero"),
+        )
+        .with_columns(
+            hit_percentile=(pl.col("hit_rate").rank() / pl.len() * 100).over("hero").round(0),
+            headshot_percentile=(pl.col("headshot_rate").rank() / pl.len() * 100)
+            .over("hero")
+            .round(0),
+        )
+        .with_columns(
+            pl.when(pl.col("hero_games") >= min_games)
+            .then(pl.col("hit_percentile"))
+            .alias("hit_percentile"),
+            pl.when(pl.col("hero_games") >= min_games)
+            .then(pl.col("headshot_percentile"))
+            .alias("headshot_percentile"),
+        )
+    )
+
+    if accounts is not None:
+        frame = frame.filter(pl.col("account_id").is_in(list(accounts)))
+
+    return frame
+
+
 def final_stats(parquet_dir: str | Path | None = None, tz: str | None = None) -> pl.LazyFrame:
     """Final snapshot values for each player in each match, with hero/won, local day, and gun rates.
 
@@ -1158,11 +1263,10 @@ def snapshot_players(
     parquet_dir: str | Path | None = None,
     accounts: Sequence[int] | None = None,
 ) -> list[dict]:
-    """Games by the player on one hero, shaped like the player blocks the timeline module accepts.
+    """Read games on one hero from the parquet stores as timeline player blocks.
 
-    Each entry is {"stats": [snapshot dicts]} keyed by the protobuf field names,
-    so timeline.compare and friends take them unchanged instead of re-reading
-    every archived protobuf.
+    Each entry is {"stats": [snapshot dicts]} keyed by the protobuf field
+    names, with gold_sources rebuilt from the soul_sources table.
     """
     hero_id = heroes.hero_id_by_name(hero)
 

@@ -79,6 +79,29 @@ RANK_STATES = [
 ]
 
 
+def statue_rec(value):
+    return {
+        "id": 5,
+        "class_name": "hp_permanent_pickup_lv2",
+        "stat": "health_max",
+        "value": value,
+    }
+
+
+STATUE_STATES = [
+    {
+        "from": "2026-01-01T00:00:00",
+        "build": 100,
+        "records": {"hp_permanent_pickup_lv2": statue_rec(25)},
+    },
+    {
+        "from": "2026-02-01T00:00:00",
+        "build": 200,
+        "records": {"hp_permanent_pickup_lv2": statue_rec(20)},
+    },
+]
+
+
 def test_item_tables_flatten_each_era(tmp_path):
     path = tmp_path / "item_history.parquet"
     history.write(path, ITEM_STATES)
@@ -176,6 +199,19 @@ def test_rank_table_flattens(tmp_path):
 
     assert ranks.to_dicts()[0]["name"] == "Initiate"
     assert ranks["tier"].to_list() == [1]
+
+
+def test_statue_table_flattens_each_era(tmp_path):
+    path = tmp_path / "statue_history.parquet"
+    history.write(path, STATUE_STATES)
+
+    table = asset_tables.statue_tables(path)["statue_history"].sort("era_from")
+
+    assert list(table.columns) == list(schemas.TABLES["statue_history"])
+    assert table["value"].to_list() == [25.0, 20.0]
+    assert table["buff"].to_list() == ["hp", "hp"]
+    assert table["level"].to_list() == [2, 2]
+    assert table["client_version"].to_list() == [100, 200]
 
 
 def test_missing_history_gives_empty_typed_frames(tmp_path):

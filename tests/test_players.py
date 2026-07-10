@@ -19,7 +19,7 @@ def _build(win, names_slots):
     }
 
 
-def test_item_frequency_counts_and_median():
+def test_item_frequency():
     builds = [
         _build(True, [("Healbane", 2, "vitality"), ("Ricochet", 4, "weapon")]),
         _build(True, [("Healbane", 2, "vitality")]),
@@ -34,6 +34,7 @@ def test_item_frequency_counts_and_median():
 
     assert healbane["count"] == 2
     assert healbane["percent"] == 67
+    assert healbane["median_min"] == 5
     assert healbane["slot"] == "vitality"
 
 
@@ -51,7 +52,7 @@ def test_item_frequency_empty():
     assert players.item_frequency([]) == {"n": 0, "items": []}
 
 
-def test_build_order_keeps_sold_flags_and_filters_cheap():
+def test_build_order():
     match_info = {
         "winning_team": 0,
         "players": [
@@ -76,6 +77,27 @@ def test_build_order_keeps_sold_flags_and_filters_cheap():
     assert b["win"] is True
     assert [s["name"] for s in b["seq"]] == ["Escalating Exposure", "Escalating Exposure"]
     assert [s["sold"] for s in b["seq"]] == [True, False]
+
+
+def test_build_order_min_cost_drops_cheap_items():
+    match_info = {
+        "winning_team": 0,
+        "players": [
+            {
+                "account_id": 7,
+                "team": 0,
+                "kills": 0,
+                "deaths": 0,
+                "assists": 0,
+                "items": [{"item_id": 3005970438, "game_time_s": 60, "sold_time_s": 0}],
+            }
+        ],
+    }
+
+    b = players.build_order(match_info, 7, min_cost=6500)
+
+    assert b is not None
+    assert b["seq"] == []
 
 
 def test_item_frequency_excludes_sold_by_default():
@@ -125,12 +147,9 @@ def _history_row(match_id, hero_id=52, mode=1, start=1):
     return {"match_id": match_id, "hero_id": hero_id, "match_mode": mode, "start_time": start}
 
 
-def test_top_players_pools_per_hero_boards_and_drops_ambiguous(monkeypatch):
+def test_top_players_pools_regional_boards(monkeypatch):
     boards = {
-        "Europe": [
-            {"account_name": "eu1", "rank": 1, "possible_account_ids": [101]},
-            {"account_name": "smurf", "rank": 2, "possible_account_ids": [201, 202]},
-        ],
+        "Europe": [{"account_name": "eu1", "rank": 1, "possible_account_ids": [101]}],
         "NAmerica": [{"account_name": "na1", "rank": 1, "possible_account_ids": [301]}],
     }
     calls = []
@@ -151,6 +170,18 @@ def test_top_players_pools_per_hero_boards_and_drops_ambiguous(monkeypatch):
     assert calls == [("Europe", 66), ("NAmerica", 66)]
 
 
+def test_top_players_drops_ambiguous_names(monkeypatch):
+    board = [
+        {"account_name": "eu1", "rank": 1, "possible_account_ids": [101]},
+        {"account_name": "smurf", "rank": 2, "possible_account_ids": [201, 202]},
+    ]
+    monkeypatch.setattr(players, "hero_leaderboard", lambda region, hero_id: board)
+
+    got = players.top_players(66, regions=["Europe"], limit=5)
+
+    assert [g["name"] for g in got] == ["eu1"]
+
+
 def test_top_players_respects_limit(monkeypatch):
     board = [{"account_name": f"p{r}", "rank": r, "possible_account_ids": [r]} for r in range(1, 6)]
     monkeypatch.setattr(players, "hero_leaderboard", lambda region, hero_id: board)
@@ -160,7 +191,7 @@ def test_top_players_respects_limit(monkeypatch):
     assert [g["rank"] for g in got] == [1, 2, 3]
 
 
-def test_recent_hero_matches_filters_and_sorts(monkeypatch):
+def test_recent_hero_matches(monkeypatch):
     rows = [
         _history_row(1, start=5),
         _history_row(2, hero_id=99, start=9),
@@ -396,7 +427,7 @@ def tracked_pq(tmp_path, monkeypatch):
     return out
 
 
-def test_tracked_player_games_joins_and_local_day(tracked_pq):
+def test_tracked_player_games(tracked_pq):
     df = players.tracked_player_games(parquet_dir=tracked_pq, tz="UTC").collect().sort("match_id")
 
     assert df["player"].to_list() == ["Someone", "other"]

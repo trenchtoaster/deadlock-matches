@@ -177,9 +177,14 @@ def archived_match_ids(archive_dir: str | Path = ARCHIVE_DIR) -> set[int]:
     return {int(p.name.split("_")[0]) for p in Path(archive_dir).glob("*.bin")}
 
 
+def match_path(archive_dir: str | Path, match_id: int) -> Path | None:
+    """Return the archived .bin path for a match id, None when not archived."""
+    return next(Path(archive_dir).glob(f"{match_id}_*.bin"), None)
+
+
 def has_match(archive_dir: str | Path, match_id: int) -> bool:
     """Return True when a .bin for this match id is already archived."""
-    return any(Path(archive_dir).glob(f"{match_id}_*.bin"))
+    return match_path(archive_dir, match_id) is not None
 
 
 def store_meta(archive_dir: str | Path, match_id: int, salt: int, meta_bz2: bytes) -> None:
@@ -309,6 +314,33 @@ def player_party(player: Any) -> int | None:
             return None
 
     return None
+
+
+def custom_stats(info: MatchInfo) -> dict[int, list[tuple[int, str | None, str, int]]]:
+    """Resolve custom stat ids through the match registry and return each player as (time, group, stat, value) snapshot rows."""
+    id_to_name = {reg.id: reg.name for reg in info.custom_user_stats}
+    resolved: dict[int, list[tuple[int, str | None, str, int]]] = {}
+
+    for player in info.players:
+        rows: list[tuple[int, str | None, str, int]] = []
+
+        for snap in player.stats:
+            for stat in snap.custom_user_stats:
+                name = id_to_name.get(stat.id)
+
+                if name is None:
+                    continue
+
+                group, _, stat_name = name.partition("##")
+
+                if stat_name:
+                    rows.append((snap.time_stamp_s, group, stat_name, stat.value))
+                else:
+                    rows.append((snap.time_stamp_s, None, name, stat.value))
+
+        resolved[player.account_id] = rows
+
+    return resolved
 
 
 def from_api_json(match_info: dict[str, Any]) -> MatchInfo:

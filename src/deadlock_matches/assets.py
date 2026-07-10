@@ -9,7 +9,16 @@ import time
 import urllib.error
 from typing import TYPE_CHECKING, Any
 
-from deadlock_matches import abilities, accolades, api, heroes, history, items, skill_rating
+from deadlock_matches import (
+    abilities,
+    accolades,
+    api,
+    heroes,
+    history,
+    items,
+    skill_rating,
+    statues,
+)
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -315,6 +324,24 @@ def _ability_snapshot(rec: dict[str, Any], kind: str) -> dict[str, Any]:
     return out
 
 
+def _statue_snapshot(rec: dict[str, Any]) -> dict[str, Any]:
+    """Keep the permanent stat one statue pickup grants.
+
+    Statues grant a single stat, so this keeps the first script value.
+    """
+    subclass = (rec.get("modifier") or {}).get("subclass") or {}
+    values = subclass.get("script_values") or [{}]
+    first = values[0]
+    stat = first.get("value_type")
+
+    return {
+        "id": rec["id"],
+        "class_name": rec["class_name"],
+        "stat": _stat_key(stat) if stat else None,
+        "value": _number(first.get("value")),
+    }
+
+
 def client_version_dates(max_age: float = api.DAY) -> dict[int, str]:
     """Return the release datetime for each Steam client build."""
     records = api.get_json("v1/assets/steam-info/all", max_age=max_age)
@@ -383,6 +410,8 @@ def build_asset_history(
     - walks every build so a value that changes and reverts between two builds is
       still captured, which a bisection over the endpoints would miss
     - builds the API has no data for are skipped, the scan continues from the next one
+    - refuses to write when every build was skipped, so an unreachable endpoint
+      cannot blank a committed table
     - progress(done, total, skipped_builds) is called after every build
     """
     dates = client_version_dates()
@@ -411,6 +440,10 @@ def build_asset_history(
 
         if progress is not None:
             progress(done, len(builds), skipped)
+
+    if not states:
+        msg = f"no client build since {start_date} could be loaded, refusing to overwrite {path}"
+        raise RuntimeError(msg)
 
     history.write(path, states)
 
@@ -520,6 +553,30 @@ def build_rank_history(
     return build_asset_history(load, path, start_date, progress)
 
 
+def _statue_load(build: int) -> dict[str, Any]:
+    """Return the {class_name: statue record} map at a build from the misc entities endpoint."""
+    return {
+        r["class_name"]: _statue_snapshot(r)
+        for r in _versioned("v1/assets/misc-entities", build)
+        if statues.is_statue(r.get("class_name") or "")
+    }
+
+
+def build_statue_history(
+    start_date: str = HISTORY_START,
+    path: Path | None = None,
+    progress: Callable[[int, int, list[int]], None] | None = None,
+) -> int:
+    """Build the committed statue history from the assets API.
+
+    - one era per patch that changed any statue magnitude
+    - path defaults to the committed history table
+    """
+    path = statues.STATUE_HISTORY_PARQUET if path is None else path
+
+    return build_asset_history(_statue_load, path, start_date, progress)
+
+
 def refresh_abilities(path: Path | None = None) -> int:
     """Redownload abilities.json (hero abilities + guns) and clear the lookup cache.
 
@@ -589,6 +646,21 @@ def refresh_accolades(path: Path | None = None) -> int:
     accolades.accolade_map.cache_clear()
 
     return len(records)
+
+
+def refresh_statues(path: Path | None = None) -> int:
+    """Redownload statues.json (the permanent buff statue pickups) and clear the lookup cache.
+
+    path defaults to the bundled snapshot.
+    """
+    path = statues.STATUES_JSON if path is None else path
+    records = api.get_json("v1/assets/misc-entities", use_cache=False)
+    kept = [_statue_snapshot(r) for r in records if statues.is_statue(r.get("class_name") or "")]
+
+    path.write_text(json.dumps(kept), encoding="utf-8")
+    statues.statue_map.cache_clear()
+
+    return len(kept)
 
 
 def refresh_items(path: Path | None = None) -> int:

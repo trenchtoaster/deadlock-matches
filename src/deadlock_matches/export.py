@@ -25,6 +25,7 @@ from deadlock_matches import (
     items,
     paths,
     schemas,
+    statues,
     timeline,
 )
 
@@ -210,7 +211,8 @@ def build_tables(
     """Build the parquet tables from MatchInfo messages.
 
     - builds matches, players, stats, soul_sources, item_events, accolades,
-      damage, damage_sources, mid_boss, objectives, and deaths
+      buffs, stacks, custom_stats, damage, damage_sources, mid_boss,
+      objectives, and deaths
     - item cost/tier/slot resolve against the committed item history era live at
       match time, so rebuilds price each match on its own patch
     - proc vs stat attribution is derived at read time from damage, see queries.item_attribution
@@ -227,6 +229,9 @@ def build_tables(
     sources: list[dict] = []
     item_events: list[dict] = []
     accolade_rows: list[dict] = []
+    buff_rows: list[dict] = []
+    stack_rows: list[dict] = []
+    custom_rows: list[dict] = []
     damage: list[dict] = []
     damage_sources: list[dict] = []
     mid_boss: list[dict] = []
@@ -253,10 +258,10 @@ def build_tables(
                 "average_badge_team1": (
                     info.average_badge_team1 if info.HasField("average_badge_team1") else None
                 ),
+                "not_scored": info.not_scored,
             }
         )
 
-                "not_scored": info.not_scored,
         slot_to_account = {p.player_slot: p.account_id for p in info.players}
         path_by_slot = {p.player_slot: p for p in info.match_paths.paths}
 
@@ -305,12 +310,12 @@ def build_tables(
                     "last_hits": p.last_hits,
                     "denies": p.denies,
                     "mvp_rank": p.mvp_rank,
+                    "party": extract.player_party(p),
+                    "abandon_time_s": p.abandon_match_time_s or None,
                 }
             )
 
             for s in p.stats:
-                    "party": extract.player_party(p),
-                    "abandon_time_s": p.abandon_match_time_s or None,
                 stats.append(
                     {
                         "match_id": info.match_id,
@@ -384,6 +389,48 @@ def build_tables(
                 }
                 for a in p.accolades
             )
+
+            for b in p.power_up_buffs:
+                buff, level = statues.parse_pickup(b.type)
+                buff_rows.append(
+                    {
+                        "match_id": info.match_id,
+                        "account_id": p.account_id,
+                        "type": b.type,
+                        "buff": buff,
+                        "level": level,
+                        "count": b.value,
+                        "permanent": b.is_permanent,
+                    }
+                )
+
+            for st in p.ability_stats:
+                item = im.get(st.ability_id)
+                cls = item.class_name if item else abilities.class_by_token(st.ability_id)
+
+                stack_rows.append(
+                    {
+                        "match_id": info.match_id,
+                        "account_id": p.account_id,
+                        "ability_id": st.ability_id,
+                        "class_name": cls or None,
+                        "name": item.name if item else abilities.label(cls) if cls else None,
+                        "value": st.ability_value,
+                    }
+                )
+        for account_id, named in extract.custom_stats(info).items():
+            custom_rows.extend(
+                {
+                    "match_id": info.match_id,
+                    "account_id": account_id,
+                    "time_stamp_s": time_stamp_s,
+                    "group": group,
+                    "stat": stat,
+                    "value": value,
+                }
+                for time_stamp_s, group, stat, value in named
+            )
+
         details = info.damage_matrix.source_details
         sample_times = list(info.damage_matrix.sample_time_s)
         cumulative: dict[tuple[int, int, bool], dict[int, int]] = {}
@@ -447,6 +494,9 @@ def build_tables(
         "soul_sources": schemas.conform("soul_sources", sources),
         "item_events": schemas.conform("item_events", item_events),
         "accolades": schemas.conform("accolades", accolade_rows),
+        "buffs": schemas.conform("buffs", buff_rows),
+        "stacks": schemas.conform("stacks", stack_rows),
+        "custom_stats": schemas.conform("custom_stats", custom_rows),
         "damage": schemas.conform("damage", damage),
         "damage_sources": schemas.conform("damage_sources", damage_sources),
         "mid_boss": schemas.conform("mid_boss", mid_boss),

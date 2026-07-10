@@ -31,7 +31,7 @@ def _fake_urlopen(payload, calls):
     return opener
 
 
-def test_get_json_downloads_and_writes_cache(tmp_path, monkeypatch):
+def test_get_json_caches_the_download(tmp_path, monkeypatch):
     calls = []
     monkeypatch.setattr(api, "CACHE_DIR", tmp_path)
     monkeypatch.setattr(urllib.request, "urlopen", _fake_urlopen({"rank": 1}, calls))

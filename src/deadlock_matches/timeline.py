@@ -153,8 +153,8 @@ def curve(player: Any, stat: str, minutes: Sequence[int]) -> list[float | None]:
 def median_curve(players: Sequence[Any], stat: str, minutes: Sequence[int]) -> list[dict[str, Any]]:
     """Median stat value at each checkpoint across a set of player games.
 
-    Games that ended before a checkpoint drop out of that point's median
-    instead of dragging it down, so n shrinks as minutes go up.
+    Games that ended before a checkpoint drop out of the median at that
+    point, so n shrinks as minutes go up.
     """
     rows = []
     for m in minutes:

@@ -230,6 +230,49 @@ def test_player_party_survives_archive_round_trip(tmp_path):
     assert extract.player_party(loaded.players[0]) == 2
 
 
+def build_custom_stats_info():
+    info = pb.CMsgMatchMetaDataContents().match_info
+    info.match_id = 100
+
+    for name, stat_id in [("Parry Success", 3), ("Enemy Hero Accuracy##Shots", 5)]:
+        reg = info.custom_user_stats.add()
+        reg.name = name
+        reg.id = stat_id
+
+    p = info.players.add()
+    p.account_id = 42
+
+    for t, values in [(180, {3: 1, 5: 200}), (360, {3: 2, 5: 900, 8: 7})]:
+        s = p.stats.add()
+        s.time_stamp_s = t
+
+        for stat_id, value in values.items():
+            cs = s.custom_user_stats.add()
+            cs.id = stat_id
+            cs.value = value
+
+    return info
+
+
+def test_custom_stats_resolves_names_and_splits_groups():
+    resolved = extract.custom_stats(build_custom_stats_info())
+
+    assert set(resolved[42]) == {
+        (180, None, "Parry Success", 1),
+        (180, "Enemy Hero Accuracy", "Shots", 200),
+        (360, None, "Parry Success", 2),
+        (360, "Enemy Hero Accuracy", "Shots", 900),
+    }
+
+
+def test_custom_stats_player_without_data():
+    info = build_custom_stats_info()
+    b = info.players.add()
+    b.account_id = 43
+
+    assert extract.custom_stats(info)[43] == []
+
+
 def write_steam_tree(tmp_path, deadlock=(42, 43), other=(), vdf=None):
     root = tmp_path / "Steam"
     (root / "appcache/httpcache").mkdir(parents=True)

@@ -68,6 +68,44 @@ def build_match(match_id=100, winning_team=pb.k_ECitadelLobbyTeam_Team1):
     acc2.accolade_stat_value = 3
     acc2.accolade_threshold_achieved = -1
 
+    reg = info.custom_user_stats.add()
+    reg.name = "Parry Success"
+    reg.id = 7
+
+    reg2 = info.custom_user_stats.add()
+    reg2.name = "Bullet Stats##HeroHitRate"
+    reg2.id = 9
+
+    cs = s.custom_user_stats.add()
+    cs.id = 7
+    cs.value = 3
+
+    cs2 = s.custom_user_stats.add()
+    cs2.id = 9
+    cs2.value = 24
+
+    buff = a.power_up_buffs.add()
+    buff.type = "hp_permanent_pickup_lv2"
+    buff.value = 3
+    buff.is_permanent = True
+
+    crate = a.power_up_buffs.add()
+    crate.type = "gun_powerup_pickup"
+    crate.value = 2
+    crate.is_permanent = False
+
+    stack = a.ability_stats.add()
+    stack.ability_id = 2521902222
+    stack.ability_value = 154
+
+    stack2 = a.ability_stats.add()
+    stack2.ability_id = 3074274290
+    stack2.ability_value = 16
+
+    stack3 = a.ability_stats.add()
+    stack3.ability_id = 12345
+    stack3.ability_value = 3
+
     mb = info.mid_boss.add()
     mb.destroyed_time_s = 1300
     mb.team_killed = pb.k_ECitadelLobbyTeam_Team1
@@ -165,6 +203,8 @@ def test_tables_have_expected_rows():
     assert len(tables["objectives"]) == 2
     assert len(tables["movement"]) == 3
     assert len(tables["deaths"]) == 1
+    assert len(tables["stacks"]) == 3
+    assert len(tables["custom_stats"]) == 2
 
 
 def test_players_lane_columns():
@@ -187,7 +227,7 @@ def test_damage_sources_cumulative_matches_damage_total():
     assert ds["damage"][-1] == tables["damage"]["damage"][0]
 
 
-def test_damage_sources_right_aligned_and_split_by_target():
+def test_damage_sources_right_aligns_short_arrays():
     info = build_match()
     src = info.damage_matrix.damage_dealers[0].damage_sources[0]
 
@@ -195,15 +235,23 @@ def test_damage_sources_right_aligned_and_split_by_target():
     late.target_player_slot = 6
     late.damage.extend([70])
 
+    ds = export.build_tables([info])["damage_sources"]
+    hero_rows = ds.filter(pl.col("vs_heroes"))
+
+    assert hero_rows["damage"].to_list() == [100, 879]
+
+
+def test_damage_sources_splits_creep_from_hero_damage():
+    info = build_match()
+    src = info.damage_matrix.damage_dealers[0].damage_sources[0]
+
     creep = src.damage_to_players.add()
     creep.target_player_slot = 0
     creep.damage.extend([500, 900])
 
     ds = export.build_tables([info])["damage_sources"]
-    hero_rows = ds.filter(pl.col("vs_heroes"))
     creep_rows = ds.filter(~pl.col("vs_heroes"))
 
-    assert hero_rows["damage"].to_list() == [100, 879]
     assert creep_rows["time_stamp_s"].to_list() == [600, 1200]
     assert creep_rows["damage"].to_list() == [500, 900]
 
@@ -271,38 +319,6 @@ def test_players_mvp_rank():
     assert ranks == {42: 1, 43: 0}
 
 
-def test_item_events_denormalized():
-    events = export.build_tables([build_match()])["item_events"]
-
-    ee = events.filter(pl.col("item_id") == EE)
-
-    assert ee["item"][0] == "Escalating Exposure"
-    assert ee["cost"][0] == 6400
-    assert ee["imbued_ability_id"][0] == 1336069669
-    assert ee["imbued_ability"][0] == "Dust Devil"
-
-    unknown = events.filter(pl.col("item_id") == 999999999)
-
-    assert unknown["item"][0] is None
-    assert unknown["flags"][0] == 1
-    assert unknown["imbued_ability_id"][0] is None
-    assert unknown["imbued_ability"][0] is None
-
-
-def test_item_events_priced_from_committed_history():
-    start = dt.datetime.fromtimestamp(1783000000, dt.UTC)
-    events = export.build_tables([build_match()])["item_events"]
-
-    ee = events.filter(pl.col("item_id") == EE)
-
-    priced = items.item_asof(EE, start)
-
-    assert priced is not None
-    assert ee["cost"][0] == priced.cost
-
-
-def test_accolades_named_from_snapshot():
-    acc = export.build_tables([build_match()])["accolades"]
 def test_matches_not_scored_flag():
     info = build_match()
     info.not_scored = True
@@ -340,6 +356,38 @@ def test_players_abandon_time():
     assert abandons == {42: None, 43: 367}
 
 
+def test_item_events_denormalized():
+    events = export.build_tables([build_match()])["item_events"]
+
+    ee = events.filter(pl.col("item_id") == EE)
+
+    assert ee["item"][0] == "Escalating Exposure"
+    assert ee["cost"][0] == 6400
+    assert ee["imbued_ability_id"][0] == 1336069669
+    assert ee["imbued_ability"][0] == "Dust Devil"
+
+    unknown = events.filter(pl.col("item_id") == 999999999)
+
+    assert unknown["item"][0] is None
+    assert unknown["flags"][0] == 1
+    assert unknown["imbued_ability_id"][0] is None
+    assert unknown["imbued_ability"][0] is None
+
+
+def test_item_events_priced_from_committed_history():
+    start = dt.datetime.fromtimestamp(1783000000, dt.UTC)
+    events = export.build_tables([build_match()])["item_events"]
+
+    ee = events.filter(pl.col("item_id") == EE)
+
+    priced = items.item_asof(EE, start)
+
+    assert priced is not None
+    assert ee["cost"][0] == priced.cost
+
+
+def test_accolades_named_from_snapshot():
+    acc = export.build_tables([build_match()])["accolades"]
 
     kills = acc.filter(pl.col("accolade_id") == 1)
 
@@ -351,6 +399,76 @@ def test_players_abandon_time():
 
     assert unknown["accolade"][0] is None
     assert unknown["threshold"][0] == -1
+
+
+def test_custom_stats_named_from_match_registry():
+    tables = export.build_tables([build_match()])
+    rows = {(r["group"], r["stat"]): r["value"] for r in tables["custom_stats"].to_dicts()}
+
+    assert rows[None, "Parry Success"] == 3
+    assert rows["Bullet Stats", "HeroHitRate"] == 24
+
+
+def test_custom_stats_keep_every_snapshot():
+    info = build_match()
+    s = info.players[0].stats.add()
+    s.time_stamp_s = 600
+    cs = s.custom_user_stats.add()
+    cs.id = 7
+    cs.value = 5
+
+    df = export.build_tables([info])["custom_stats"]
+    parry = df.filter(pl.col("stat") == "Parry Success").sort("time_stamp_s")
+
+    assert parry["time_stamp_s"].to_list() == [180, 600]
+    assert parry["value"].to_list() == [3, 5]
+
+
+def test_custom_stats_drop_unregistered_ids():
+    info = build_match()
+    cs = info.players[0].stats[0].custom_user_stats.add()
+    cs.id = 99
+    cs.value = 1
+
+    df = export.build_tables([info])["custom_stats"]
+
+    assert len(df) == 2
+
+
+def test_stacks_resolved_from_string_tokens():
+    stacks = export.build_tables([build_match()])["stacks"]
+    by_id = {r["ability_id"]: r for r in stacks.to_dicts()}
+
+    assert by_id[2521902222]["class_name"] == "citadel_ability_sticky_bomb"
+    assert by_id[2521902222]["name"] == "Sticky Bomb"
+    assert by_id[2521902222]["value"] == 154
+
+    assert by_id[3074274290]["name"] == "Trophy Collector"
+    assert by_id[3074274290]["value"] == 16
+
+    assert by_id[12345]["class_name"] is None
+    assert by_id[12345]["name"] is None
+    assert by_id[12345]["value"] == 3
+
+
+def test_buffs_keep_permanent_and_bridge_pickups():
+    table = export.build_tables([build_match()])["buffs"]
+
+    assert table.height == 2
+
+    rows = {r["type"]: r for r in table.to_dicts()}
+
+    perm = rows["hp_permanent_pickup_lv2"]
+    assert perm["buff"] == "hp"
+    assert perm["level"] == 2
+    assert perm["count"] == 3
+    assert perm["permanent"] is True
+
+    bridge = rows["gun_powerup_pickup"]
+    assert bridge["buff"] == "gun"
+    assert bridge["level"] is None
+    assert bridge["count"] == 2
+    assert bridge["permanent"] is False
 
 
 def test_damage_maps_slots_to_accounts():
@@ -624,10 +742,10 @@ def test_schema_drift_reports_a_missing_table(tmp_path):
     _archive_match(arc, 7, dt.datetime(2026, 6, 1, tzinfo=dt.UTC))
     export.export_all(arc, out)
 
-    shutil.rmtree(out / "statues")
+    shutil.rmtree(out / "buffs")
 
-    assert export.schema_drift(out) == "the statues table is missing"
-    assert export.schema_drift(out, exclude=("statues",)) is None
+    assert export.schema_drift(out) == "the buffs table is missing"
+    assert export.schema_drift(out, exclude=("buffs",)) is None
 
 
 def test_export_new_rebuilds_drifted_tables(tmp_path):
@@ -799,7 +917,7 @@ def test_export_partitions_by_month(tmp_path):
     assert sorted(matches["match_id"].to_list()) == [10, 11]
 
 
-def test_movement_is_partitioned_and_readable(tmp_path):
+def test_movement_export_round_trip(tmp_path):
     arc = tmp_path / "arc"
     arc.mkdir()
     out = tmp_path / "pq"

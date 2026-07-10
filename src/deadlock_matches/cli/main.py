@@ -245,6 +245,27 @@ def build_parser(config: str | Path | None = None) -> argparse.ArgumentParser:
         "stat, including stats no other table records (gun/melee/ability kills, "
         "close and long range kills, killstreaks, urn deliveries)",
     )
+    view.add_argument(
+        "--buffs",
+        action="store_true",
+        help="permanent buffs per family and level with the stats they added, "
+        "valued at the patch the match was played on, plus the bridge buffs "
+        "claimed and where the permanent buffs came from (statues, sinner "
+        "jackpots, mid boss kills)",
+    )
+    view.add_argument(
+        "--stacks",
+        action="store_true",
+        help="stack counts for every player in the match, from the abilities "
+        "and items that track stacks (Sticky Bomb stacks, Trophy Collector, etc)",
+    )
+    view.add_argument(
+        "--combat",
+        action="store_true",
+        help="fight stats the game tracks but never shows: the lobby ranked "
+        "by aim against heroes, the fire the enemy team put at you, damage "
+        "by range, parries, comeback souls, and per-hero counters",
+    )
 
     f = sub.add_parser(
         "download", help="retrieve tracked player matches into a separate parquet table"

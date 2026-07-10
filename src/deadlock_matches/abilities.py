@@ -188,6 +188,48 @@ def hero_alt_gun(hero_id: int, path: Path = ABILITIES_JSON) -> Ability | None:
     return None
 
 
+def string_token(name: str) -> int:
+    """Hash a class name the way the engine makes string tokens.
+
+    MurmurHash2 with seed 0x31415926 — ability ids on the wire and asset
+    ids are both this hash of the engine class name.
+    """
+    m = 0x5BD1E995
+    h = (0x31415926 ^ len(name)) & 0xFFFFFFFF
+    data = name.encode()
+
+    while len(data) >= 4:
+        k = (int.from_bytes(data[:4], "little") * m) & 0xFFFFFFFF
+        k ^= k >> 24
+        h = (((h * m) & 0xFFFFFFFF) ^ ((k * m) & 0xFFFFFFFF)) & 0xFFFFFFFF
+        data = data[4:]
+
+    if len(data) == 3:
+        h ^= data[2] << 16
+
+    if len(data) >= 2:
+        h ^= data[1] << 8
+
+    if len(data) >= 1:
+        h = ((h ^ data[0]) * m) & 0xFFFFFFFF
+
+    h ^= h >> 13
+    h = (h * m) & 0xFFFFFFFF
+
+    return h ^ h >> 15
+
+
+@functools.cache
+def _token_map(path: Path = ABILITIES_JSON) -> dict[int, str]:
+    """Map string tokens back to the ability class names they hash from."""
+    return {string_token(name): name for name in ability_map(path)}
+
+
+def class_by_token(token: int, path: Path = ABILITIES_JSON) -> str | None:
+    """Reverse a string token to an ability class name, None when unknown."""
+    return _token_map(path).get(token)
+
+
 def label(class_name: str, path: Path = ABILITIES_JSON) -> str:
     """Display name for a damage source class_name, whether ability, gun, or item.
 

@@ -27,7 +27,7 @@ uv run deadlock history [--days N] [--since 2026-07-01]
                                           # result, K/D/A, souls, damage, timestamp, and match id,
                                           # newest last, last 10 games by default. Run it to get
                                           # the match id that match/download take
-uv run deadlock match [12345678] [--hero Wraith] [--interval 10] [--souls|--damage|--healing|--teams|--abilities|--items|--accolades|--deaths|--kills]
+uv run deadlock match [12345678] [--hero Wraith] [--interval 10] [--souls|--damage|--healing|--teams|--abilities|--items|--accolades|--statues|--stacks|--combat|--deaths|--kills]
                                           # prints the 12-player final scoreboard (lobby average,
                                           # K/D/A, souls, damage, obj damage, healing, prevented,
                                           # last hits, denies, resolved player starred), then that
@@ -74,7 +74,29 @@ uv run deadlock match [12345678] [--hero Wraith] [--interval 10] [--souls|--dama
                                           # threshold+1, names from bundled accolades.json) —
                                           # the ONLY source for gun/melee/ability kill splits,
                                           # close/long-range kills and damage, killstreak kills,
-                                          # first blood, urn deliveries, and barrier absorption
+                                          # first blood, urn deliveries, and barrier absorption;
+                                          # --statues = permanent buff statues from the statues
+                                          # table, counts per buff and level plus the stat they
+                                          # added up to, per-pickup values resolved against
+                                          # statue_history at match time (counts have no
+                                          # timestamps, so no per-interval split exists);
+                                          # --stacks = stack counts from the stacks table for
+                                          # EVERY player in the match, from the abilities and
+                                          # items that track stacks (Sticky Bomb, Trophy
+                                          # Collector, Glass Cannon, Restorative Locket,
+                                          # Guided Owl / Assassinate / Combo kill counters);
+                                          # final values only, no timestamps;
+                                          # --combat = the fight stats from the custom_stats
+                                          # table: shots/hits/headshots vs heroes both
+                                          # directions (the enemy column is the whole team
+                                          # combined, no per-enemy data exists), damage by
+                                          # range band with falloff splits, parries with
+                                          # melee damage taken (light/heavy melee only,
+                                          # ability melees land under their own source) and
+                                          # Counterspell/Rebuttal buy times, comeback souls
+                                          # (Unstable Rift called out), average unspent
+                                          # souls/AP, and per-hero counters (stack uptime
+                                          # tables); whole-match totals, ignores --interval
 uv run deadlock item "Mercurial Magnum"   # the shop card: innate stats, then each passive/active
                                           # section with the game's labels and units (offline)
 uv run deadlock item "Escalating Exposure" --hero Mirage [--min-rating all] [--since 2026-06-30]
@@ -175,19 +197,20 @@ Start ad-hoc polars from these instead of rewriting boilerplate. This is the can
 - `scan("damage")` — lazy-read a table by name
 - `my_games()` — players table filtered to the config accounts, joined to matches, with `start_local`/`day` already in your timezone
 - `daily_record()` — the per-day W/L frame behind `deadlock winrate`
+- `abandon_record()` — one row per scored match in the same window where someone abandoned: `you`/`ally`/`enemy` flag who left, `returned` = the leaver reconnected. The ONLY reconnect evidence is damage growth between samples after the abandon — queued builds keep auto-buying with passive souls while a player is disconnected, deaths happen to an idle hero, and kills are deliberately not counted. Backs the winrate footer
+- `unscored_record()` — the not_scored games the winrate table leaves out (same window filters, match history still shows their result)
 - `item_buys("Echo Shard")` — your purchases with `buy_n` order within the match ("bought it as my 6th item")
   - `item_buys(tier=4)` keeps one shop tier, `buy_n` unchanged. tier is a real assets label (`item_tier`), 1:1 with cost 800/1600/3200/6400. NO 4800 tier exists — 4800 is only the incremental outlay when a 1600 component upgrades into a 6400 item, and the buy row lands at upgrade time at full cost
 - `item_games("Echo Shard", "Mirage", since="2026-06-30")` — one row per game with first buy time, buy order (`buy_n`), same-tier order (`tier_buy_n`), first same-tier purchase (`first_tier_item`/`first_tier_time_s`), `is_first_tier_item`, `owned_s` (ownership windows summed, a sold buy's window ends at the sell time), item damage, and `dealt_after_buy` (your hero damage while owning it, the denominator for `percent_of_hero_damage`). Nulls = not built for the item's own buy/order columns; sold buys still count as built; `since` caps to a patch window. Backs `deadlock item`
 - `hero_damage()` — the damage table pre-filtered to detail rows on hero targets (safe base for any per-source sum; `stat=` picks healing/mitigated/...)
 - `damage_by_source("Mirage", accounts=, matches=)` — whole-game totals per damage source across your games of a hero (one row per gun/ability/item source with `games`, `total`, `per_min`, `percent` of hero damage), the aggregate counterpart to the per-interval `deadlock match --damage`. `matches=` scopes to specific match ids (one game, like `--match`). Eager frame, raises if you never played the hero; damage only (for healing-by-source sum `hero_damage("healing")`)
 - `souls_by_source("Mirage", accounts=, matches=)` — the souls mirror over `soul_sources`: whole-game souls per income source across your games of a hero (`games`, `souls` = the in-game souls+orbs total, `secured_orbs`, `percent` of total, `orb_share`), the aggregate counterpart to `deadlock match --souls`. `matches=` scopes to specific match ids. Same eager/raise shape
+- `custom_stats(stat=, group=, accounts=, matches=)` — the hidden counter table (parries, vs-hero accuracy, damage by range, comeback souls, per-hero counters) with hero/won and local day joined, every filter optional ("parry rate by hero" is one group_by away). Backs `deadlock match --combat`
 - `final_stats()` — final snapshot per match-player with hero/won joined and `accuracy`/`headshot_rate` computed
 - `team_damage_ranks()` — every player's final hero damage ranked within their team per match (`top_team_damage` flags the damage chart top — "am I top damage on my team")
 - `ability_upgrades()` — ability unlocks/upgrades in spend order with the level and soul requirement for each unlock or cumulative AP spend
 - `hero_scaling()` — per-hero-per-level reference frame (base_health, spirit_power, required_souls) with one row per patch era; `hero_scaling_asof(left)` as-of joins it by (hero_id, level) on start_time
 - `skill_rating(column)` — maps a badge level column to labels ("Emissary 4")
-- `abandon_record()` — one row per scored match in the same window where someone abandoned: `you`/`ally`/`enemy` flag who left, `returned` = the leaver reconnected. The ONLY reconnect evidence is damage growth between samples after the abandon — queued builds keep auto-buying with passive souls while a player is disconnected, deaths happen to an idle hero, and kills are deliberately not counted. Backs the winrate footer
-- `unscored_record()` — the not_scored games the winrate table leaves out (same window filters, match history still shows their result)
 - `my_deaths()` — deaths joined to your games (hero/won/day)
 - `death_context(radius=2000)` — adds allies/enemies/solo/outnumbered at the death second (raises unless movement is exported — check `table_exists("movement")` first)
 - `snapshot_players(hero)` — your games as timeline-ready blocks read from parquet (feeds `timeline.compare` without looping protobufs; `deadlock compare` uses it for your side since 2026-07-07)
@@ -206,7 +229,7 @@ queries.my_games().group_by("hero").agg(pl.len().alias("games"), pl.col("won").m
 
 ### Tables and schema caveats
 
-Tables: `matches`, `players`, `stats`, `soul_sources`, `item_events`, `accolades`, `damage`, `damage_sources`, `objectives`, `mid_boss`, `movement`, `deaths` (`deadlock schema <table>` prints columns). Other players' games are the SAME tables under the sibling `parquet-players/` dir via `deadlock download` — read `queries.scan(table, players.PARQUET_DIR)` and `players.tracked_player_games(...)`.
+Tables: `matches`, `players`, `stats`, `soul_sources`, `item_events`, `accolades`, `statues`, `stacks`, `custom_stats`, `damage`, `damage_sources`, `objectives`, `mid_boss`, `movement`, `deaths` (`deadlock schema <table>` prints columns). Other players' games are the SAME tables under the sibling `parquet-players/` dir via `deadlock download` — read `queries.scan(table, players.PARQUET_DIR)` and `players.tracked_player_games(...)`.
 
 The CLI commands and the `queries.py` helpers above already apply every per-table caveat — relaying their output or reusing a helper needs nothing more. **Read `references/schema-caveats.md` BEFORE hand-writing raw polars against a table no helper covers** — it has each table's columns and verified traps. The four that bite most, always in force:
 
@@ -274,7 +297,7 @@ Notes:
 - weapon scaling, sandbox-verified against live damage 2026-07-10: `base_weapon_damage_increase` abilities (Gutshot, Ira Domini, Consecrating Grenade, Witching Hour) consume bonus weapon damage in percent points = item % + weapon investment % from `cost_bonuses`, boons excluded — Gutshot measured 85/115 bare and 126/202 at 58 points (Weighted Shots 40 + 18 for its own 3,200 souls invested), exactly `value + scale × points`. This is what `ability --weapon` resolves. Kinetic Carbine is different: actual damage = 5 + 2.75 × full burst, full burst = 5 bullets (`burst_shot_count` in the raw API weapon_info; the bundled weapon record says `bullets: 1`) × bullet damage INCLUDING boons × (1 + weapon %) — measured 99/223/151/351 across boons × Weighted Shots, boons multiply with items, and the in-game tooltip model (2.80) overshoots actual by ~2%, so the ability card leaves Carbine symbolic on purpose. `bullet_damage` (Hellfire Salvo) and `weapon_damage_scale` (Sleight of Hand, Infernal Brand) are still unmeasured
 - melee scaling, same sandbox session: Bashdown measurements (93/200/143/306) matched the bundled model within ±1.2 — spirit part `35 + 1.1 × spirit`, melee part `0.5 × heavy` with heavy keeping the hero ratio through boons (the `--melee` derivation rule, now in-game-proven). The melee STAT gains half the weapon investment % (Crushing Fists case fits 1 + 22% melee + 27% = 54%/2 exactly, the wiki's "melee scales with weapon damage by 50%"), so the stat-screen melee number `--melee` takes already includes it. On-hit riders are NOT in the stat: Crushing Fists' `bonus_heavy_melee_damage: 25` is a separate ×1.25 on heavy hits, applied after ability scaling — same category as crit, out of scope for the resolver
 - patch drift: the committed history parquets (`deadlock assets --backfill`) version every patch era, so as-of consumers (`item_events` pricing, `hero_scaling`, `ability_upgrades`, the `--as-of` cards) read the tuning live at match time. The bare `Hero`/`Item`/`Ability` helpers without a `when` describe the CURRENT patch only. `deadlock assets --backfill --confirm` OVERWRITES the committed parquets by rescanning every build since `assets.HISTORY_START` (cached, near-free) — review the diff before committing. There is deliberately no date flag on the CLI: a narrowed scan would truncate the earlier eras, `start_date` exists only as a library param for tests
-- no cast events exist ANYWHERE in the metadata: `player.ability_stats` is only the self-counting items/abilities (Trophy Collector trophies, Glass Cannon stacks, Sticky Bomb bonus, Restorative Locket charges, Guided Owl/Assassinate counters — 11 distinct ids over 69 matches, checked 2026-07-07), and `custom_user_stats` is accuracy/bullet figures. Active item presses (Debuff Remover), stuns, and debuff windows live only in replay demos, which nothing here parses — don't promise cast counts
+- no cast events exist ANYWHERE in the metadata: `player.ability_stats` is only the handful of stacking items/abilities (Trophy Collector trophies, Glass Cannon stacks, Sticky Bomb bonus, Restorative Locket charges, Guided Owl/Assassinate counters), exported as the `stacks` table and shown by `match --stacks`, and `custom_user_stats` is the named counter pool behind the `custom_stats` table (73 names as of 2026-07: parries, vs-hero accuracy both directions, damage by range, comeback souls, per-hero counters — see the schema caveats). Active item presses (Debuff Remover), stuns, and debuff windows live only in replay demos, which nothing here parses — don't promise cast counts. The wire `ability_id` is the murmur2 string token of the engine class name (`abilities.string_token`/`class_by_token` do the mapping; assets API ids are the same hash), so ids resolve with no lookup table
 - `match_mode == 1` is ranked; hero_id maps to names via `heroes.py`
 - api.deadlock-api.com is the same data: `v1/matches/{id}/metadata` returns the identical `match_info` we decode (cross-checked field-for-field, zero diffs), so it's ground truth for decode changes AND a backfill source for matches Steam evicted before we archived them. `v1/players/{id}/match-history` scoreboard fields equal the protobuf top-level player fields exactly (win = `match_result == player_team`); very recent matches lag there by hours, so the local cache is fresher
 

@@ -260,6 +260,54 @@ class Accolades(Table):
     threshold = Column(pl.Int64, "Highest star threshold reached, 0-based, -1 = none reached")
 
 
+class Buffs(Table):
+    """Buffs each player ended the match with, one row per pickup type per player."""
+
+    match_id = MATCH_ID
+    account_id = ACCOUNT_ID
+    type = Column(pl.String, "Engine class name of the buff pickup")
+    buff = Column(
+        pl.String,
+        "hp = max health, spirit = spirit power, wp = weapon damage, "
+        "firerate = fire rate, ammo = ammo, cd = cooldown reduction, plus the bridge "
+        "buff families, null for unrecognized names",
+    )
+    level = Column(
+        pl.Int64,
+        "Statue level 1-3, statues strengthen as the game goes on, null for bridge buffs",
+    )
+    count = Column(pl.Int64, "How many of that buff the player gained")
+    permanent = Column(pl.Boolean, "Permanent stat buffs, false for the timed bridge buffs")
+
+
+class Stacks(Table):
+    """Stack counts from abilities and items that track stacks, one row per counter per player."""
+
+    match_id = MATCH_ID
+    account_id = ACCOUNT_ID
+    ability_id = Column(pl.Int64, "The murmur2 string token of the engine class name")
+    class_name = Column(pl.String, "Engine class name of the ability or item, null for unknown ids")
+    name = Column(pl.String, "Display name of the ability or item, null for unknown ids")
+    value = Column(pl.Int64, "Final count (stacks, charges, or kills, whatever the source counts)")
+
+
+class CustomStats(Table):
+    """Named stat counters the game tracks but never shows, per snapshot like the stats table."""
+
+    match_id = MATCH_ID
+    account_id = ACCOUNT_ID
+    time_stamp_s = Column(pl.Int64, "Snapshot time in seconds, values are cumulative counts")
+    group = Column(
+        pl.String,
+        "Stat family (Enemy Hero Accuracy, Bullet Stats, a hero name), null for bare names like Parry Success",
+    )
+    stat = Column(pl.String, "Stat name inside the family")
+    value = Column(
+        pl.Int64,
+        "Cumulative count, except the Bullet Stats percents which are re-computed each snapshot",
+    )
+
+
 class Damage(Table):
     """Final damage matrix numbers for each dealer, source, and target."""
 
@@ -563,6 +611,18 @@ class RankHistory(Table):
     client_version = CLIENT_VERSION
 
 
+class StatueHistory(Table):
+    """One row per buff statue pickup per era."""
+
+    class_name = Column(pl.String, "Engine class name of the statue pickup")
+    buff = Column(pl.String, "Buff family (hp, spirit, wp, firerate, ammo, cd)")
+    level = Column(pl.Int64, "Statue level 1-3, statues strengthen as the game goes on")
+    stat = Column(pl.String, "Stat one pickup grants (health_max, tech_power, ...)")
+    value = Column(pl.Float64, "Permanent amount one pickup adds")
+    era_from = ERA_FROM
+    client_version = CLIENT_VERSION
+
+
 TABLES: dict[str, dict[str, Column]] = {
     "matches": Matches.spec(),
     "players": Players.spec(),
@@ -570,6 +630,9 @@ TABLES: dict[str, dict[str, Column]] = {
     "soul_sources": SoulSources.spec(),
     "item_events": ItemEvents.spec(),
     "accolades": Accolades.spec(),
+    "buffs": Buffs.spec(),
+    "stacks": Stacks.spec(),
+    "custom_stats": CustomStats.spec(),
     "damage": Damage.spec(),
     "damage_sources": DamageSources.spec(),
     "mid_boss": MidBoss.spec(),
@@ -588,6 +651,7 @@ TABLES: dict[str, dict[str, Column]] = {
     "ability_upgrade_history": AbilityUpgradeHistory.spec(),
     "ability_weapon_history": AbilityWeaponHistory.spec(),
     "rank_history": RankHistory.spec(),
+    "statue_history": StatueHistory.spec(),
 }
 
 ASSET_TABLES = frozenset(
@@ -603,6 +667,7 @@ ASSET_TABLES = frozenset(
         "ability_upgrade_history",
         "ability_weapon_history",
         "rank_history",
+        "statue_history",
     }
 )
 
@@ -617,6 +682,8 @@ IDENTITY: dict[str, tuple[str, ...]] = {
     "soul_sources": ("match_id", "account_id", "time_stamp_s", "source"),
     "item_events": ("match_id", "account_id", "game_time_s", "item_id"),
     "accolades": ("match_id", "account_id", "accolade_id"),
+    "buffs": ("match_id", "account_id", "type"),
+    "stacks": ("match_id", "account_id", "ability_id"),
     "damage": ("match_id", "dealer_account_id", "target_player_slot", "source_class", "stat"),
     "damage_sources": (
         "match_id",

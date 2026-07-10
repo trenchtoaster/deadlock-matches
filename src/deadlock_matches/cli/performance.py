@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import datetime as dt
+import re
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
@@ -20,6 +21,7 @@ from deadlock_matches import (
     queries,
     schemas,
     skill_rating,
+    statues,
     timeline,
 )
 from deadlock_matches.cli.cards import UNITS_PER_METER
@@ -280,33 +282,56 @@ def _final_scoreboard(row: dict[str, Any], args: argparse.Namespace) -> None:
         print("Lobby average: " + ", ".join(badges))
 
     match_ids = pl.LazyFrame({"match_id": [row["match_id"]]}, schema={"match_id": pl.Int64})
-    board = (
+    lf = (
         queries.scan("players", args.parquet)
         .filter(pl.col("match_id") == row["match_id"])
         .join(final_stats(match_ids, args.parquet), on=["match_id", "account_id"], how="left")
         .with_columns(
             pl.col("player_damage", "boss_damage", "player_healing", "heal_prevented").fill_null(0)
         )
-        .sort(["team", "net_worth"], descending=[False, True])
-        .collect()
     )
 
-    print()
-    print(
+    with_buffs = queries.table_exists("buffs", args.parquet)
+
+    if with_buffs:
+        totals = (
+            queries.scan("buffs", args.parquet)
+            .filter(pl.col("match_id") == row["match_id"], pl.col("permanent"))
+            .group_by("match_id", "account_id")
+            .agg(pl.col("count").sum().alias("buffs"))
+        )
+        lf = lf.join(totals, on=["match_id", "account_id"], how="left").with_columns(
+            pl.col("buffs").fill_null(0)
+        )
+
+    board = lf.sort(["team", "net_worth"], descending=[False, True]).collect()
+
+    header = (
         f"  {'Team':<16} {'Hero':<14} {'':<8} {'K/D/A':<8} {'Souls':>9} "
         f"{'Damage':>8} {'Obj damage':>10} {'Healing':>8} {'Prevented':>9} "
         f"{'Last hits':>9} {'Denies':>6}"
     )
 
+    if with_buffs:
+        header += f" {'Buffs':>8}"
+
+    print()
+    print(header)
+
     for p in board.iter_rows(named=True):
         kda = f"{p['kills']}/{p['deaths']}/{p['assists']}"
         hero = f"{p['hero']} *" if p["account_id"] == row["account_id"] else p["hero"]
-        print(
+        line = (
             f"  {TEAMS.get(p['team'], p['team']):<16} {hero:<14} "
             f"{MVP_LABELS.get(p['mvp_rank'], ''):<8} {kda:<8} {p['net_worth']:>9,} "
             f"{p['player_damage']:>8,} {p['boss_damage']:>10,} {p['player_healing']:>8,} "
             f"{p['heal_prevented']:>9,} {p['last_hits']:>9,} {p['denies']:>6}"
         )
+
+        if with_buffs:
+            line += f" {p['buffs']:>8}"
+
+        print(line)
     print()
 
 
@@ -451,6 +476,18 @@ def match_report(args: argparse.Namespace, config: str | Path | None = None) -> 
 
     if args.accolades:
         accolades_report(row, args)
+        return
+
+    if args.buffs:
+        buffs_report(row, args)
+        return
+
+    if args.stacks:
+        stacks_report(row, args)
+        return
+
+    if args.combat:
+        combat_report(row, args)
         return
 
     if args.deaths or args.kills:
@@ -721,6 +758,667 @@ def accolades_report(row: dict[str, Any], args: argparse.Namespace) -> None:
     print("\n  Stars counts the reward thresholds cleared, up to three.")
 
 
+BUFF_LABELS = {
+    "hp": ("max health", False),
+    "spirit": ("spirit power", False),
+    "wp": ("weapon damage", True),
+    "firerate": ("fire rate", True),
+    "ammo": ("ammo", True),
+    "cd": ("cooldown reduction", True),
+}
+
+TEMP_BUFF_LABELS = {
+    "gun": "weapon",
+    "casting": "spirit",
+    "survival": "vitality",
+    "movement": "movement",
+}
+
+SINNER_JACKPOT_ACCOLADE = 14
+
+
+def _gained_cell(total: float | None, *, percent: bool) -> str:
+    """Format the permanent stat a buff family added up to."""
+    if total is None:
+        return "?"
+
+    if total == 0:
+        return "-"
+
+    return f"+{total:g}%" if percent else f"+{total:g}"
+
+
+def buffs_report(row: dict[str, Any], args: argparse.Namespace) -> None:
+    """Print the buffs one player ended the match with.
+
+    - permanent buffs per family and level, valued against the committed statue
+      history era live at match time, so old matches use the values their patch granted
+    - the temporary bridge buffs the player claimed
+    - a sources breakdown from the pickup counters, sinner jackpots, and mid boss kills
+    """
+    if not queries.table_exists("buffs", args.parquet):
+        print("No buffs table yet, run `deadlock sync --full`")
+        return
+
+    df = (
+        queries.scan("buffs", args.parquet)
+        .filter(
+            pl.col("match_id") == row["match_id"],
+            pl.col("account_id") == row["account_id"],
+        )
+        .select("type", "buff", "level", "count", "permanent")
+        .collect()
+    )
+
+    if df.is_empty():
+        print(f"No buffs for {row['hero']} in match {row['match_id']}")
+        return
+
+    catalog = statues.statue_map_asof(row["start_time"])
+    counts: dict[str, dict[int, int]] = {}
+    gained: dict[str, float] = {}
+    unknown: set[str] = set()
+
+    for r in df.filter(pl.col("permanent")).to_dicts():
+        buff = r["buff"] or r["type"]
+        counts.setdefault(buff, {})[r["level"] or 0] = r["count"]
+        entry = catalog.get(r["type"])
+
+        if entry is not None and entry.value is not None:
+            gained[buff] = gained.get(buff, 0) + r["count"] * entry.value
+        elif r["count"]:
+            unknown.add(buff)
+
+    labels = {**BUFF_LABELS, **{b: (b, False) for b in counts if b not in BUFF_LABELS}}
+    width = max(len(label) for label, _ in labels.values()) + 2
+
+    print("\n  Permanent buffs")
+    print(f"  {'Buff':<{width}} {'lv1':>5} {'lv2':>5} {'lv3':>5} {'Total':>6} {'Gained':>10}")
+
+    for buff, (label, percent) in labels.items():
+        levels = counts.get(buff, {})
+        total = sum(levels.values())
+        cell = _gained_cell(None if buff in unknown else gained.get(buff, 0), percent=percent)
+
+        print(
+            f"  {label:<{width}} {levels.get(1, 0):>5} {levels.get(2, 0):>5} "
+            f"{levels.get(3, 0):>5} {total:>6} {cell:>10}"
+        )
+
+    temp = df.filter(~pl.col("permanent"))
+
+    if not temp.is_empty():
+        print("\n  Bridge buffs")
+
+        for r in temp.to_dicts():
+            label = TEMP_BUFF_LABELS.get(r["buff"], r["buff"] or r["type"])
+            print(f"  {label:<{width}} {r['count']:>5}")
+
+    _buff_sources(row, args, sum(sum(lv.values()) for lv in counts.values()), width)
+
+    print("\n  Gained uses the per statue values from the patch the match was played on.")
+
+
+def _buff_sources(row: dict[str, Any], args: argparse.Namespace, total: int, width: int) -> None:
+    """Print where the permanent buffs came from, when the counters are available."""
+    if not queries.table_exists("custom_stats", args.parquet):
+        return
+
+    stats = (
+        queries.scan("custom_stats", args.parquet)
+        .filter(
+            pl.col("match_id") == row["match_id"],
+            pl.col("account_id") == row["account_id"],
+            pl.col("stat").is_in(["PowerUp Permanent", "PowerUp Gold"]),
+        )
+        .select("stat", "value")
+        .collect()
+    )
+    named = dict(stats.iter_rows())
+
+    if "PowerUp Permanent" not in named:
+        return
+
+    collected = named["PowerUp Permanent"]
+    broken = named.get("PowerUp Gold", 0)
+
+    jackpots = 0
+    if queries.table_exists("accolades", args.parquet):
+        jackpots = (
+            queries.scan("accolades", args.parquet)
+            .filter(
+                pl.col("match_id") == row["match_id"],
+                pl.col("account_id") == row["account_id"],
+                pl.col("accolade_id") == SINNER_JACKPOT_ACCOLADE,
+            )
+            .select(pl.col("value").sum())
+            .collect()
+            .item()
+            or 0
+        )
+
+    bosses = (
+        queries.scan("mid_boss", args.parquet)
+        .filter(
+            pl.col("match_id") == row["match_id"],
+            pl.col("team_killed") == row["team"],
+        )
+        .select(pl.len())
+        .collect()
+        .item()
+    )
+
+    other = max(0, total - collected - 4 * jackpots - 2 * bosses)
+
+    print("\n  Sources")
+    print(f"  {'statues collected':<{width}} {collected:>5}   {broken} broken")
+
+    if jackpots:
+        print(f"  {'sinner jackpots':<{width}} {jackpots:>5}   +{4 * jackpots}")
+
+    if bosses:
+        print(f"  {'mid boss kills':<{width}} {bosses:>5}   +{2 * bosses} to the whole team")
+
+    if other:
+        print(
+            f"  {'other sources':<{width}} {'':>5}   +{other} (urn runs and light melee jackpots)"
+        )
+
+
+def stacks_report(row: dict[str, Any], args: argparse.Namespace) -> None:
+    """Print the stack counts for every player in the match.
+
+    Counts only exist for abilities and items that track stacks
+    (Sticky Bomb, Trophy Collector, etc), so most players show nothing.
+    """
+    if not queries.table_exists("stacks", args.parquet):
+        print("No stacks table yet, run `deadlock sync --full`")
+        return
+
+    in_match = (
+        queries.scan("players", args.parquet)
+        .filter(pl.col("match_id") == row["match_id"])
+        .select("account_id", "hero", "team")
+    )
+    df = (
+        queries.scan("stacks", args.parquet)
+        .filter(pl.col("match_id") == row["match_id"])
+        .join(in_match, on="account_id")
+        .with_columns(
+            side=pl.when(pl.col("team") == row["team"])
+            .then(pl.lit("ally"))
+            .otherwise(pl.lit("enemy"))
+        )
+        .sort(
+            pl.col("team") != row["team"],
+            pl.col("account_id") != row["account_id"],
+            pl.col("value"),
+            descending=[False, False, True],
+        )
+        .collect()
+    )
+
+    if df.is_empty():
+        print(f"No stack counters in match {row['match_id']}")
+        return
+
+    rows = df.to_dicts()
+    names = [r["name"] or f"id {r['ability_id']}" for r in rows]
+    heroes_shown = [
+        f"{r['hero'] or '?'} *" if r["account_id"] == row["account_id"] else r["hero"] or "?"
+        for r in rows
+    ]
+    width = max(max(len(s) for s in names), 5) + 2
+    hero_width = max(max(len(h) for h in heroes_shown), 4) + 2
+
+    print("\n  Stacks")
+    print(f"  {'Hero':<{hero_width}} {'Side':<6} {'Stack':<{width}} {'Final':>7}")
+
+    for name, hero, r in zip(names, heroes_shown, rows, strict=True):
+        print(f"  {hero:<{hero_width}} {r['side']:<6} {name:<{width}} {r['value']:>7,}")
+
+    print("\n  Counts only exist for abilities and items that track stacks.")
+
+
+DIST_COLUMNS = (
+    ("Outgoing Bullet Dist", "Gun dealt"),
+    ("Outgoing Ability Dist", "Ability dealt"),
+    ("Incoming Bullet Dist", "Gun taken"),
+    ("Incoming Ability Dist", "Ability taken"),
+)
+
+DIST_SPANS = (
+    ("10", "0-10m"),
+    ("20", "10-20m"),
+    ("30", "20-30m"),
+    ("40", "30-40m"),
+    ("50", "40-50m"),
+    ("75", "50-75m"),
+    ("100", "75-100m"),
+    ("Infinite", "100m+"),
+)
+
+FALLOFF_ORDER = ("No Falloff", "Partial Falloff", "Max Falloff")
+FALLOFF_LABELS = ("none", "partial", "max")
+PARRY_ITEMS = (1414025773, 4204808176)
+POWERUP_STATS = frozenset({"PowerUp Gold", "PowerUp Permanent", "PowerUp Temp"})
+COMEBACK_LABELS = (
+    ("Comeback Gold", "Comeback souls"),
+    ("Comeback Gold Koth", "Unstable Rift comeback"),
+    ("Comeback Gold Urn", "Soul Urn comeback"),
+)
+UPTIME_RE = re.compile(r"(?P<ability>.+?)TimeAt_(?P<stacks>\d+)_stacks")
+
+
+def _uncamel(name: str) -> str:
+    """Split a CamelCase wire name into lowercase words."""
+    return re.sub(r"(?<=[a-z0-9])(?=[A-Z])", " ", name).lower()
+
+
+def _take_group(stats: dict[tuple[str | None, str], int], group: str) -> dict[str, int]:
+    """Pop every stat of one group out of the pool."""
+    taken = {stat: value for (g, stat), value in stats.items() if g == group}
+
+    for stat in taken:
+        del stats[group, stat]
+
+    return taken
+
+
+def _count_cell(values: dict[str, int], key: str, base: str) -> str:
+    """Format a count with its share of a base count."""
+    value = values.get(key, 0)
+    whole = values.get(base, 0)
+
+    if not whole:
+        return f"{value:,}"
+
+    return f"{value:,} ({round(100 * value / whole)}%)"
+
+
+def _falloff_line(values: dict[str, int]) -> str | None:
+    """Format the bullet falloff split as percents."""
+    total = sum(values.get(k, 0) for k in FALLOFF_ORDER)
+
+    if not total:
+        return None
+
+    parts = (
+        f"{round(100 * values.get(key, 0) / total)}% {label}"
+        for key, label in zip(FALLOFF_ORDER, FALLOFF_LABELS, strict=True)
+    )
+
+    return ", ".join(parts)
+
+
+def _all_target_accuracy(row: dict[str, Any], args: argparse.Namespace) -> int | None:
+    """Read the familiar accuracy over every target from the final snapshot."""
+    df = (
+        queries.scan("stats", args.parquet)
+        .filter(
+            pl.col("match_id") == row["match_id"],
+            pl.col("account_id") == row["account_id"],
+        )
+        .select(pl.col("shots_hit").max(), pl.col("shots_missed").max())
+        .collect()
+    )
+
+    if df.is_empty():
+        return None
+
+    hit, missed = df.row(0)
+
+    if not hit and not missed:
+        return None
+
+    return round(100 * hit / (hit + missed))
+
+
+def _aim_section(
+    row: dict[str, Any], args: argparse.Namespace, stats: dict[tuple[str | None, str], int]
+) -> None:
+    """Print the lobby ranked by aim against heroes, then the counters only the player has."""
+    you = _take_group(stats, "Enemy Hero Accuracy")
+    them = _take_group(stats, "Enemy Hero Accuracy - Incoming")
+    rates = _take_group(stats, "Bullet Stats")
+    _take_group(stats, "Bullet Stats - Incoming")
+
+    _lobby_aim_table(row, args)
+
+    lines = []
+
+    if them.get("Shots"):
+        hits = _count_cell(them, "Hits", "Shots")
+        headshots = _count_cell(them, "Headshots", "Hits")
+        lines.append(
+            f"Enemy team at you: {them['Shots']:,} shots, {hits} hits, {headshots} headshots"
+        )
+
+    if you.get("LuckyShots"):
+        lines.append(f"Lucky shots: {you['LuckyShots']:,}")
+
+    if you.get("Immobile Hits"):
+        lines.append(f"Hits on immobilized: {you['Immobile Hits']:,}")
+
+    if you.get("Immobile Headshots"):
+        lines.append(f"Headshots on immobilized: {you['Immobile Headshots']:,}")
+
+    lines.extend(
+        f"{_uncamel(key).capitalize().replace('hit rate', 'hit rate:')} {rates[key]}%"
+        for key in ("StunHitRate", "StunHeadshotHitRate")
+        if rates.get(key)
+    )
+
+    familiar = _all_target_accuracy(row, args)
+
+    if familiar is not None:
+        lines.append(f"Accuracy with troopers and everything else included: {familiar}%")
+
+    if lines:
+        print()
+
+    for text in lines:
+        print(f"  {text}")
+
+
+def _range_section(stats: dict[tuple[str | None, str], int]) -> None:
+    """Print damage split by the range it was dealt or taken at."""
+    columns = {label: _take_group(stats, group) for group, label in DIST_COLUMNS}
+    totals = {label: sum(values.values()) for label, values in columns.items()}
+
+    if not any(totals.values()):
+        return
+
+    print("\n  Damage by range")
+    print(f"  {'':<9}" + "".join(f"{label:>16}" for _, label in DIST_COLUMNS))
+
+    for bucket, span in DIST_SPANS:
+        values = [columns[label].get(bucket, 0) for _, label in DIST_COLUMNS]
+
+        if not any(values):
+            continue
+
+        cells = []
+
+        for (_, label), value in zip(DIST_COLUMNS, values, strict=True):
+            share = round(100 * value / totals[label]) if totals[label] else 0
+            cells.append(f"{value:,} ({share}%)" if value else "-")
+
+        print(f"  {span:<9}" + "".join(f"{cell:>16}" for cell in cells))
+
+    yours = _falloff_line(_take_group(stats, "Enemy Hero Falloff"))
+    theirs = _falloff_line(_take_group(stats, "Enemy Hero Falloff - Incoming"))
+
+    if yours:
+        print(f"  Falloff on your hits: {yours}")
+
+    if theirs:
+        print(f"  Falloff on hits taken: {theirs}")
+
+
+def _melee_taken(row: dict[str, Any], args: argparse.Namespace) -> tuple[int, str, int]:
+    """Sum light and heavy melee damage this player took, with the top attacker."""
+    attackers = queries.scan("players", args.parquet).select(
+        "match_id",
+        pl.col("account_id").alias("dealer_account_id"),
+        pl.col("hero").alias("attacker"),
+    )
+    df = (
+        queries.scan("damage", args.parquet)
+        .filter(
+            pl.col("match_id") == row["match_id"],
+            pl.col("target_account_id") == row["account_id"],
+            pl.col("stat") == "damage",
+            pl.col("category") != "total",
+            pl.col("source_class").str.contains("ability_melee_"),
+        )
+        .join(attackers, on=["match_id", "dealer_account_id"], how="left")
+        .group_by("attacker")
+        .agg(pl.col("damage").sum())
+        .sort("damage", descending=True)
+        .collect()
+    )
+
+    if df.is_empty():
+        return (0, "", 0)
+
+    top = df.row(0, named=True)
+
+    return (int(df["damage"].sum()), top["attacker"] or "?", int(top["damage"]))
+
+
+def _parry_item_buys(row: dict[str, Any], args: argparse.Namespace) -> list[tuple[str, int]]:
+    """List the parry item purchases with their buy times."""
+    df = (
+        queries.scan("item_events", args.parquet)
+        .filter(
+            pl.col("match_id") == row["match_id"],
+            pl.col("account_id") == row["account_id"],
+            pl.col("item_id").is_in(PARRY_ITEMS),
+        )
+        .sort("game_time_s")
+        .select("item", "game_time_s")
+        .collect()
+    )
+
+    return df.rows()
+
+
+def _parry_section(
+    row: dict[str, Any], args: argparse.Namespace, stats: dict[tuple[str | None, str], int]
+) -> None:
+    """Print parries with the melee pressure and parry items for context."""
+    success = stats.pop((None, "Parry Success"), 0)
+    missed = stats.pop((None, "Parry Miss"), 0)
+    total, attacker, top_damage = _melee_taken(row, args)
+    buys = _parry_item_buys(row, args)
+
+    if not (success or missed or total or buys):
+        return
+
+    print("\n  Parries")
+    print(f"  Successful {success}, missed {missed}")
+
+    if total:
+        print(
+            f"  Melee damage taken (light/heavy melee): {total:,}, "
+            f"most from {attacker} ({top_damage:,})"
+        )
+
+    for item, game_time_s in buys:
+        print(f"  {item} bought at {_game_time(game_time_s)}")
+
+
+def _comeback_section(row: dict[str, Any], stats: dict[tuple[str | None, str], int]) -> None:
+    """Print comeback souls and the average unspent balances."""
+    lines = []
+
+    for stat, label in COMEBACK_LABELS:
+        value = stats.pop((None, stat), 0)
+
+        if value:
+            lines.append(f"  {label}: {value:,}")
+
+    minutes = row["duration_s"] / 60
+    gold_minutes = stats.pop((None, "Unspent Gold Minutes"), 0)
+    ap_minutes = stats.pop((None, "Unspent AP Minutes"), 0)
+
+    if gold_minutes:
+        lines.append(f"  Souls held unspent on average: {round(gold_minutes / minutes):,}")
+
+    if ap_minutes:
+        lines.append(f"  Ability points held unspent on average: {ap_minutes / minutes:.1f}")
+
+    if not lines:
+        return
+
+    print("\n  Souls")
+
+    for line in lines:
+        print(line)
+
+
+def _uptime_tables(values: dict[str, int]) -> None:
+    """Print a stacks/time/share table for each TimeAt counter family."""
+    tables: dict[str, dict[int, int]] = {}
+
+    for stat in list(values):
+        m = UPTIME_RE.fullmatch(stat)
+
+        if m:
+            tables.setdefault(m["ability"], {})[int(m["stacks"])] = values.pop(stat)
+
+    for ability, by_stacks in tables.items():
+        total = sum(by_stacks.values())
+
+        print(f"  {_uncamel(ability).title()} uptime")
+        print(f"  {'Stacks':<8}{'Time':>8}{'Share':>7}")
+
+        for stacks in sorted(by_stacks):
+            seconds = by_stacks[stacks]
+            share = round(100 * seconds / total) if total else 0
+            print(f"  {stacks:<8}{_game_time(seconds):>8}{share:>6}%")
+
+
+def _leftover_sections(stats: dict[tuple[str | None, str], int]) -> None:
+    """Print whatever no curated section consumed, hero counters included."""
+    groups: dict[str | None, dict[str, int]] = {}
+
+    for (group, stat), value in stats.items():
+        if value:
+            groups.setdefault(group, {})[stat] = value
+
+    bare = groups.pop(None, {})
+
+    for group, values in groups.items():
+        print(f"\n  {group}")
+        _uptime_tables(values)
+
+        for stat, value in values.items():
+            print(f"  {_uncamel(stat).capitalize()}: {value:,}")
+
+    if bare:
+        print("\n  Other")
+
+        for stat, value in bare.items():
+            print(f"  {stat}: {value:,}")
+
+
+def combat_report(row: dict[str, Any], args: argparse.Namespace) -> None:
+    """Print the fight stats the game tracks but never shows for one player."""
+    if not queries.table_exists("custom_stats", args.parquet):
+        print("No custom_stats table yet, run `deadlock sync --full`")
+        return
+
+    df = (
+        queries.custom_stats(
+            matches=[row["match_id"]],
+            accounts=[row["account_id"]],
+            parquet_dir=args.parquet,
+        )
+        .select("group", "stat", "value")
+        .collect()
+    )
+
+    if df.is_empty():
+        print(f"No combat stats for {row['hero']} in match {row['match_id']}")
+        return
+
+    stats = {(r["group"], r["stat"]): r["value"] for r in df.iter_rows(named=True)}
+
+    for key in list(stats):
+        if key[1] in POWERUP_STATS:
+            del stats[key]
+
+    _aim_section(row, args, stats)
+    _range_section(stats)
+    _parry_section(row, args, stats)
+    _comeback_section(row, stats)
+    _leftover_sections(stats)
+
+
+def _lobby_aim_table(row: dict[str, Any], args: argparse.Namespace) -> None:
+    """Print every player in the match ranked by aim against heroes."""
+    lobby = (
+        queries.custom_stats(
+            group="Enemy Hero Accuracy",
+            matches=[row["match_id"]],
+            parquet_dir=args.parquet,
+        )
+        .select("match_id", "account_id", "hero", "stat", "value")
+        .collect()
+        .pivot(on="stat", index=["match_id", "account_id", "hero"], values="value")
+        .fill_null(0)
+    )
+
+    if lobby.is_empty():
+        return
+
+    teams = queries.scan("players", args.parquet).select("match_id", "account_id", "team")
+    gun = (
+        queries.scan("damage", args.parquet)
+        .filter(
+            pl.col("match_id") == row["match_id"],
+            pl.col("stat") == "damage",
+            pl.col("category") == "gun",
+            pl.col("target_account_id").is_not_null(),
+        )
+        .group_by(pl.col("dealer_account_id").alias("account_id"))
+        .agg(
+            pl.col("damage")
+            .filter(~pl.col("source_class").str.ends_with("_crit"))
+            .sum()
+            .alias("gun_damage"),
+            pl.col("damage")
+            .filter(pl.col("source_class").str.ends_with("_crit"))
+            .sum()
+            .alias("crit_damage"),
+        )
+    )
+
+    df = (
+        lobby.lazy()
+        .join(teams, on=["match_id", "account_id"])
+        .join(gun, on="account_id", how="left")
+        .with_columns(
+            hit_rate=(100 * pl.col("Hits") / pl.col("Shots").clip(1)),
+            headshot_rate=(100 * pl.col("Headshots") / pl.col("Hits").clip(1)),
+            side=pl.when(pl.col("team") == row["team"])
+            .then(pl.lit("ally"))
+            .otherwise(pl.lit("enemy")),
+        )
+        .sort("headshot_rate", descending=True)
+        .collect()
+    )
+
+    rows = df.to_dicts()
+    heroes_shown = [
+        f"{r['hero'] or '?'} *" if r["account_id"] == row["account_id"] else r["hero"] or "?"
+        for r in rows
+    ]
+    width = max(max(len(h) for h in heroes_shown), 4) + 2
+
+    print("\n  Aim vs heroes")
+    print(
+        f"  {'Hero':<{width}} {'Side':<6} {'Shots':>7} {'Hit rate':>9} {'HS rate':>8}"
+        f" {'Gun damage':>11} {'Headshot damage':>16}"
+    )
+
+    for hero_shown, r in zip(heroes_shown, rows, strict=True):
+        gun_cell = f"{r['gun_damage']:,}" if r["gun_damage"] else "-"
+        crit_cell = f"{r['crit_damage']:,}" if r["crit_damage"] else "-"
+
+        print(
+            f"  {hero_shown:<{width}} {r['side']:<6} {r['Shots']:>7,} {r['hit_rate']:>8.1f}%"
+            f" {r['headshot_rate']:>7.1f}% {gun_cell:>11} {crit_cell:>16}"
+        )
+
+    print(
+        "\n  Rates count heroes only, the postgame screen counts every target."
+        "\n  Gun and headshot damage are the two bullet series from the damage graph."
+    )
+
+
 def souls_report(row: dict[str, Any], args: argparse.Namespace) -> None:
     """Print the souls by source per interval for one player, then the farm grouping.
 
@@ -890,6 +1588,7 @@ def winrate_report(args: argparse.Namespace, config: str | Path | None = None) -
 
     if df.is_empty():
         print("No games found for the configured accounts")
+        _unscored_line(args, tz)
 
         if args.hero is not None:
             _hero_baseline_line(args.hero, args.min_rating, args.since)
@@ -905,6 +1604,8 @@ def winrate_report(args: argparse.Namespace, config: str | Path | None = None) -
 
     for r in df.iter_rows(named=True):
         day = f"{r['day']:%Y-%m}" if args.by == "month" else r["day"]
+        left = str(r["abandons"]) if r["abandons"] else ""
+        lobby = r["lobby"] or ""
 
         print(
             f"  {day!s:<12}{r['games']:>7}{r['wins']:>5}{r['losses']:>5}"
@@ -940,8 +1641,75 @@ def winrate_report(args: argparse.Namespace, config: str | Path | None = None) -
         hero=args.hero,
     )
 
+    if not abandons.is_empty():
+        _abandon_lines(abandons, games, wins)
+
+    _unscored_line(args, tz)
+
     if args.hero is not None:
         _hero_baseline_line(args.hero, args.min_rating, args.since)
+
+
+def _abandon_lines(abandons: pl.DataFrame, games: int, wins: int) -> None:
+    """Print the abandon breakdown under the overall line.
+
+    Abandoned games stay in the table above since they are still scored as
+    wins and losses, these lines just separate them out.
+    """
+    sides = []
+
+    for col, label in (("you", "you left"), ("ally", "an ally left"), ("enemy", "an enemy left")):
+        part = abandons.filter(pl.col(col))
+
+        if part.is_empty():
+            continue
+
+        won = int(part.get_column("won").cast(pl.Int32).sum())
+        sides.append(f"{label} {len(part)} ({won}-{len(part) - won})")
+
+    total = len(abandons)
+    plural = "s" if total != 1 else ""
+    print(f"\nAbandons: {total} game{plural} — {', '.join(sides)}.")
+
+    returned = int(abandons.get_column("returned").cast(pl.Int32).sum())
+
+    if returned:
+        plural = "s" if returned != 1 else ""
+        print(f"  {returned} leaver{plural} reconnected and finished.")
+
+    clean_games = games - total
+    clean_wins = wins - int(abandons.get_column("won").cast(pl.Int32).sum())
+
+    if clean_games > 0:
+        clean_rate = clean_wins / clean_games * 100
+        print(
+            f"  Without them: {clean_games} games, "
+            f"{clean_wins}-{clean_games - clean_wins}, {clean_rate:.1f}% win rate."
+        )
+
+
+def _unscored_line(args: argparse.Namespace, tz: str) -> None:
+    """Print the unscored games the table left out, nothing when there are none."""
+    unscored = queries.unscored_record(
+        args.parquet,
+        accounts=args.account,
+        tz=tz,
+        days=args.days,
+        since=args.since,
+        hero=args.hero,
+    )
+
+    if unscored.is_empty():
+        return
+
+    total = len(unscored)
+    won = int(unscored.get_column("won").cast(pl.Int32).sum())
+    plural = "s" if total != 1 else ""
+
+    print(
+        f"\nNot scored: {total} game{plural} left out of the table (safe to leave), "
+        f"{won}-{total - won} in match history."
+    )
 
 
 def _hero_baseline_line(hero: str, rating: str, since: str | None) -> None:
@@ -1073,7 +1841,6 @@ def deaths_report(args: argparse.Namespace, config: str | Path | None = None) ->
         if has_context:
             line += (
                 f", {_mean(w, 'solo', 100):.0f}% solo, "
-        _unscored_line(args, tz)
                 f"{_mean(w, 'outnumbered', 100):.0f}% outnumbered"
             )
         print(line, end="")
@@ -1088,8 +1855,6 @@ def deaths_report(args: argparse.Namespace, config: str | Path | None = None) ->
                 killer_account_id=pl.col("account_id"),
                 killer=pl.col("hero"),
             )
-        left = str(r["abandons"]) if r["abandons"] else ""
-        lobby = r["lobby"] or ""
             .collect(),
             on=["match_id", "killer_account_id"],
         )
@@ -1108,77 +1873,10 @@ def deaths_report(args: argparse.Namespace, config: str | Path | None = None) ->
             '\nAlly/enemy context needs the movement table: remove "movement" from '
             '"exclude" in config.toml and run `deadlock sync`'
         )
-    if not abandons.is_empty():
-        _abandon_lines(abandons, games, wins)
-
-    _unscored_line(args, tz)
-
 
 
 MOVEMENT_METRICS = [
     ("slide %", "slide_percent"),
-def _abandon_lines(abandons: pl.DataFrame, games: int, wins: int) -> None:
-    """Print the abandon breakdown under the overall line.
-
-    Abandoned games stay in the table above since they are still scored as
-    wins and losses, these lines just separate them out.
-    """
-    sides = []
-
-    for col, label in (("you", "you left"), ("ally", "an ally left"), ("enemy", "an enemy left")):
-        part = abandons.filter(pl.col(col))
-
-        if part.is_empty():
-            continue
-
-        won = int(part.get_column("won").cast(pl.Int32).sum())
-        sides.append(f"{label} {len(part)} ({won}-{len(part) - won})")
-
-    total = len(abandons)
-    plural = "s" if total != 1 else ""
-    print(f"\nAbandons: {total} game{plural} — {', '.join(sides)}.")
-
-    returned = int(abandons.get_column("returned").cast(pl.Int32).sum())
-
-    if returned:
-        plural = "s" if returned != 1 else ""
-        print(f"  {returned} leaver{plural} reconnected and finished.")
-
-    clean_games = games - total
-    clean_wins = wins - int(abandons.get_column("won").cast(pl.Int32).sum())
-
-    if clean_games > 0:
-        clean_rate = clean_wins / clean_games * 100
-        print(
-            f"  Without them: {clean_games} games, "
-            f"{clean_wins}-{clean_games - clean_wins}, {clean_rate:.1f}% win rate."
-        )
-
-
-def _unscored_line(args: argparse.Namespace, tz: str) -> None:
-    """Print the unscored games the table left out, nothing when there are none."""
-    unscored = queries.unscored_record(
-        args.parquet,
-        accounts=args.account,
-        tz=tz,
-        days=args.days,
-        since=args.since,
-        hero=args.hero,
-    )
-
-    if unscored.is_empty():
-        return
-
-    total = len(unscored)
-    won = int(unscored.get_column("won").cast(pl.Int32).sum())
-    plural = "s" if total != 1 else ""
-
-    print(
-        f"\nNot scored: {total} game{plural} left out of the table (safe to leave), "
-        f"{won}-{total - won} in match history."
-    )
-
-
     ("ground dashes /min", "dashes_min"),
     ("air dashes /min", "air_dashes_min"),
     ("in air %", "in_air_percent"),

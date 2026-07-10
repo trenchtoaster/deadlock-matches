@@ -31,8 +31,13 @@ def write(path: Path, states: list[dict[str, Any]]) -> None:
 
 @functools.cache
 def _table(path: Path) -> pl.DataFrame | None:
-    """Return the committed history table, or None when no file ships."""
-    return pl.read_parquet(path) if Path(path).is_file() else None
+    """Return the committed history table, or None when no file ships or it has no rows."""
+    if not Path(path).is_file():
+        return None
+
+    table = pl.read_parquet(path)
+
+    return None if table.is_empty() else table
 
 
 def has_history(path: Path) -> bool:

@@ -14,7 +14,7 @@ def test_hero_map_loads_real_file():
     assert all(isinstance(k, int) for k in m)
 
 
-def test_hero_name_known_and_unknown():
+def test_hero_name():
     assert heroes.hero_name(52) == "Mirage"
     assert heroes.hero_name(999999) == "id999999"
 
@@ -197,7 +197,7 @@ def test_melee_damage_without_stats():
     assert h.melee_damage(10) == (0.0, 0.0)
 
 
-def test_boon_stats_and_stats_at():
+def test_stats_at_matches_boon_stats():
     h = heroes.Hero.from_record(BOON_REC)
     at = h.stats_at(900)
 

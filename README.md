@@ -179,19 +179,19 @@ uv run deadlock match
 Match 12345678: Mirage, win, 2026-07-08 07:16, 36:03
 Lobby average: The Hidden King Oracle 1, The Archmother Archon 6
 
-  Team             Hero                    K/D/A        Souls   Damage Obj damage  Healing Prevented Last hits Denies
-  The Hidden King  Mo & Krill     2 (Key)  10/3/24     57,278   42,261      6,775   33,086       662       248      3
-  The Hidden King  Wraith                  13/4/14     54,467   34,005     31,478   10,378         0       218      9
-  The Hidden King  Drifter        1 (MVP)  12/2/26     48,584   44,218     11,763   17,145         0       162      2
-  The Hidden King  Mirage *                14/3/17     47,025   40,145      2,154   13,132     2,128       162      0
-  The Hidden King  Lash                    10/6/26     44,284   35,414      6,863    6,953         0       178      3
-  The Hidden King  Seven                   5/10/8      43,115   21,329      6,736    7,082         0       169      1
-  The Archmother   Vindicta       3 (Key)  15/8/7      43,969   59,793      2,674    2,312       252       144      2
-  The Archmother   Ivy                     2/9/7       41,936   22,826        433    7,687         0       213      0
-  The Archmother   Pocket                  1/9/6       41,040   37,468      4,432       28         0       186      2
-  The Archmother   Shiv                    4/12/8      36,762   28,261         30    8,004     1,451       123      0
-  The Archmother   Warden                  3/10/6      36,420   27,756      3,005    1,985         0       192     25
-  The Archmother   Bebop                   3/16/12     34,944   29,645      2,273   10,218         0       112      2
+  Team             Hero                    K/D/A        Souls   Damage Obj damage  Healing Prevented Last hits Denies  Statues
+  The Hidden King  Mo & Krill     2 (Key)  10/3/24     57,278   42,261      6,775   33,086       662       248      3       34
+  The Hidden King  Wraith                  13/4/14     54,467   34,005     31,478   10,378         0       218      9       28
+  The Hidden King  Drifter        1 (MVP)  12/2/26     48,584   44,218     11,763   17,145         0       162      2       41
+  The Hidden King  Mirage *                14/3/17     47,025   40,145      2,154   13,132     2,128       162      0       22
+  The Hidden King  Lash                    10/6/26     44,284   35,414      6,863    6,953         0       178      3       31
+  The Hidden King  Seven                   5/10/8      43,115   21,329      6,736    7,082         0       169      1       12
+  The Archmother   Vindicta       3 (Key)  15/8/7      43,969   59,793      2,674    2,312       252       144      2       19
+  The Archmother   Ivy                     2/9/7       41,936   22,826        433    7,687         0       213      0       25
+  The Archmother   Pocket                  1/9/6       41,040   37,468      4,432       28         0       186      2       15
+  The Archmother   Shiv                    4/12/8      36,762   28,261         30    8,004     1,451       123      0        9
+  The Archmother   Warden                  3/10/6      36,420   27,756      3,005    1,985         0       192     25       24
+  The Archmother   Bebop                   3/16/12     34,944   29,645      2,273   10,218         0       112      2        7
 
   Time        Souls   /min   K/D/A   Damage   Taken Obj damage  Healing  Prevented Last hits  Troopers Neutrals  Denies
   0-5m        1,764    353   0/0/0      877     636          0      244          0         8         8        0       0
@@ -375,6 +375,62 @@ Your team: The Hidden King
   Stars counts the reward thresholds cleared, up to three.
 ```
 
+- `--statues`: the permanent buff statues you collected, counted per buff and level, with the stats they added up to. The statues get stronger as the game goes on, and the values come from the patch the match was played on. The scoreboard's Statues column is the same data as a total per player
+
+```
+  Statues
+  Buff                   lv1   lv2   lv3  Total     Gained
+  max health               2     8     0     10       +230
+  spirit power             2     5     0      7        +19
+  weapon damage            2     4     0      6       +22%
+  fire rate                2     3     0      5        +9%
+  ammo                     1     5     0      6       +28%
+  cooldown reduction       2     5     0      7     +4.75%
+
+  Gained uses the per statue values from the patch the match was played on.
+```
+
+- `--stacks`: the stack counts for every player in the match, from the abilities and items that track stacks (Sticky Bomb stacks, Trophy Collector, etc)
+
+```
+  Stacks
+  Hero       Side   Stack                Final
+  Bebop      enemy  Sticky Bomb            131
+  Bebop      enemy  Trophy Collector        16
+  Sinclair   ally   Trophy Collector        14
+
+  Counts only exist for abilities and items that track stacks.
+```
+
+- `--combat`: the fight stats the game tracks but never shows. Accuracy against heroes in both directions (the enemy column is their whole team combined), damage split by the range it was dealt and taken at, parries with your melee pressure and parry item buys, comeback souls with the Unstable Rift called out, and how many souls sat unspent in your pocket. Heroes with their own counters (Celeste stack uptime, Apollo damage prevented) get a section when you play them
+
+```
+  Gunfight vs heroes
+                                     You   Enemy team at you
+  Shots                            1,171               1,377
+  Hits                         364 (31%)           600 (44%)
+  Headshots                     63 (17%)            69 (12%)
+  Lucky shots                          2                   -
+
+  Damage by range
+                  Gun dealt   Ability dealt       Gun taken   Ability taken
+  0-10m         7,234 (38%)     2,953 (35%)     1,624 (28%)     8,881 (39%)
+  10-20m        8,789 (46%)     3,695 (44%)     2,454 (42%)     5,812 (25%)
+  20-30m        2,134 (11%)     1,387 (16%)     1,193 (21%)     3,816 (17%)
+  Falloff on your hits: 37% none, 59% partial, 5% max
+  Falloff on hits taken: 17% none, 76% partial, 7% max
+
+  Parries
+  Successful 9, missed 4
+  Melee damage taken (light/heavy melee): 2,840, most from Abrams (2,445)
+  Rebuttal bought at 21:35
+
+  Souls
+  Comeback souls: 40
+  Souls held unspent on average: 2,585
+  Ability points held unspent on average: 1.3
+```
+
 - `--deaths`: each death with who killed you, how long the fight lasted, how far away the killer stood, and your respawn timer. A death to troopers or an objective shows `not a player`
 
 ```
@@ -407,6 +463,9 @@ uv run deadlock winrate
 - wins and losses per day, with your MVP and Key Player awards
 - `--by week` or `--by month` rolls the table into weekly or monthly rows, weeks start on Monday
 - `--hero Mirage` filters to one hero and also adds the public win rate from `deadlock-api.com` under the table, scoped by `--min-rating` (Eternus+ by default)
+- Lobby is the average lobby skill rating of the day, averaged in subrank steps
+- games where someone abandoned stay in the table (they are still wins and losses), a footer separates them: who left with each record, how many leavers reconnected and finished, and your record without them
+- games Valve flagged as not scored are left out of the table and reported under it, match history still shows their result
 
 ```
   Day           Games    W    L   Win rate         Lobby   MVP   Key  Abandons   Net wins   Cumulative net
@@ -439,9 +498,6 @@ uv run deadlock deaths --hero Mirage
 
   Time        Deaths  /game  Killed in   Solo  Outnum  Enemies
   0-10 min        54    1.1       12.3    37%     37%      2.0
-- Lobby is the average lobby skill rating of the day, averaged in subrank steps
-- games where someone abandoned stay in the table (they are still wins and losses), a footer separates them: who left with each record, how many leavers reconnected and finished, and your record without them
-- games Valve flagged as not scored are left out of the table and reported under it, match history still shows their result
   10-20 min       85    1.7       13.8    39%     47%      2.2
   20-30 min       70    1.4       15.4    40%     43%      2.5
   30+ min         53    1.1       14.7    34%     43%      2.6
@@ -620,7 +676,7 @@ Mirage  (hero change history, 25 eras tracked)
     cost_bonuses.vitality.0.bonus      75 -> 84
 ```
 
-The same history feeds the analysis queries, so the ability tuning that was live when the match was played is used instead of just the current values. This data is written into parquet tables (`item_history`, `hero_history`, `ability_history`, and `rank_history`) and `deadlock schema item_history --sample` reads them.
+The same history feeds the analysis queries, so the ability tuning that was live when the match was played is used instead of just the current values. This data is written into parquet tables (`item_history`, `hero_history`, `ability_history`, `rank_history`, and `statue_history`) and `deadlock schema item_history --sample` reads them.
 
 ## Top players and public stats
 
@@ -860,6 +916,9 @@ The tables are stored in `~/.local/share/deadlock-matches/parquet/` (`%LOCALAPPD
 - `stats`: cumulative stat snapshots taken every minute
 - `soul_sources`: souls per income source per snapshot
 - `item_events`: item purchases, with names, prices, and tiers merged in from the cached API data. Prices reflect the patch each match was played on
+- `statues`: the permanent buff statues each player collected, one row per statue type with the buff family and level. `statue_history` holds the per-pickup values by patch
+- `stacks`: the final counters from stacking abilities and items, one row per counter per player, with the class and display name resolved from the id
+- `custom_stats`: the named stat counters the game tracks but never shows, one row per stat per player with the family and name split out (parries, accuracy against heroes, damage by range, comeback souls, per-hero counters)
 - `damage`: damage, healing, and mitigation per source and target, with the names you see in game like Dust Devil or "Promises Kept (crit)" for headshots. The totals from the match screen and the individual source rows have different `category` values, so filter to one or the other
 - `damage_sources`: the same sources over time, cumulative like the in-game damage graph. Summed over targets, split into hero targets and everything else
 - `mid_boss`: one row per midboss kill, with when it died, which team killed it, and which team claimed the Rejuvenator
@@ -896,6 +955,8 @@ Questions like these are a few lines of polars each:
 - `item_buys("Echo Shard")` is your purchases of one item, with the buy order within each match
 - `item_value("Echo Shard")` is damage per minute owned and the percent of hero damage for one item, works on the download tables too
 - `daily_record()` is the frame behind `deadlock winrate`
+- `abandon_record()` is one row per match in the same window where someone abandoned, flagging who left and whether they reconnected
+- `unscored_record()` is the games Valve flagged as not scored, which the winrate table leaves out
 - `my_deaths()` is one row per death in your games, with hero and result joined in
 - `death_context()` adds how many allies and enemies were within 2000 units when you died (needs the movement table)
 - `movement_profile()` is the per-match frame behind `deadlock movement`
@@ -925,8 +986,6 @@ main = 111222333
 since = dt.date(2026, 7, 1)
 
 mine = (
-- `abandon_record()` is one row per match in the same window where someone abandoned, flagging who left and whether they reconnected
-- `unscored_record()` is the games Valve flagged as not scored, which the winrate table leaves out
     queries.my_games(accounts=[main])
     .filter(pl.col("hero") == hero, pl.col("day") >= since)
     .select("match_id", "account_id", "day")

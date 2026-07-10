@@ -200,9 +200,8 @@ def download_builds(
 ) -> dict[str, Any]:
     """Pull n games each for a set of players into one saved snapshot (all items kept).
 
-    players maps player_name -> account_id. Saves {player: {account_id,
-    builds:[...]}} to path so every later analysis reads the same snapshot
-    instead of hitting the API again. path=None skips saving.
+    players maps player_name -> account_id. Writes {player: {account_id,
+    builds: [...]}} as json to path. path=None skips saving.
     """
     data = {}
     for name, aid in players.items():

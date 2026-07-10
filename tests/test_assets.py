@@ -3,6 +3,8 @@ import email.message
 import json
 import urllib.error
 
+import pytest
+
 from deadlock_matches import abilities, assets, heroes, items
 
 HERO_REC = {
@@ -124,6 +126,40 @@ def test_refresh_accolades_keeps_id_stat_and_flavor_name(tmp_path, monkeypatch):
     rec = json.loads(p.read_text())[0]
 
     assert rec == {"id": 1, "class_name": "kills", "name": "Killer Instinct"}
+
+
+STATUE_REC = {
+    "class_name": "hp_permanent_pickup_lv2",
+    "id": 5,
+    "modifier": {
+        "subclass": {
+            "class_name": "modifier_permanent_pickup",
+            "script_values": [{"value_type": "MODIFIER_VALUE_HEALTH_MAX", "value": 20.0}],
+        }
+    },
+}
+
+CRATE_REC = {
+    "class_name": "gun_powerup_pickup",
+    "id": 9,
+    "modifier": {"subclass": {"class_name": "modifier_citadel_powerup_gun"}},
+}
+
+
+def test_refresh_statues_keeps_the_permanent_stat(tmp_path, monkeypatch):
+    monkeypatch.setattr(assets.api, "get_json", lambda path, **kw: [STATUE_REC, CRATE_REC])
+    p = tmp_path / "statues.json"
+
+    assert assets.refresh_statues(p) == 1
+
+    rec = json.loads(p.read_text())[0]
+
+    assert rec == {
+        "id": 5,
+        "class_name": "hp_permanent_pickup_lv2",
+        "stat": "health_max",
+        "value": 20,
+    }
 
 
 def test_refresh_heroes_flattens_stats(tmp_path, monkeypatch):
@@ -645,6 +681,26 @@ def test_build_item_history_skips_a_build_the_api_cannot_serve(tmp_path, monkeyp
     assert late is not None
     assert late.cost == 800
     assert seen[-1] == (3, 3, [2])
+
+
+def test_build_history_refuses_to_write_when_every_build_fails(tmp_path, monkeypatch):
+    monkeypatch.setattr(assets.time, "sleep", lambda *_: None)
+    builds = {1: "2026-01-01T00:00:00", 2: "2026-01-02T00:00:00"}
+    monkeypatch.setattr(
+        assets,
+        "client_version_dates",
+        lambda **kw: builds,
+    )
+
+    def dead(build):
+        raise urllib.error.HTTPError("url", 404, "not found", email.message.Message(), None)
+
+    path = tmp_path / "history.parquet"
+
+    with pytest.raises(RuntimeError, match="refusing to overwrite"):
+        assets.build_asset_history(dead, path)
+
+    assert not path.exists()
 
 
 def test_build_item_history_reports_progress_per_build(tmp_path, monkeypatch):

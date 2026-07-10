@@ -249,3 +249,15 @@ def test_tier_math_runs_for_every_snapshot_record():
             for tier in range(len(a.upgrades) + 1):
                 assert isinstance(a.stat(prop, tier), float)
                 assert isinstance(a.scaling_at(prop, tier), dict)
+
+
+def test_string_token_matches_wire_ids():
+    assert abilities.string_token("citadel_ability_sticky_bomb") == 2521902222
+    assert abilities.string_token("citadel_ability_hornet_snipe") == 775377419
+    assert abilities.string_token("ability_ult_combo") == 1917840730
+
+
+def test_class_by_token_reverses_known_names():
+    assert abilities.class_by_token(2521902222) == "citadel_ability_sticky_bomb"
+    assert abilities.class_by_token(3242902780) == "ability_guided_arrow"
+    assert abilities.class_by_token(1) is None

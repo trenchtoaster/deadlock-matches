@@ -19,6 +19,16 @@ def test_has_history_reflects_the_file(tmp_path):
     assert history.has_history(path)
 
 
+def test_empty_history_file_reads_as_no_history(tmp_path):
+    path = tmp_path / "h.parquet"
+    history.write(path, [])
+
+    assert not history.has_history(path)
+    assert history.eras(path) == []
+    assert history.record_asof(path, 7, dt.datetime(2026, 1, 5)) is None
+    assert history.records_asof(path, dt.datetime(2026, 1, 5)) is None
+
+
 def test_record_asof_picks_the_latest_era_on_or_before(tmp_path):
     path = tmp_path / "h.parquet"
     history.write(path, STATES)
@@ -44,11 +54,14 @@ def test_record_asof_older_than_all_gets_earliest(tmp_path):
     assert earliest["cost"] == 500
 
 
-def test_record_asof_unknown_id_and_missing_file(tmp_path):
+def test_record_asof_unknown_id_returns_none(tmp_path):
     path = tmp_path / "h.parquet"
     history.write(path, STATES)
 
     assert history.record_asof(path, 999, dt.datetime(2026, 3, 1)) is None
+
+
+def test_record_asof_missing_file_returns_none(tmp_path):
     assert history.record_asof(tmp_path / "none.parquet", 7, dt.datetime(2026, 3, 1)) is None
 
 

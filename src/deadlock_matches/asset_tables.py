@@ -12,7 +12,7 @@ from typing import TYPE_CHECKING, Any
 
 import polars as pl
 
-from deadlock_matches import abilities, assets, heroes, history, items, schemas
+from deadlock_matches import abilities, assets, heroes, history, items, schemas, statues
 from deadlock_matches import skill_rating as sr
 
 if TYPE_CHECKING:
@@ -221,6 +221,35 @@ def rank_tables(path: Path | None = None) -> dict[str, pl.DataFrame]:
     return {"rank_history": schemas.conform("rank_history", rows)}
 
 
+def statue_tables(path: Path | None = None) -> dict[str, pl.DataFrame]:
+    """Flatten the committed statue history into the statue table."""
+    path = statues.STATUE_HISTORY_PARQUET if path is None else path
+    rows: list[dict] = []
+
+    for era_from, build, _rid, rec in _era_records(path):
+        buff, level = statues.parse_pickup(rec["class_name"])
+
+        rows.append(
+            {
+                "class_name": rec["class_name"],
+                "buff": buff,
+                "level": level,
+                "stat": rec.get("stat"),
+                "value": rec.get("value"),
+                "era_from": era_from,
+                "client_version": build,
+            }
+        )
+
+    return {"statue_history": schemas.conform("statue_history", rows)}
+
+
 def all_asset_tables() -> dict[str, pl.DataFrame]:
     """Flatten every committed asset history into its tables."""
-    return {**item_tables(), **hero_tables(), **ability_tables(), **rank_tables()}
+    return {
+        **item_tables(),
+        **hero_tables(),
+        **ability_tables(),
+        **rank_tables(),
+        **statue_tables(),
+    }

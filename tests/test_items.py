@@ -102,7 +102,7 @@ def test_item_map_loads_real_file():
     assert all(isinstance(k, int) for k in m)
 
 
-def test_item_name_known_and_unknown():
+def test_item_name():
     assert items.item_name(3005970438) == "Escalating Exposure"
     assert items.item_name(999999) == "id999999"
 

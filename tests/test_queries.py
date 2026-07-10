@@ -18,6 +18,20 @@ ECHO_SHARD = 630839635
 DUST_DEVIL = 1336069669
 
 
+def add_custom_stats(info, entries):
+    for stat_id, (name, _) in enumerate(entries, start=1):
+        reg = info.custom_user_stats.add()
+        reg.name = name
+        reg.id = stat_id
+
+    snap = info.players[0].stats[-1]
+
+    for stat_id, (_, value) in enumerate(entries, start=1):
+        cs = snap.custom_user_stats.add()
+        cs.id = stat_id
+        cs.value = value
+
+
 def build_match(match_id=100, account_id=42, level=None, max_health=None):
     info = pb.CMsgMatchMetaDataContents().match_info
     info.match_id = match_id
@@ -751,6 +765,119 @@ def test_hero_damage_adds_dealer_hero_and_day(pq):
 
     assert df["hero"].to_list() == ["Mirage", "Mirage"]
     assert df["day"].to_list() == [LOCAL_DAY, LOCAL_DAY]
+
+
+def custom_pq(tmp_path):
+    info = build_match()
+    add_custom_stats(
+        info,
+        [
+            ("Parry Success", 4),
+            ("Bullet Stats##HeroHitRate", 24),
+        ],
+    )
+
+    for name, df in export.build_tables([info], exclude=("movement",)).items():
+        df.write_parquet(tmp_path / f"{name}.parquet")
+
+    return tmp_path
+
+
+def test_custom_stats_joins_hero_and_day(tmp_path):
+    pq = custom_pq(tmp_path)
+    df = queries.custom_stats(parquet_dir=pq, tz="America/Chicago").sort("stat").collect()
+
+    assert df["stat"].to_list() == ["HeroHitRate", "Parry Success"]
+    assert df["group"].to_list() == ["Bullet Stats", None]
+    assert df["value"].to_list() == [24, 4]
+    assert df["hero"].to_list() == ["Mirage", "Mirage"]
+    assert df["won"].to_list() == [True, True]
+    assert df["day"].to_list() == [LOCAL_DAY, LOCAL_DAY]
+
+
+def test_custom_stats_final_picks_last_snapshot(tmp_path):
+    info = build_match()
+    add_custom_stats(info, [("Parry Success", 4)])
+    early = info.players[0].stats[0].custom_user_stats.add()
+    early.id = 1
+    early.value = 1
+
+    for name, df in export.build_tables([info], exclude=("movement",)).items():
+        df.write_parquet(tmp_path / f"{name}.parquet")
+
+    final = queries.custom_stats(stat="Parry Success", parquet_dir=tmp_path).collect()
+    raw = (
+        queries.custom_stats(stat="Parry Success", final=False, parquet_dir=tmp_path)
+        .sort("time_stamp_s")
+        .collect()
+    )
+
+    assert final["value"].to_list() == [4]
+    assert raw["time_stamp_s"].to_list() == [180, 600]
+    assert raw["value"].to_list() == [1, 4]
+
+
+def test_aim_rates_percentiles_within_hero(tmp_path):
+    sharp = build_match(match_id=100)
+    add_custom_stats(
+        sharp,
+        [
+            ("Enemy Hero Accuracy##Shots", 1000),
+            ("Enemy Hero Accuracy##Hits", 500),
+            ("Enemy Hero Accuracy##Headshots", 200),
+        ],
+    )
+
+    wild = build_match(match_id=101)
+    add_custom_stats(
+        wild,
+        [
+            ("Enemy Hero Accuracy##Shots", 1000),
+            ("Enemy Hero Accuracy##Hits", 200),
+            ("Enemy Hero Accuracy##Headshots", 20),
+        ],
+    )
+
+    low = build_match(match_id=102)
+    add_custom_stats(
+        low,
+        [
+            ("Enemy Hero Accuracy##Shots", 50),
+            ("Enemy Hero Accuracy##Hits", 50),
+            ("Enemy Hero Accuracy##Headshots", 50),
+        ],
+    )
+
+    for name, df in export.build_tables([sharp, wild, low], exclude=("movement",)).items():
+        df.write_parquet(tmp_path / f"{name}.parquet")
+
+    df = queries.aim_rates(min_games=2, parquet_dir=tmp_path, tz="America/Chicago").sort("match_id")
+
+    assert df["match_id"].to_list() == [100, 101]
+    assert df["hit_rate"].to_list() == [50.0, 20.0]
+    assert df["headshot_rate"].to_list() == [40.0, 10.0]
+    assert df["hit_percentile"].to_list() == [100.0, 50.0]
+    assert df["headshot_percentile"].to_list() == [100.0, 50.0]
+    assert df["hero_games"].to_list() == [2, 2]
+
+    small = queries.aim_rates(parquet_dir=tmp_path, tz="America/Chicago")
+
+    assert small["hit_percentile"].to_list() == [None, None]
+    assert small["headshot_percentile"].to_list() == [None, None]
+
+
+def test_custom_stats_filters(tmp_path):
+    pq = custom_pq(tmp_path)
+
+    by_stat = queries.custom_stats(stat="Parry Success", parquet_dir=pq).collect()
+    by_group = queries.custom_stats(group="Bullet Stats", parquet_dir=pq).collect()
+    by_account = queries.custom_stats(accounts=[999], parquet_dir=pq).collect()
+    by_match = queries.custom_stats(matches=[100], parquet_dir=pq).collect()
+
+    assert by_stat["value"].to_list() == [4]
+    assert by_group["stat"].to_list() == ["HeroHitRate"]
+    assert by_account.is_empty()
+    assert len(by_match) == 2
 
 
 def test_final_stats(pq):
