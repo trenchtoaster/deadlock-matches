@@ -329,16 +329,24 @@ Your team: The Hidden King
 
 ```
   Item purchases
-    Time   #  Item                   Slot      Tier    Cost
-    0:39   1  Extra Regen            vitality     1     800
-    3:12   2  High-Velocity Rounds   weapon       1     800  into Opening Rounds at 7:41
-    5:58   3  Quicksilver Reload     spirit       2   1,600  imbues Fire Scarabs
-    7:41   4  Opening Rounds         weapon       2   1,600
-    9:04   5  Healbane               vitality     2   1,600  sold at 31:10
-   12:33   6  Extra Spirit           spirit       1     800  into Surge of Power at 12:33
-   12:33   7  Surge of Power         spirit       3   3,200  imbues Djinn's Mark
-   ...
-   31:10  15  Leech                  vitality     4   6,400
+    Time   #  Item                    Slot      Tier    Cost
+    0:59   1  Headshot Booster        weapon       1     800  into Headhunter at 5:29
+    5:29   2  Headhunter              weapon       3   3,200
+    8:29   3  Mystic Shot             weapon       2   1,600
+    9:58   4  Extra Spirit            spirit       1     800  into Improved Spirit at 9:59
+    9:59   5  Improved Spirit         spirit       2   1,600  into Boundless Spirit at 34:30
+   11:35   6  Healbane                vitality     2   1,600
+   16:05   7  Echo Shard              spirit       4   6,400  imbues Dust Devil
+   19:28   8  Dispel Magic            vitality     3   3,200
+   22:00   9  Compress Cooldown       spirit       2   1,600  imbues Fire Scarabs, into Superior Cooldown at 22:36
+   22:36  10  Superior Cooldown       spirit       3   3,200  into Transcendent Cooldown at 32:06
+   24:29  11  Mystic Vulnerability    spirit       2   1,600  into Escalating Exposure at 27:03
+   27:03  12  Escalating Exposure     spirit       4   6,400
+   30:00  13  Scourge                 spirit       4   6,400
+   32:06  14  Transcendent Cooldown   spirit       4   6,400
+   32:08  15  Duration Extender       spirit       2   1,600  imbues Fire Scarabs, into Superior Duration at 35:06
+   34:30  16  Boundless Spirit        spirit       4   6,400
+   35:06  17  Superior Duration       spirit       3   3,200
 
   'into' means the item was consumed by that upgrade, not sold.
 ```

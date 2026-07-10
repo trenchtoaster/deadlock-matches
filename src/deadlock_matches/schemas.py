@@ -229,6 +229,8 @@ class ItemEvents(Table):
     tier = Column(pl.Int64, "Item tier 1-4")
     sold_time_s = Column(pl.Int64, "When it left the inventory (sold or consumed), 0 if kept")
     flags = Column(pl.Int64, "1 = consumed as a component of an upgrade, NOT a sell, 0 = normal")
+    imbued_ability_id = Column(pl.Int64, "Ability the item was imbued into, null when not imbued")
+    imbued_ability = Column(pl.String, "Display name of the imbued ability, null when not imbued")
 
 
 class Damage(Table):

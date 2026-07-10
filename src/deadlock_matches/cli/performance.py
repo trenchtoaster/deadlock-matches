@@ -12,6 +12,7 @@ from deadlock_matches import (
     export,
     extract,
     heroes,
+    items,
     meta,
     paths,
     players,
@@ -443,6 +444,10 @@ def match_report(args: argparse.Namespace, config: str | Path | None = None) -> 
         abilities_report(row, args)
         return
 
+    if args.items:
+        items_report(row, args)
+        return
+
     if args.deaths or args.kills:
         death_log_report(row, args, kills=args.kills)
         return
@@ -582,6 +587,95 @@ def abilities_report(row: dict[str, Any], args: argparse.Namespace) -> None:
         )
 
     print("\n  Req souls is the threshold for that unlock or cumulative AP spend.")
+
+
+def _game_time(seconds: int) -> str:
+    """Format seconds of game time as m:ss."""
+    mm, ss = divmod(int(seconds), 60)
+
+    return f"{mm}:{ss:02d}"
+
+
+def _item_note(r: dict[str, Any], buys: list[dict[str, Any]]) -> str:
+    """Say what happened to a bought item after the purchase.
+
+    - imbues names the ability the item was slotted into
+    - flags=1 means it was consumed by a higher-tier item bought at sold_time_s,
+      so the note names that upgrade instead of calling it a sell
+    """
+    parts = []
+
+    if r.get("imbued_ability"):
+        parts.append(f"imbues {r['imbued_ability']}")
+
+    if r["sold_time_s"]:
+        when = _game_time(r["sold_time_s"])
+
+        if r["flags"] != 1:
+            parts.append(f"sold at {when}")
+        else:
+            parts.append(_upgrade_target(r, buys) or f"upgraded at {when}")
+
+    return ", ".join(parts)
+
+
+def _upgrade_target(r: dict[str, Any], buys: list[dict[str, Any]]) -> str | None:
+    """Find the upgrade bought the moment this item was consumed as a component."""
+    catalog = items.item_map()
+    consumed = catalog.get(r["item_id"])
+
+    if consumed is None or consumed.class_name is None:
+        return None
+
+    for other in buys:
+        if other["game_time_s"] != r["sold_time_s"] or other is r:
+            continue
+
+        target = catalog.get(other["item_id"])
+
+        if target and consumed.class_name in target.components:
+            return f"into {other['item']} at {_game_time(r['sold_time_s'])}"
+
+    return None
+
+
+def items_report(row: dict[str, Any], args: argparse.Namespace) -> None:
+    """Print every item purchase in buy order with sells, upgrades, and imbued abilities."""
+    if not queries.table_exists("item_events", args.parquet):
+        print("No item_events table yet, run `deadlock sync`")
+        return
+
+    df = (
+        queries.scan("item_events", args.parquet)
+        .filter(
+            pl.col("match_id") == row["match_id"],
+            pl.col("account_id") == row["account_id"],
+            pl.col("item").is_not_null(),
+        )
+        .sort("game_time_s")
+        .collect()
+    )
+
+    if df.is_empty():
+        print(f"No item purchases found for {row['hero']} in match {row['match_id']}")
+        return
+
+    buys = df.to_dicts()
+    width = max(max(len(r["item"]) for r in buys), 4) + 2
+
+    print("\n  Item purchases")
+    print(f"  {'Time':>6}  {'#':>2}  {'Item':<{width}} {'Slot':<9} {'Tier':>4} {'Cost':>7}")
+
+    for n, r in enumerate(buys, 1):
+        cost = f"{r['cost']:,}" if r["cost"] is not None else "-"
+        note = _item_note(r, buys)
+
+        print(
+            f"  {_game_time(r['game_time_s']):>6}  {n:>2}  {r['item']:<{width}} "
+            f"{r['slot'] or '-':<9} {r['tier'] or '-':>4} {cost:>7}" + (f"  {note}" if note else "")
+        )
+
+    print("\n  'into' means the item was consumed by that upgrade, not sold.")
 
 
 def souls_report(row: dict[str, Any], args: argparse.Namespace) -> None:

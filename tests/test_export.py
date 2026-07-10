@@ -50,6 +50,7 @@ def build_match(match_id=100, winning_team=pb.k_ECitadelLobbyTeam_Team1):
     it.item_id = EE
     it.game_time_s = 1200
     it.flags = 0
+    it.imbued_ability_id = 1336069669
 
     it2 = a.items.add()
     it2.item_id = 999999999
@@ -266,11 +267,15 @@ def test_item_events_denormalized():
 
     assert ee["item"][0] == "Escalating Exposure"
     assert ee["cost"][0] == 6400
+    assert ee["imbued_ability_id"][0] == 1336069669
+    assert ee["imbued_ability"][0] == "Dust Devil"
 
     unknown = events.filter(pl.col("item_id") == 999999999)
 
     assert unknown["item"][0] is None
     assert unknown["flags"][0] == 1
+    assert unknown["imbued_ability_id"][0] is None
+    assert unknown["imbued_ability"][0] is None
 
 
 def test_item_events_priced_from_committed_history():
@@ -733,6 +738,21 @@ def test_write_partitioned_raises_on_schema_drift_and_keeps_the_old_file(tmp_pat
 
     with pytest.raises((pl.exceptions.ShapeError, pl.exceptions.SchemaError, ValueError)):
         export.write_partitioned("matches", df.drop("duration_s"), "2026-06", tmp_path)
+
+    assert target.read_bytes() == before
+
+
+def test_write_partitioned_rejects_an_old_schema_month_file(tmp_path):
+    df = export.build_tables([build_match(match_id=5)])["matches"]
+
+    export.write_partitioned("matches", df, "2026-06", tmp_path)
+
+    target = tmp_path / "matches" / "2026-06.parquet"
+    pl.read_parquet(target).drop("duration_s").write_parquet(target)
+    before = target.read_bytes()
+
+    with pytest.raises(ValueError, match="full rebuild"):
+        export.write_partitioned("matches", df, "2026-06", tmp_path)
 
     assert target.read_bytes() == before
 

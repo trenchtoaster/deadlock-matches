@@ -808,7 +808,9 @@ def test_match_items_flag_prints_buy_order(capsys, tmp_path):
     out = capsys.readouterr().out
 
     assert "Item purchases" in out
-    assert re.search(r"1:00\s+1\s+Extra Health\s+vitality\s+1\s+[\d,]+\s+into Fortitude at 5:00", out)
+    assert re.search(
+        r"1:00\s+1\s+Extra Health\s+vitality\s+1\s+[\d,]+\s+into Fortitude at 5:00", out
+    )
     assert re.search(r"1:40\s+2\s+Extra Regen\s+vitality\s+1\s+[\d,]+\s+sold at 8:20", out)
     assert re.search(r"5:00\s+3\s+Fortitude\s+vitality\s+3", out)
     assert re.search(r"6:40\s+4\s+Duration Extender\s+spirit\s+2\s+[\d,]+\s+imbues Dust Devil", out)
@@ -830,7 +832,9 @@ def test_match_items_upgrade_note_without_a_matching_buy(capsys, tmp_path):
 
     out = capsys.readouterr().out
 
-    assert re.search(r"3:20\s+1\s+High-Velocity Rounds\s+weapon\s+1\s+[\d,]+\s+upgraded at 4:10", out)
+    assert re.search(
+        r"3:20\s+1\s+High-Velocity Rounds\s+weapon\s+1\s+[\d,]+\s+upgraded at 4:10", out
+    )
 
 
 def test_match_souls_flag_prints_source_and_group_table(capsys, tmp_path):
@@ -1637,9 +1641,7 @@ def test_ability_command_melee_rejects_souls_and_level(capsys, tmp_path):
 
 
 def test_ability_command_spirit_and_melee_combine(capsys, tmp_path):
-    main(
-        ["ability", "Bashdown", "--spirit", "100", "--melee", "80"], config=tmp_path / "none.json"
-    )
+    main(["ability", "Bashdown", "--spirit", "100", "--melee", "80"], config=tmp_path / "none.json")
 
     out = capsys.readouterr().out
 
@@ -1660,7 +1662,9 @@ def test_ability_command_weapon_resolves_scaling(capsys, tmp_path):
 
 
 def test_ability_command_weapon_combines_with_souls(capsys, tmp_path):
-    main(["ability", "Gutshot", "--weapon", "58", "--souls", "25000"], config=tmp_path / "none.json")
+    main(
+        ["ability", "Gutshot", "--weapon", "58", "--souls", "25000"], config=tmp_path / "none.json"
+    )
 
     out = capsys.readouterr().out
 

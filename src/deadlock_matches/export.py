@@ -217,6 +217,7 @@ def build_tables(
       keeps the big per-second movement table out of the rebuild
     """
     infos = list(infos)
+    ability_names = {a.id: a.name for a in abilities.ability_map().values()}
 
     matches: list[dict] = []
     players: list[dict] = []
@@ -360,6 +361,8 @@ def build_tables(
                         "tier": item.tier if item else None,
                         "sold_time_s": it.sold_time_s,
                         "flags": it.flags,
+                        "imbued_ability_id": it.imbued_ability_id or None,
+                        "imbued_ability": ability_names.get(it.imbued_ability_id),
                     }
                 )
         details = info.damage_matrix.source_details
@@ -544,7 +547,7 @@ def write_partitioned(name: str, df: pl.DataFrame, month: str, out_dir: Path) ->
     """Merge one month of rows into out_dir/<name>/<month>.parquet and return the rows merged in.
 
     - reads the existing month file, drops the batch's match_ids, concats the new rows
-    - the concat is strict vertical, so a schema drift raises before the file is touched
+    - a schema drift in the batch or the existing file raises before anything is touched
     - writes a temp file and renames it, so a crash mid-write leaves the old file intact
     - match_id is the identity, so re-running the same batch leaves the content unchanged
     """
@@ -552,21 +555,24 @@ def write_partitioned(name: str, df: pl.DataFrame, month: str, out_dir: Path) ->
     directory.mkdir(parents=True, exist_ok=True)
 
     target = directory / f"{month}.parquet"
+    expected = set(schemas.TABLES[name])
+    drifted = f"{name} {month} columns drifted from schemas.py, run a full rebuild"
+
+    if set(df.columns) != expected:
+        raise ValueError(drifted)
 
     if target.exists():
         existing = pl.read_parquet(target)
+
+        if set(existing.columns) != expected:
+            raise ValueError(drifted)
+
         batch_ids = df["match_id"].unique().to_list()
         preserved = existing.filter(~pl.col("match_id").is_in(batch_ids))
         merged = pl.concat([preserved, df], how="vertical")
 
     else:
         merged = df
-
-    expected = set(schemas.TABLES[name])
-
-    if set(merged.columns) != expected:
-        msg = f"{name} {month} columns drifted from schemas.py, run a full rebuild"
-        raise ValueError(msg)
 
     tmp = directory / f"{month}.parquet.tmp"
     merged.write_parquet(tmp)
