@@ -1507,6 +1507,43 @@ def test_ability_command_souls_resolves_spirit(capsys, tmp_path):
     assert " -> " in out
 
 
+def test_ability_command_spirit_resolves_scaling(capsys, tmp_path):
+    main(["ability", "Dust Devil", "--spirit", "100"], config=tmp_path / "none.json")
+
+    out = capsys.readouterr().out
+
+    assert "at 100 spirit" in out
+    assert "at level" not in out
+    assert "damage 155 -> 215" in out
+
+
+def test_ability_command_spirit_rejects_souls_and_level(capsys, tmp_path):
+    main(
+        ["ability", "Dust Devil", "--spirit", "100", "--souls", "25000"],
+        config=tmp_path / "none.json",
+    )
+
+    out = capsys.readouterr().out
+
+    assert "already includes boons" in out
+    assert "Dust Devil  (Mirage ability)" not in out
+
+    main(
+        ["ability", "Dust Devil", "--spirit", "100", "--level", "20"], config=tmp_path / "none.json"
+    )
+
+    assert "already includes boons" in capsys.readouterr().out
+
+
+def test_ability_command_spirit_with_as_of_shows_old_scaling(capsys, tmp_path):
+    main(
+        ["ability", "Dust Devil", "--spirit", "100", "--as-of", "2026-07-08"],
+        config=tmp_path / "none.json",
+    )
+
+    assert "damage 155 -> 255" in capsys.readouterr().out
+
+
 def test_ability_command_souls_resolves_boons(capsys, tmp_path):
     main(["ability", "Bashdown", "--souls", "25000"], config=tmp_path / "none.json")
 

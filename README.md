@@ -477,6 +477,8 @@ uv run deadlock ability "Fire Scarabs" --souls 50000
 - `--hero` picks whose when the name is on several heroes
 - `--souls` (or `--level`) updates the values using the scaling the hero has at that point
   - in the example below, the ability is level 36 at 48,600 souls, so the scaling is based on 38.5 spirit power that Mirage has at that point (no items)
+- `--spirit 100` computes the values at that total spirit power instead (useful to check how much an ability does at 50, 100, 250 spirit for example)
+  - the total already includes boons, so it replaces `--souls` and `--level` rather than combining with them
 
 ```
 Fire Scarabs  (Mirage ability at level 36, 38.5 spirit)

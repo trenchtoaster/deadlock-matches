@@ -368,6 +368,13 @@ def build_parser(config: str | Path | None = None) -> argparse.ArgumentParser:
         "--souls", type=int, default=None, help="resolve boon scaling at this soul count"
     )
     ab.add_argument("--level", type=int, default=None, help="level, instead of souls")
+    ab.add_argument(
+        "--spirit",
+        type=float,
+        default=None,
+        help="resolve scaling at this total spirit power, the number the in-game "
+        "stat screen shows, items included",
+    )
     ab.add_argument("--as-of", type=dt.date.fromisoformat, default=None, help=AS_OF_HELP)
     ab.add_argument("--changes", action="store_true", help=CHANGES_HELP)
 

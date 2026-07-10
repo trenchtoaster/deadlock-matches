@@ -394,6 +394,12 @@ def ability_report(args: argparse.Namespace) -> None:
         )
         return
 
+    spirit = getattr(args, "spirit", None)
+
+    if spirit is not None and (args.souls is not None or args.level is not None):
+        print("--spirit is the total and already includes boons, drop --souls or --level")
+        return
+
     when = getattr(args, "as_of", None)
     ability = _ability_asof(ability, when) or ability
     hero = _hero_asof(ability.hero, when) if ability.hero else None
@@ -405,6 +411,10 @@ def ability_report(args: argparse.Namespace) -> None:
         level = hero.level_for_souls(args.souls)
 
     ctx = _ability_context(hero, level)
+
+    if spirit is not None:
+        ctx["tech_power"] = spirit
+
     where = []
 
     if args.souls is not None or args.level is not None:
