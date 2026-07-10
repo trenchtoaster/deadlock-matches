@@ -469,7 +469,7 @@ def _sync_from_archive(
     exclude = config_exclude(config)
 
     if getattr(args, "dry_run", False):
-        pending = _pending_archive(args.archive, args.parquet)
+        pending = _pending_archive(args.archive, args.parquet, accounts)
         print(f"{pending} archived matches not yet in the tables")
         print("sync filters them to your accounts as it writes")
 
@@ -547,12 +547,15 @@ def _sync_from_api(
     print(f"Parquet tables at {_tilde(args.parquet)}")
 
 
-def _pending_archive(archive_dir: str | Path, out_dir: str | Path) -> int:
-    """Count archived matches not yet written to the tables."""
+def _pending_archive(
+    archive_dir: str | Path, out_dir: str | Path, accounts: list[int] | None = None
+) -> int:
+    """Count archived matches not yet written to the tables or dropped by the account filter."""
     archive_ids = {int(p.name.split("_")[0]) for p in Path(archive_dir).glob("*.bin")}
     exported = export.exported_match_ids(Path(out_dir))
+    skipped = export.skipped_match_ids(out_dir, accounts)
 
-    return len(archive_ids - exported)
+    return len(archive_ids - exported - skipped)
 
 
 def _print_table_counts(counts: dict[str, int]) -> None:

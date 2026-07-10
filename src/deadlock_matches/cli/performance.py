@@ -7,7 +7,17 @@ from typing import TYPE_CHECKING, Any
 
 import polars as pl
 
-from deadlock_matches import heroes, meta, players, queries, schemas, skill_rating, timeline
+from deadlock_matches import (
+    extract,
+    heroes,
+    meta,
+    paths,
+    players,
+    queries,
+    schemas,
+    skill_rating,
+    timeline,
+)
 from deadlock_matches.cli.cards import UNITS_PER_METER
 from deadlock_matches.cli.data import MVP_LABELS, TEAMS, final_stats
 from deadlock_matches.config import config_timezone, format_accounts
@@ -364,7 +374,18 @@ def match_report(args: argparse.Namespace, config: str | Path | None = None) -> 
         )
 
         if in_match.is_empty():
-            print(f"Match {match_id} is not in the archive (view it in game and rerun)")
+            if extract.has_match(args.archive, match_id):
+                print(
+                    f"None of your accounts played in match {match_id}, so it is not in your tables"
+                )
+            else:
+                print(f"Match {match_id} is not in the archive")
+
+            print(f"`deadlock download --match {match_id}` builds it in the players tables, then")
+            print(
+                f"`deadlock --parquet {paths.tilde(players.PARQUET_DIR)} "
+                f"match {match_id} --hero <name>` reads it"
+            )
         elif args.hero is not None:
             print(f"No {args.hero} in match {match_id}: " + ", ".join(sorted(in_match["hero"])))
         else:

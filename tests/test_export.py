@@ -459,10 +459,14 @@ def test_export_all_writes_parquet(tmp_path):
     assert (out / "movement").is_dir()
 
 
-def _archive_match(arc, match_id, when):
+def _archive_match(arc, match_id, start, accounts=None):
     """Write one match into the .bin archive at a chosen start time."""
     info = build_match(match_id=match_id)
-    info.start_time = int(when.timestamp())
+    info.start_time = int(start.timestamp())
+
+    if accounts is not None:
+        for player, account_id in zip(info.players, accounts, strict=False):
+            player.account_id = account_id
 
     contents = pb.CMsgMatchMetaDataContents()
     contents.match_info.CopyFrom(info)
@@ -503,6 +507,55 @@ def test_export_new_filters_new_matches_by_account(tmp_path):
 
     assert result.counts.get("matches", 0) == 0
     assert export.exported_match_ids(out) == {7}
+
+
+def test_export_new_never_decodes_a_skipped_match_twice(tmp_path, monkeypatch):
+    arc = tmp_path / "arc"
+    arc.mkdir()
+    out = tmp_path / "pq"
+    _archive_match(arc, 7, dt.datetime(2026, 6, 1, tzinfo=dt.UTC))
+    _archive_match(arc, 8, dt.datetime(2026, 6, 2, tzinfo=dt.UTC))
+
+    export.export_new(arc, out, accounts=[42])
+    assert export.exported_match_ids(out) == {7, 8}
+
+    _archive_match(arc, 9, dt.datetime(2026, 6, 3, tzinfo=dt.UTC), accounts=(500, 501))
+    export.export_new(arc, out, accounts=[42])
+
+    assert export.exported_match_ids(out) == {7, 8}
+    assert export.skipped_match_ids(out, [42]) == {9}
+
+    decoded = []
+    original = export._decode_matches
+
+    def spy(paths):
+        decoded.extend(paths)
+
+        return original(paths)
+
+    monkeypatch.setattr(export, "_decode_matches", spy)
+    export.export_new(arc, out, accounts=[42])
+
+    assert decoded == []
+
+
+def test_skipped_matches_reset_when_the_accounts_change(tmp_path):
+    arc = tmp_path / "arc"
+    arc.mkdir()
+    out = tmp_path / "pq"
+    _archive_match(arc, 7, dt.datetime(2026, 6, 1, tzinfo=dt.UTC))
+    export.export_new(arc, out, accounts=[42])
+
+    _archive_match(arc, 9, dt.datetime(2026, 6, 3, tzinfo=dt.UTC), accounts=(500, 501))
+    export.export_new(arc, out, accounts=[42])
+    assert export.skipped_match_ids(out, [42]) == {9}
+
+    assert export.skipped_match_ids(out, [42, 500]) == set()
+
+    result = export.export_new(arc, out, accounts=[42, 500])
+
+    assert result.counts["matches"] == 1
+    assert export.exported_match_ids(out) == {7, 9}
 
 
 def _meta_body(match_id):

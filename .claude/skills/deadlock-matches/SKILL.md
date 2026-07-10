@@ -40,8 +40,9 @@ uv run deadlock match [12345678] [--hero Wraith] [--interval 10] [--souls|--dama
                                           # --kills the same from the killer side, straight from
                                           # the deaths table with no movement join;
                                           # no id = your most recent match, --hero picks any
-                                          # player in the match instead of you (works on matches
-                                          # you only viewed, every player's snapshots are archived);
+                                          # player in the match instead of you (your games keep
+                                          # all 12 players; a match none of your accounts played
+                                          # never reaches the tables, use download --match);
                                           # --souls swaps the columns for souls by source, like the
                                           # in-game souls graph (in-game screen labels, hidden
                                           # sources only when nonzero), plus a Lane/Roaming/Combat/

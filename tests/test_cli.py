@@ -32,6 +32,7 @@ def write_cache_entry(
     salt=1,
     start_time=1783000000,
     won=True,
+    account=42,
     stats=(),
     damage=(),
     ability_items=(),
@@ -47,7 +48,7 @@ def write_cache_entry(
     info.winning_team = pb.k_ECitadelLobbyTeam_Team1 if won else pb.k_ECitadelLobbyTeam_Team0
 
     p = info.players.add()
-    p.account_id = 42
+    p.account_id = account
     p.hero_id = 52
     p.team = pb.k_ECitadelLobbyTeam_Team1
 
@@ -887,7 +888,24 @@ def test_match_id_not_found(capsys, tmp_path):
 
     run_main(tmp_path, "match", "999", "--account", "42")
 
-    assert "Match 999 is not in the archive" in capsys.readouterr().out
+    out = capsys.readouterr().out
+
+    assert "Match 999 is not in the archive" in out
+    assert "deadlock download --match 999" in out
+
+
+def test_match_id_archived_but_not_yours(capsys, tmp_path):
+    cache = tmp_path / "cache"
+    cache.mkdir()
+    write_cache_entry(cache, match_id=100, stats=[(300, 3000)])
+    write_cache_entry(cache, match_id=200, account=99, stats=[(300, 4000)])
+
+    run_main(tmp_path, "match", "200")
+
+    out = capsys.readouterr().out
+
+    assert "None of your accounts played in match 200" in out
+    assert "deadlock download --match 200" in out
 
 
 def test_match_hero_flag_picks_another_player(capsys, tmp_path):

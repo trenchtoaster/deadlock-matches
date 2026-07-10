@@ -7,6 +7,7 @@
 from __future__ import annotations
 
 import datetime as dt
+import json
 import re
 import shutil
 from dataclasses import dataclass, field
@@ -470,16 +471,48 @@ def _decode_matches(paths: Iterable[Path]) -> Iterator[MatchInfo]:
 def _select_infos(
     infos: Iterable[MatchInfo],
     accounts: Collection[int] | None,
+    dropped: list[int] | None = None,
 ) -> Iterator[MatchInfo]:
     """Yield the matches a listed account played in.
 
     - None yields every match
+    - dropped collects the match ids the account filter removed
     """
     account_ids = set(accounts) if accounts else None
 
     for info in infos:
         if account_ids is None or any(p.account_id in account_ids for p in info.players):
             yield info
+        elif dropped is not None:
+            dropped.append(info.match_id)
+
+
+def skipped_match_ids(out_dir: str | Path, accounts: Collection[int] | None) -> set[int]:
+    """Return the archived match ids the account filter dropped on earlier exports.
+
+    - recorded per account set, a changed config starts over so new accounts
+      pick up matches that were skipped before
+    """
+    path = Path(out_dir) / "skipped_matches.json"
+
+    if not path.is_file():
+        return set()
+
+    data = json.loads(path.read_text(encoding="utf-8"))
+
+    if data.get("accounts") != sorted(accounts or []):
+        return set()
+
+    return set(data.get("match_ids", []))
+
+
+def _write_skipped(
+    out_dir: str | Path, accounts: Collection[int] | None, match_ids: set[int]
+) -> None:
+    """Record the match ids the account filter dropped so they are not decoded again."""
+    path = Path(out_dir) / "skipped_matches.json"
+    data = {"accounts": sorted(accounts or []), "match_ids": sorted(match_ids)}
+    path.write_text(json.dumps(data), encoding="utf-8")
 
 
 def exported_match_ids(out_dir: Path) -> set[int]:
@@ -677,9 +710,11 @@ def export_all(
         if name not in exclude:
             clear_partition(name, out_dir)
 
-    infos = _select_infos(_decode_matches(_archive_paths(archive_dir)), accounts)
+    dropped: list[int] = []
+    infos = _select_infos(_decode_matches(_archive_paths(archive_dir)), accounts, dropped)
     counts = export_infos(infos, out_dir, exclude)
 
+    _write_skipped(out_dir, accounts, set(dropped))
     _write_asset_tables(out_dir, counts)
 
     return ExportResult(counts=counts, decoded=counts.get("matches", 0), skipped=0)
@@ -717,13 +752,18 @@ def export_new(
     if not exported:
         return export_all(archive_dir, out_dir, exclude, accounts)
 
-    paths = _new_archive_paths(archive_dir, exported)
+    skipped = skipped_match_ids(out_dir, accounts)
+    paths = _new_archive_paths(archive_dir, exported | skipped)
 
     if not paths:
         return ExportResult(counts={}, decoded=0, skipped=len(exported))
 
-    infos = _select_infos(_decode_matches(paths), accounts)
+    dropped: list[int] = []
+    infos = _select_infos(_decode_matches(paths), accounts, dropped)
     counts = export_infos(infos, out_dir, exclude)
+
+    if dropped:
+        _write_skipped(out_dir, accounts, skipped | set(dropped))
 
     if not (out_dir / "assets").is_dir():
         _write_asset_tables(out_dir, counts)

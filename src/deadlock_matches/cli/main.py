@@ -225,8 +225,7 @@ def build_parser(config: str | Path | None = None) -> argparse.ArgumentParser:
     view.add_argument(
         "--kills",
         action="store_true",
-        help="each kill with the victim, the game time, the distance, and the respawn "
-        "it cost them",
+        help="each kill with the victim, the game time, the distance, and the respawn it cost them",
     )
     view.add_argument(
         "--abilities",
