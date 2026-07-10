@@ -241,6 +241,32 @@ def test_matches_by_id_skips_unreachable(monkeypatch):
     assert players.matches_by_id([900, 901]) == []
 
 
+def test_merge_downloads_sorts_mixed_null_accounts(tmp_path):
+    t0 = dt.datetime(2026, 7, 1, tzinfo=dt.UTC)
+    by_id = {
+        "match_id": 900,
+        "account_id": None,
+        "player": None,
+        "hero_id": None,
+        "rank": None,
+        "region": None,
+        "downloaded_at": t0,
+    }
+    tracked = {
+        "match_id": 900,
+        "account_id": 11,
+        "player": "someone",
+        "hero_id": 52,
+        "rank": 3,
+        "region": "Asia",
+        "downloaded_at": t0,
+    }
+
+    merged = players._merge_downloads(tmp_path, [by_id, tracked])
+
+    assert [r["account_id"] for r in merged] == [11, None]
+
+
 def test_write_player_tables(tmp_path, monkeypatch):
     monkeypatch.setattr(players, "match_metadata", lambda mid: _match_json(mid))
 

@@ -394,7 +394,10 @@ def _merge_downloads(out_dir: Path, download_rows: list[dict[str, Any]]) -> list
         if key not in merged or r["downloaded_at"] < merged[key]["downloaded_at"]:
             merged[key] = r
 
-    return sorted(merged.values(), key=lambda r: (r["match_id"], r["account_id"]))
+    return sorted(
+        merged.values(),
+        key=lambda r: (r["match_id"], r["account_id"] is None, r["account_id"] or 0),
+    )
 
 
 def _decode_bodies(match_ids: list[int]) -> Iterator[MatchInfo]:
