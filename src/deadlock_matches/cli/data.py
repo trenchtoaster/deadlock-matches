@@ -88,7 +88,10 @@ def refresh_tables(
         archive_dir=archive_dir, out_dir=out_dir, exclude=exclude, accounts=accounts
     )
 
-    if result.decoded and not quiet:
+    if result.rebuilt:
+        print(f"Rebuilt all tables from the archive ({result.rebuilt})\n")
+
+    elif result.decoded and not quiet:
         print(f"Added {result.decoded:,} new matches to the parquet tables\n")
 
 
@@ -483,6 +486,9 @@ def _sync_from_archive(
     else:
         result = export.export_new(args.archive, args.parquet, exclude, accounts)
 
+    if result.rebuilt:
+        print(f"Rebuilt all tables from the archive ({result.rebuilt})")
+
     _print_table_counts(result.counts)
 
     if result.skipped:
@@ -544,6 +550,10 @@ def _sync_from_api(
         print("open those in game to archive them")
 
     result = export.export_new(args.archive, args.parquet, config_exclude(config), accounts)
+
+    if result.rebuilt:
+        print(f"Rebuilt all tables from the archive ({result.rebuilt})")
+
     _print_table_counts(result.counts)
 
     print(f"Parquet tables at {_tilde(args.parquet)}")

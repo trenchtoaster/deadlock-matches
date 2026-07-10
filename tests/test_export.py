@@ -581,6 +581,104 @@ def test_export_new_filters_new_matches_by_account(tmp_path):
     assert export.exported_match_ids(out) == {7}
 
 
+def _drop_column(out, table, column):
+    """Rewrite one month file without a column, like a table written by older code."""
+    target = next((out / table).glob("*.parquet"))
+    pl.read_parquet(target).drop(column).write_parquet(target)
+
+    return target
+
+
+def test_schema_drift_none_when_tables_match(tmp_path):
+    arc = tmp_path / "arc"
+    arc.mkdir()
+    out = tmp_path / "pq"
+    _archive_match(arc, 7, dt.datetime(2026, 6, 1, tzinfo=dt.UTC))
+    export.export_all(arc, out)
+
+    assert export.schema_drift(out) is None
+
+
+def test_schema_drift_none_before_the_tables_exist(tmp_path):
+    assert export.schema_drift(tmp_path) is None
+
+
+def test_schema_drift_reports_a_changed_month(tmp_path):
+    arc = tmp_path / "arc"
+    arc.mkdir()
+    out = tmp_path / "pq"
+    _archive_match(arc, 7, dt.datetime(2026, 6, 1, tzinfo=dt.UTC))
+    export.export_all(arc, out)
+
+    target = _drop_column(out, "objectives", "player_spirit_damage")
+
+    assert export.schema_drift(out) == f"objectives {target.stem} columns differ from schemas.py"
+
+
+def test_schema_drift_reports_a_missing_table(tmp_path):
+    import shutil
+
+    arc = tmp_path / "arc"
+    arc.mkdir()
+    out = tmp_path / "pq"
+    _archive_match(arc, 7, dt.datetime(2026, 6, 1, tzinfo=dt.UTC))
+    export.export_all(arc, out)
+
+    shutil.rmtree(out / "statues")
+
+    assert export.schema_drift(out) == "the statues table is missing"
+    assert export.schema_drift(out, exclude=("statues",)) is None
+
+
+def test_export_new_rebuilds_drifted_tables(tmp_path):
+    arc = tmp_path / "arc"
+    arc.mkdir()
+    out = tmp_path / "pq"
+    _archive_match(arc, 7, dt.datetime(2026, 6, 1, tzinfo=dt.UTC))
+    export.export_all(arc, out)
+
+    _drop_column(out, "objectives", "player_spirit_damage")
+    _archive_match(arc, 8, dt.datetime(2026, 7, 2, tzinfo=dt.UTC))
+
+    result = export.export_new(arc, out)
+
+    assert result.rebuilt is not None
+    assert result.rebuilt.startswith("objectives")
+    assert export.exported_match_ids(out) == {7, 8}
+
+    for month_file in (out / "objectives").glob("*.parquet"):
+        assert "player_spirit_damage" in pl.read_parquet_schema(month_file)
+
+
+def test_export_new_heals_drift_without_new_matches(tmp_path):
+    arc = tmp_path / "arc"
+    arc.mkdir()
+    out = tmp_path / "pq"
+    _archive_match(arc, 7, dt.datetime(2026, 6, 1, tzinfo=dt.UTC))
+    export.export_all(arc, out)
+
+    target = _drop_column(out, "objectives", "player_spirit_damage")
+
+    result = export.export_new(arc, out)
+
+    assert result.rebuilt is not None
+    assert "player_spirit_damage" in pl.read_parquet_schema(target)
+
+
+def test_export_new_no_rebuild_when_clean(tmp_path):
+    arc = tmp_path / "arc"
+    arc.mkdir()
+    out = tmp_path / "pq"
+    _archive_match(arc, 7, dt.datetime(2026, 6, 1, tzinfo=dt.UTC))
+    export.export_all(arc, out)
+
+    _archive_match(arc, 8, dt.datetime(2026, 6, 2, tzinfo=dt.UTC))
+    result = export.export_new(arc, out)
+
+    assert result.rebuilt is None
+    assert export.exported_match_ids(out) == {7, 8}
+
+
 def test_export_new_never_decodes_a_skipped_match_twice(tmp_path, monkeypatch):
     arc = tmp_path / "arc"
     arc.mkdir()
@@ -792,7 +890,7 @@ def test_write_partitioned_replaces_rather_than_duplicating(tmp_path):
     assert got["match_id"].to_list() == [5]
 
 
-def test_write_partitioned_raises_on_schema_drift_and_keeps_the_old_file(tmp_path):
+def test_write_partitioned_rejects_schema_drift(tmp_path):
     df = export.build_tables([build_match(match_id=5)])["matches"]
 
     export.write_partitioned("matches", df, "2026-06", tmp_path)

@@ -4,7 +4,7 @@ import polars as pl
 import pytest
 from google.protobuf import json_format
 
-from deadlock_matches import api, players, queries
+from deadlock_matches import api, export, players, queries
 from deadlock_matches.extract import pb
 
 
@@ -297,6 +297,33 @@ def test_write_player_tables(tmp_path, monkeypatch):
     matches = queries.scan("matches", tmp_path / "pq").collect()
 
     assert matches["match_id"][0] == 900
+
+
+def test_write_player_tables_rebuilds_drifted_tables(tmp_path, monkeypatch):
+    monkeypatch.setattr(players, "match_metadata", lambda mid: _match_json(mid))
+
+    row = {
+        "match_id": 900,
+        "account_id": 11,
+        "player": "someone",
+        "hero_id": 52,
+        "rank": 3,
+        "region": "Asia",
+        "downloaded_at": dt.datetime(2026, 7, 1, tzinfo=dt.UTC),
+    }
+    out = tmp_path / "pq"
+    players.write_player_tables([row], out_dir=out)
+
+    target = next((out / "players").glob("*.parquet"))
+    pl.read_parquet(target).drop("party").write_parquet(target)
+
+    assert export.schema_drift(out) is not None
+
+    counts = players.write_player_tables([], out_dir=out)
+
+    assert export.schema_drift(out) is None
+    assert counts["matches"] == 1
+    assert "party" in pl.read_parquet_schema(target)
 
 
 def test_write_player_tables_keeps_earliest_download(tmp_path, monkeypatch):

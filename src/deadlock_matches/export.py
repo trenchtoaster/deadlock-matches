@@ -467,6 +467,7 @@ class ExportResult:
     counts: dict[str, int] = field(default_factory=dict)
     decoded: int = 0
     skipped: int = 0
+    rebuilt: str | None = None
 
 
 def _match_month(info: MatchInfo) -> str:
@@ -547,7 +548,34 @@ def exported_match_ids(out_dir: Path) -> set[int]:
 
     exported = queries.scan("matches", out_dir).select("match_id").collect()
 
-    return set(exported["match_id"].to_list())
+    return set(exported.to_series().to_list())
+
+
+def schema_drift(out_dir: Path, exclude: Collection[str] = ()) -> str | None:
+    """Compare parquet columns to schemas.py to identify mismatches.
+
+    - read schemas from parquet footers
+    - a missing table directory counts as a mismatch
+    """
+    if not (out_dir / "matches").is_dir():
+        return None
+
+    for name in sorted(schemas.PARTITIONED):
+        if name in exclude:
+            continue
+
+        directory = out_dir / name
+
+        if not directory.is_dir():
+            return f"the {name} table is missing"
+
+        expected = set(schemas.TABLES[name])
+
+        for month_file in sorted(directory.glob("*.parquet")):
+            if set(pl.read_parquet_schema(month_file)) != expected:
+                return f"{name} {month_file.stem} columns differ from schemas.py"
+
+    return None
 
 
 def _new_archive_paths(archive_dir: Path, exported: set[int]) -> list[Path]:
@@ -765,6 +793,8 @@ def export_new(
     - a legacy single-file store is re-laid-out into partitions first, without decoding anything
     - decodes only the .bin files whose match_id is new so processed matches are never re-read
     - old month partitions are left alone and only the months the new matches fall in are rewritten
+    - rebuilds every table when the columns drifted from schemas.py and puts
+      the reason on the result
     """
     archive_dir = extract.ARCHIVE_DIR if archive_dir is None else Path(archive_dir)
     out_dir = PARQUET_DIR if out_dir is None else Path(out_dir)
@@ -777,6 +807,14 @@ def export_new(
 
     if not exported:
         return export_all(archive_dir, out_dir, exclude, accounts)
+
+    drift = schema_drift(out_dir, exclude)
+
+    if drift:
+        result = export_all(archive_dir, out_dir, exclude, accounts)
+        result.rebuilt = drift
+
+        return result
 
     skipped = skipped_match_ids(out_dir, accounts)
     paths = _new_archive_paths(archive_dir, exported | skipped)
