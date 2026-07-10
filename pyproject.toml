@@ -5,12 +5,15 @@ description = "Analyze your Deadlock match data locally"
 readme = "README.md"
 license = "MIT"
 license-files = ["LICENSE"]
-requires-python = ">=3.14"
+requires-python = ">=3.12"
 dependencies = [
   "polars>=1.42",
-  "protobuf>=6,<7",
+  "protobuf>=6.33.5,<7",
   "tzdata; sys_platform == 'win32'",
 ]
+
+[project.urls]
+Repository = "https://github.com/trenchtoaster/deadlock-matches"
 
 [project.scripts]
 deadlock = "deadlock_matches.cli:main"
@@ -24,7 +27,7 @@ package-dir = { "" = "src" }
 packages = { find = { where = ["src"], include = ["deadlock_matches*"] } }
 
 [tool.setuptools.package-data]
-deadlock_matches = ["data/*.json", "gen/**/*.py", "gen/**/*.pyi"]
+deadlock_matches = ["data/*.json", "data/*.parquet", "gen/**/*.py", "gen/**/*.pyi"]
 
 [dependency-groups]
 dev = [
@@ -40,7 +43,7 @@ lint = [
 fix = true
 src = ["src"]
 line-length = 100
-target-version = "py314"
+target-version = "py312"
 include = ["pyproject.toml", "src/**/*.py", "tests/**/*.py"]
 exclude = [".venv", "src/deadlock_matches/gen"]
 
@@ -111,7 +114,7 @@ docstring-code-format = true
 
 [tool.ty.environment]
 extra-paths = ["src", "src/deadlock_matches/gen"]
-python-version = "3.14"
+python-version = "3.12"
 
 [tool.ty.src]
 exclude = [

@@ -152,7 +152,7 @@ def _detect_timezone() -> str:
 
         try:
             zoneinfo.ZoneInfo(c)
-        except zoneinfo.ZoneInfoNotFoundError, ValueError, KeyError:
+        except (zoneinfo.ZoneInfoNotFoundError, ValueError, KeyError):
             continue
 
         return c

@@ -76,7 +76,7 @@ def _number(val: Any) -> Any:
     """Parse numbers the API sends as strings, leaving unit strings ('1m') alone."""
     try:
         f = float(val)
-    except TypeError, ValueError:
+    except (TypeError, ValueError):
         return val
 
     return int(f) if f.is_integer() else f

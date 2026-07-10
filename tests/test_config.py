@@ -3,6 +3,7 @@ import tomllib
 import pytest
 
 from deadlock_matches import config
+from deadlock_matches.cli.main import main
 
 
 def test_config_accounts_rejects_list_form(tmp_path):
@@ -130,3 +131,10 @@ def test_config_timezone_detects_when_missing(tmp_path):
 
     assert tz
     assert p.read_text(encoding="utf-8") == "accounts = [42]"
+
+
+def test_main_with_an_explicit_config_writes_no_starter(tmp_path):
+    custom = tmp_path / "custom.toml"
+    main(["hero", "Mirage"], config=custom)
+
+    assert not custom.exists()
