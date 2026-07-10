@@ -23,15 +23,25 @@ def test_record_asof_picks_the_latest_era_on_or_before(tmp_path):
     path = tmp_path / "h.parquet"
     history.write(path, STATES)
 
-    assert history.record_asof(path, 7, dt.datetime(2026, 1, 15))["cost"] == 500
-    assert history.record_asof(path, 7, dt.datetime(2026, 3, 1))["cost"] == 800
+    january = history.record_asof(path, 7, dt.datetime(2026, 1, 15))
+    march = history.record_asof(path, 7, dt.datetime(2026, 3, 1))
+
+    assert january is not None
+
+    assert january["cost"] == 500
+    assert march is not None
+    assert march["cost"] == 800
 
 
 def test_record_asof_older_than_all_gets_earliest(tmp_path):
     path = tmp_path / "h.parquet"
     history.write(path, STATES)
 
-    assert history.record_asof(path, 7, dt.datetime(2025, 1, 1))["cost"] == 500
+    earliest = history.record_asof(path, 7, dt.datetime(2025, 1, 1))
+
+    assert earliest is not None
+
+    assert earliest["cost"] == 500
 
 
 def test_record_asof_unknown_id_and_missing_file(tmp_path):

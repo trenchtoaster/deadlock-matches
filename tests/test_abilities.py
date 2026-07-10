@@ -32,21 +32,25 @@ def test_ability_asof_picks_the_era(tmp_path):
     path = tmp_path / "ability_history.parquet"
     _ability_history(path, 60, 75)
 
-    assert (
-        abilities.ability_asof("ability_slash", dt.date(2026, 6, 20), path).properties["damage"]
-        == 60
-    )
-    assert (
-        abilities.ability_asof("ability_slash", dt.date(2026, 7, 2), path).properties["damage"]
-        == 75
-    )
+    june = abilities.ability_asof("ability_slash", dt.date(2026, 6, 20), path)
+    july = abilities.ability_asof("ability_slash", dt.date(2026, 7, 2), path)
+
+    assert june is not None
+
+    assert june.properties["damage"] == 60
+    assert july is not None
+    assert july.properties["damage"] == 75
 
 
 def test_ability_asof_without_history_falls_back_to_bundled(tmp_path):
     real = next(iter(abilities.ability_map()))
     missing = tmp_path / "none.parquet"
 
-    assert abilities.ability_asof(real, dt.date(2026, 7, 2), missing).class_name == real
+    bundled = abilities.ability_asof(real, dt.date(2026, 7, 2), missing)
+
+    assert bundled is not None
+
+    assert bundled.class_name == real
     assert abilities.ability_asof("no_such_class", dt.date(2026, 7, 2), missing) is None
 
 

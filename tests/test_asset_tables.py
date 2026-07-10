@@ -99,7 +99,11 @@ def test_item_parent_matches_item_asof(tmp_path):
     parents = asset_tables.item_tables(path)["item_history"]
 
     for row in parents.iter_rows(named=True):
-        assert items.item_asof(7, row["era_from"], path=path).cost == row["cost"]
+        resolved = items.item_asof(7, row["era_from"], path=path)
+
+        assert resolved is not None
+
+        assert resolved.cost == row["cost"]
 
 
 def test_item_components_fan_out_per_era(tmp_path):

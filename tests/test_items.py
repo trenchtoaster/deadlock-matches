@@ -34,15 +34,25 @@ def test_item_asof_picks_the_era_in_effect(tmp_path):
     path = tmp_path / "item_history.parquet"
     _write_history(path)
 
-    assert items.item_asof(10, dt.datetime(2026, 1, 2), path).cost == 500
-    assert items.item_asof(10, dt.datetime(2026, 1, 5), path).cost == 800
+    early = items.item_asof(10, dt.datetime(2026, 1, 2), path)
+    late = items.item_asof(10, dt.datetime(2026, 1, 5), path)
+
+    assert early is not None
+
+    assert early.cost == 500
+    assert late is not None
+    assert late.cost == 800
 
 
 def test_item_asof_older_than_history_gets_earliest(tmp_path):
     path = tmp_path / "item_history.parquet"
     _write_history(path)
 
-    assert items.item_asof(10, dt.datetime(2025, 12, 31), path).cost == 500
+    resolved = items.item_asof(10, dt.datetime(2025, 12, 31), path)
+
+    assert resolved is not None
+
+    assert resolved.cost == 500
 
 
 def test_item_asof_unknown_id_is_none(tmp_path):
@@ -56,7 +66,13 @@ def test_item_asof_without_history_falls_back_to_bundled(tmp_path):
     ee = items.item_by_name("Escalating Exposure")
     missing = tmp_path / "none.parquet"
 
-    assert items.item_asof(ee.id, dt.datetime(2026, 1, 5), missing).cost == ee.cost
+    assert ee is not None
+
+    bundled = items.item_asof(ee.id, dt.datetime(2026, 1, 5), missing)
+
+    assert bundled is not None
+
+    assert bundled.cost == ee.cost
     assert items.item_asof(999999, dt.datetime(2026, 1, 5), missing) is None
 
 
@@ -70,7 +86,7 @@ def test_committed_item_history_newest_matches_bundle():
     mismatched = [
         i
         for i, it in current.items()
-        if resolved[i] and (resolved[i].cost != it.cost or resolved[i].tier != it.tier)
+        if (r := resolved[i]) is not None and (r.cost != it.cost or r.tier != it.tier)
     ]
 
     assert not mismatched

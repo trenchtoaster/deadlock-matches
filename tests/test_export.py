@@ -279,7 +279,10 @@ def test_item_events_priced_from_committed_history():
 
     ee = events.filter(pl.col("item_id") == EE)
 
-    assert ee["cost"][0] == items.item_asof(EE, start).cost
+    priced = items.item_asof(EE, start)
+
+    assert priced is not None
+    assert ee["cost"][0] == priced.cost
 
 
 def test_damage_maps_slots_to_accounts():

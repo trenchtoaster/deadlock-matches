@@ -395,7 +395,7 @@ def ability_report(args: argparse.Namespace) -> None:
         return
 
     when = getattr(args, "as_of", None)
-    ability = _ability_asof(ability, when)
+    ability = _ability_asof(ability, when) or ability
     hero = _hero_asof(ability.hero, when) if ability.hero else None
     level = 1
 

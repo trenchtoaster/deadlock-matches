@@ -1,4 +1,5 @@
 import datetime as dt
+import email.message
 import json
 import urllib.error
 
@@ -502,9 +503,14 @@ def test_build_item_history_finds_the_change_point(tmp_path, monkeypatch):
     path = tmp_path / "item_history.parquet"
     n = assets.build_item_history(start_date="2026-01-01", path=path)
 
+    early = items.item_asof(10, dt.datetime(2026, 1, 2), path)
+    late = items.item_asof(10, dt.datetime(2026, 1, 5), path)
+
     assert n == 2
-    assert items.item_asof(10, dt.datetime(2026, 1, 2), path).cost == 500
-    assert items.item_asof(10, dt.datetime(2026, 1, 5), path).cost == 800
+    assert early is not None
+    assert early.cost == 500
+    assert late is not None
+    assert late.cost == 800
 
 
 def test_build_item_history_single_era_when_nothing_changes(tmp_path, monkeypatch):
@@ -529,10 +535,17 @@ def test_build_item_history_captures_a_revert(tmp_path, monkeypatch):
     path = tmp_path / "item_history.parquet"
     n = assets.build_item_history(start_date="2026-01-01", path=path)
 
+    first = items.item_asof(10, dt.datetime(2026, 1, 1), path)
+    second = items.item_asof(10, dt.datetime(2026, 1, 2), path)
+    third = items.item_asof(10, dt.datetime(2026, 1, 3), path)
+
     assert n == 3
-    assert items.item_asof(10, dt.datetime(2026, 1, 1), path).cost == 500
-    assert items.item_asof(10, dt.datetime(2026, 1, 2), path).cost == 800
-    assert items.item_asof(10, dt.datetime(2026, 1, 3), path).cost == 500
+    assert first is not None
+    assert first.cost == 500
+    assert second is not None
+    assert second.cost == 800
+    assert third is not None
+    assert third.cost == 500
 
 
 def test_load_build_skips_a_persistent_failure(monkeypatch):
@@ -556,7 +569,7 @@ def test_load_build_skips_a_404_without_retrying(monkeypatch):
 
     def load(build):
         calls.append(build)
-        raise urllib.error.HTTPError("url", 404, "not found", None, None)
+        raise urllib.error.HTTPError("url", 404, "not found", email.message.Message(), None)
 
     assert assets._load_build(2, {}, load, tries=4) is None
     assert len(calls) == 1
@@ -570,7 +583,7 @@ def test_load_build_retries_a_transient_500(monkeypatch):
         calls.append(build)
 
         if len(calls) == 1:
-            raise urllib.error.HTTPError("url", 500, "server error", None, None)
+            raise urllib.error.HTTPError("url", 500, "server error", email.message.Message(), None)
 
         return {"10": {"cost": 500}}
 
@@ -588,7 +601,7 @@ def test_build_item_history_skips_a_build_the_api_cannot_serve(tmp_path, monkeyp
             return [{"client_version": b, "version_datetime": d} for b, d in builds.items()]
 
         if "client_version=2" in path:
-            raise urllib.error.HTTPError("url", 500, "server error", None, None)
+            raise urllib.error.HTTPError("url", 500, "server error", email.message.Message(), None)
 
         build = int(path.rsplit("=", 1)[1])
 
@@ -602,9 +615,14 @@ def test_build_item_history_skips_a_build_the_api_cannot_serve(tmp_path, monkeyp
         start_date="2026-01-01", path=path, progress=lambda *a: seen.append(a)
     )
 
+    early = items.item_asof(10, dt.datetime(2026, 1, 2), path)
+    late = items.item_asof(10, dt.datetime(2026, 1, 3), path)
+
     assert n == 2
-    assert items.item_asof(10, dt.datetime(2026, 1, 2), path).cost == 500
-    assert items.item_asof(10, dt.datetime(2026, 1, 3), path).cost == 800
+    assert early is not None
+    assert early.cost == 500
+    assert late is not None
+    assert late.cost == 800
     assert seen[-1] == (3, 3, [2])
 
 
