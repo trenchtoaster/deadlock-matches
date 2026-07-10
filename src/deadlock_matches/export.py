@@ -280,6 +280,7 @@ def build_tables(
                 "destroyed_time_s": o.destroyed_time_s or None,
                 "first_damage_time_s": o.first_damage_time_s or None,
                 "player_damage": o.player_damage,
+                "player_spirit_damage": o.player_spirit_damage,
                 "creep_damage": o.creep_damage,
             }
             for o in info.objectives

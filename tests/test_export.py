@@ -84,6 +84,7 @@ def build_match(match_id=100, winning_team=pb.k_ECitadelLobbyTeam_Team1):
     o.destroyed_time_s = 660
     o.first_damage_time_s = 120
     o.player_damage = 4000
+    o.player_spirit_damage = 1500
     o.creep_damage = 800
 
     o2 = info.objectives.add()
@@ -443,6 +444,7 @@ def test_objectives_rows():
     assert obj["destroyed_time_s"].to_list() == [660, None]
     assert obj["first_damage_time_s"].to_list() == [120, None]
     assert obj["player_damage"].to_list() == [4000, 500]
+    assert obj["player_spirit_damage"].to_list() == [1500, 0]
     assert obj["creep_damage"].to_list() == [800, 0]
 
 

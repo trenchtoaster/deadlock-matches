@@ -346,7 +346,8 @@ class Objectives(Table):
     lane = Column(pl.String, "Color of its lane")
     destroyed_time_s = Column(pl.Int64, "Game time in seconds when it was destroyed")
     first_damage_time_s = Column(pl.Int64, "Game time in seconds when it first took damage")
-    player_damage = Column(pl.Int64, "Damage dealt to it by players")
+    player_damage = Column(pl.Int64, "Damage dealt to it by players (gun and spirit combined)")
+    player_spirit_damage = Column(pl.Int64, "The spirit portion of player_damage")
     creep_damage = Column(pl.Int64, "Damage dealt to it by troopers")
 
 
