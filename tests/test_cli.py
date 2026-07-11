@@ -628,6 +628,21 @@ def test_compare_without_account_prints_hint(capsys, tmp_path):
     assert "--account" in out
 
 
+
+
+def test_help_sections_cover_every_command(tmp_path):
+    from deadlock_matches.cli.main import COMMAND_HELP, SECTIONS
+
+    parser = build_parser(tmp_path / "config.toml")
+    sub = next(a for a in parser._actions if isinstance(a, argparse._SubParsersAction))
+    registered = set(sub.choices or [])
+    sectioned = [name for _, names in SECTIONS for name in names]
+
+    assert set(sectioned) == registered
+    assert len(sectioned) == len(set(sectioned))
+    assert set(COMMAND_HELP) == registered
+
+
 def test_winrate_without_account_prints_hint(capsys, tmp_path):
     run_main(tmp_path, "winrate", accounts=None)
 

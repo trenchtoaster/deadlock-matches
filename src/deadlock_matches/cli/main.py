@@ -27,6 +27,48 @@ AS_OF_HELP = (
 )
 CHANGES_HELP = "list every patch that changed this, from the versioned asset history, and quit"
 
+COMMAND_HELP = {
+    "sync": "pull your matches into the parquet tables from the archive or the API",
+    "history": "one line per game of yours with the match ID",
+    "match": "one match: the final scoreboard, then your intervals of souls and damage",
+    "winrate": "wins and losses per day",
+    "deaths": "how you die: when, to whom, alone or ganked",
+    "leaderboard": "the current top players of a hero, with paste-ready lines for config.toml",
+    "download": "fetch recent games from your tracked players into their own tables",
+    "compare": "your stats vs your tracked players, minute by minute",
+    "movement": "movement profile on one hero, you vs your tracked players",
+    "builds": "the items your tracked players buy, in wins and in losses",
+    "item": "item stat card, plus whether it is worth buying on a hero",
+    "hero": "base stats and boon gains, or stats at a breakpoint",
+    "ability": "base numbers, spirit scaling and tier upgrades",
+    "meta": "public hero win rates and pick rates across all matches",
+    "assets": "redownload heroes.json / items.json (run after a patch)",
+    "accounts": "Steam accounts on this PC that have run Deadlock, for config.toml",
+    "schema": "column docs for the parquet tables (the data dictionary)",
+}
+
+SECTIONS = (
+    ("your matches", ("sync", "history", "match", "winrate", "deaths")),
+    (
+        "the players you track (config.toml [players], data via download)",
+        ("leaderboard", "download", "compare", "movement", "builds", "item"),
+    ),
+    ("game knowledge", ("hero", "ability", "meta", "assets")),
+    ("setup", ("accounts", "schema")),
+)
+
+
+def _command_sections() -> str:
+    """Render the grouped command list for the top-level help."""
+    lines = []
+
+    for title, names in SECTIONS:
+        lines.append(f"{title}:")
+        lines.extend(f"  {name:<12} {COMMAND_HELP[name]}" for name in names)
+        lines.append("")
+
+    return "\n".join(lines).rstrip()
+
 
 def parse_accounts(v: str, names: dict[str, int] | None = None) -> list[int]:
     """Turn "id1,id2" or account names from config.toml like "main" into Steam32 account IDs.
@@ -78,7 +120,11 @@ def build_parser(config: str | Path | None = None) -> argparse.ArgumentParser:
     def account_list(v: str) -> list[int]:
         return parse_accounts(v, names)
 
-    ap = argparse.ArgumentParser(prog="deadlock")
+    ap = argparse.ArgumentParser(
+        prog="deadlock",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        description=_command_sections(),
+    )
     ap.add_argument(
         "--cache",
         default=str(extract.DEFAULT_CACHE),
@@ -90,9 +136,12 @@ def build_parser(config: str | Path | None = None) -> argparse.ArgumentParser:
     ap.add_argument(
         "--parquet", default=str(export.PARQUET_DIR), help="where the parquet tables are written"
     )
-    sub = ap.add_subparsers(dest="cmd")
+    sub = ap.add_subparsers(dest="cmd", metavar="<command>")
 
-    d = sub.add_parser("history", help="one line per game of yours with the match ID")
+    def command(name: str) -> argparse.ArgumentParser:
+        return sub.add_parser(name, description=COMMAND_HELP[name])
+
+    d = command("history")
     d.add_argument(
         "--days", type=int, default=None, help="your last N days of games instead of the last 10"
     )
@@ -110,7 +159,7 @@ def build_parser(config: str | Path | None = None) -> argparse.ArgumentParser:
         help="only matches on or after this date (YYYY-MM-DD), like 2026-07-01",
     )
 
-    it = sub.add_parser("item", help="item stat card, plus whether it is worth buying on a hero")
+    it = command("item")
     it.add_argument("item", help='item display name, like "Escalating Exposure"')
     it.add_argument(
         "--hero",
@@ -143,7 +192,7 @@ def build_parser(config: str | Path | None = None) -> argparse.ArgumentParser:
     it.add_argument("--as-of", type=dt.date.fromisoformat, default=None, help=AS_OF_HELP)
     it.add_argument("--changes", action="store_true", help=CHANGES_HELP)
 
-    b = sub.add_parser("builds", help="what the top players of a hero build")
+    b = command("builds")
     b.add_argument("--hero", required=True, help="hero display name, like Mirage")
     b.add_argument("--players", type=int, default=6, help="top players to include")
     b.add_argument("--games", type=int, default=10, help="recent ranked games per player")
@@ -154,7 +203,7 @@ def build_parser(config: str | Path | None = None) -> argparse.ArgumentParser:
         help="hide items bought in fewer than this percent of builds",
     )
 
-    c = sub.add_parser("compare", help="your stats vs top players minute by minute")
+    c = command("compare")
     c.add_argument("--hero", required=True, help="hero display name, like Mirage")
     c.add_argument(
         "--account",
@@ -267,9 +316,7 @@ def build_parser(config: str | Path | None = None) -> argparse.ArgumentParser:
         "by range, parries, comeback souls, and per-hero counters",
     )
 
-    f = sub.add_parser(
-        "download", help="retrieve tracked player matches into a separate parquet table"
-    )
+    f = command("download")
     f.add_argument("--hero", default=None, help="hero display name, like Mirage")
     f.add_argument(
         "--match",
@@ -314,7 +361,7 @@ def build_parser(config: str | Path | None = None) -> argparse.ArgumentParser:
         "--dry-run", action="store_true", help="show what would be written without writing anything"
     )
 
-    mn = sub.add_parser("leaderboard", help="the top players of a hero and their recent match IDs")
+    mn = command("leaderboard")
     mn.add_argument("--hero", required=True, help="hero display name, like Mirage")
     mn.add_argument("--players", type=int, default=8, help="how many top players to list")
     mn.add_argument(
@@ -327,7 +374,7 @@ def build_parser(config: str | Path | None = None) -> argparse.ArgumentParser:
         help="also list the recent ranked match IDs per player (default 5)",
     )
 
-    de = sub.add_parser("deaths", help="how you die: when, to whom, alone or ganked")
+    de = command("deaths")
     de.add_argument(
         "--account",
         type=account_list,
@@ -348,7 +395,7 @@ def build_parser(config: str | Path | None = None) -> argparse.ArgumentParser:
         help="units counted as nearby for the ally/enemy context",
     )
 
-    mv = sub.add_parser("movement", help="movement profile on one hero, you vs top players")
+    mv = command("movement")
     mv.add_argument("--hero", required=True, help="hero display name, like Mirage")
     mv.add_argument(
         "--account",
@@ -357,7 +404,7 @@ def build_parser(config: str | Path | None = None) -> argparse.ArgumentParser:
         help="your account IDs or names from config.toml, defaults to all accounts there",
     )
 
-    dy = sub.add_parser("winrate", help="wins and losses per day")
+    dy = command("winrate")
     dy.add_argument(
         "--account",
         type=account_list,
@@ -384,14 +431,14 @@ def build_parser(config: str | Path | None = None) -> argparse.ArgumentParser:
         "skill rating or higher, 'all' disables",
     )
 
-    he = sub.add_parser("hero", help="base stats and boon gains, or stats at a breakpoint")
+    he = command("hero")
     he.add_argument("hero", help="hero display name, like Mirage")
     he.add_argument("--souls", type=int, default=None, help="total souls earned")
     he.add_argument("--level", type=int, default=None, help="level, instead of souls")
     he.add_argument("--as-of", type=dt.date.fromisoformat, default=None, help=AS_OF_HELP)
     he.add_argument("--changes", action="store_true", help=CHANGES_HELP)
 
-    ab = sub.add_parser("ability", help="base numbers, spirit scaling and tier upgrades")
+    ab = command("ability")
     ab.add_argument("ability", help='ability display name, like "Dust Devil"')
     ab.add_argument(
         "--hero",
@@ -426,7 +473,7 @@ def build_parser(config: str | Path | None = None) -> argparse.ArgumentParser:
     ab.add_argument("--as-of", type=dt.date.fromisoformat, default=None, help=AS_OF_HELP)
     ab.add_argument("--changes", action="store_true", help=CHANGES_HELP)
 
-    me = sub.add_parser("meta", help="public hero win rates, pick rates, and match counts")
+    me = command("meta")
     me.add_argument("--hero", default=None, help="one hero's numbers per bucket, like Mirage")
     me.add_argument(
         "--by",
@@ -444,11 +491,9 @@ def build_parser(config: str | Path | None = None) -> argparse.ArgumentParser:
         "--until", default=None, help="only matches on or before this date (YYYY-MM-DD)"
     )
 
-    sub.add_parser(
-        "accounts", help="Steam accounts on this PC that have run Deadlock, for config.toml"
-    )
+    command("accounts")
 
-    at = sub.add_parser("assets", help="redownload heroes.json / items.json (run after a patch)")
+    at = command("assets")
     at.add_argument(
         "--backfill",
         action="store_true",
@@ -460,7 +505,7 @@ def build_parser(config: str | Path | None = None) -> argparse.ArgumentParser:
         help="run the backfill, otherwise it only says what it would do",
     )
 
-    sc = sub.add_parser("schema", help="column docs for the parquet tables (the data dictionary)")
+    sc = command("schema")
     sc.add_argument(
         "table", nargs="?", default=None, help="one table name, all tables when omitted"
     )
