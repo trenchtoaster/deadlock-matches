@@ -867,6 +867,26 @@ def test_store_meta_writes_a_loadable_bin(tmp_path):
     assert extract.load(tmp_path / "55_2062213690.bin").match_id == 55
 
 
+def test_store_meta_url_header_keeps_the_replay_cluster(tmp_path):
+    url = "http://replay186.valve.net/1422450/55_2062213690.meta.bz2"
+
+    extract.store_meta(tmp_path, 55, 2062213690, _meta_body(55), url)
+
+    parsed = extract.parse_cache_file(tmp_path / "55_2062213690.bin")
+
+    assert parsed.url == "replay186.valve.net/1422450/55_2062213690.meta.bz2"
+    assert parsed.match_id == 55
+
+
+def test_store_meta_foreign_url_falls_back_to_the_bare_path(tmp_path):
+    extract.store_meta(tmp_path, 55, 2062213690, _meta_body(55), "http://x")
+
+    parsed = extract.parse_cache_file(tmp_path / "55_2062213690.bin")
+
+    assert parsed.url == "/1422450/55_2062213690.meta.bz2"
+    assert extract.load(tmp_path / "55_2062213690.bin").match_id == 55
+
+
 def test_download_metadata_stores_then_skips(tmp_path, monkeypatch):
     from deadlock_matches import api, players
 

@@ -187,19 +187,24 @@ def has_match(archive_dir: str | Path, match_id: int) -> bool:
     return match_path(archive_dir, match_id) is not None
 
 
-def store_meta(archive_dir: str | Path, match_id: int, salt: int, meta_bz2: bytes) -> None:
+def store_meta(
+    archive_dir: str | Path, match_id: int, salt: int, meta_bz2: bytes, url: str | None = None
+) -> None:
     """Write a downloaded .meta.bz2 body into the archive as a cache-shaped {match_id}_{salt}.bin.
 
-    - prepends the cache URL so parse_cache_file reads it the same as a copied cache entry
+    - the header line is the download url when it names the canonical path,
+      the bare path otherwise, and parse_cache_file reads either form
+    - a url header carries the replay cluster like a copied cache entry
     - the salt matches the httpcache filename, so the same match from both sources is one file
     """
     archive_dir = Path(archive_dir)
     archive_dir.mkdir(parents=True, exist_ok=True)
 
-    header = f"/1422450/{match_id}_{salt}.meta.bz2\n".encode()
+    path = f"/1422450/{match_id}_{salt}.meta.bz2"
+    header = url if url and path in url else path
     dest = archive_dir / f"{match_id}_{salt}.bin"
     tmp = dest.with_name(f"{dest.name}.tmp")
-    tmp.write_bytes(header + meta_bz2)
+    tmp.write_bytes(f"{header}\n".encode() + meta_bz2)
     tmp.replace(dest)
 
 

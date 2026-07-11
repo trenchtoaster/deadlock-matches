@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import datetime as dt
-import json
 import statistics as st
 from collections import Counter, defaultdict
 from pathlib import Path
@@ -11,7 +10,7 @@ from typing import TYPE_CHECKING, Any
 
 import polars as pl
 
-from deadlock_matches import api, config, export, extract, items, paths, queries, schemas
+from deadlock_matches import api, config, export, extract, heroes, paths, queries, schemas
 
 if TYPE_CHECKING:
     from collections.abc import Collection, Iterator, Sequence
@@ -34,21 +33,6 @@ def hero_leaderboard(region: str, hero_id: int) -> list[dict[str, Any]]:
     lb = api.get_json(f"v1/leaderboard/{region}/{hero_id}", max_age=api.DAY)
 
     return lb.get("entries", lb) if isinstance(lb, dict) else lb
-
-
-def find_player(name: str, regions: Sequence[str] = REGIONS) -> list[dict[str, Any]]:
-    """Ladder entries whose account_name contains name (case-insensitive)."""
-    low = name.lower()
-
-    hits = []
-    for region in regions:
-        hits.extend(
-            {**e, "region": region}
-            for e in leaderboard(region)
-            if low in (e.get("account_name") or "").lower()
-        )
-
-    return hits
 
 
 def top_players(
@@ -85,6 +69,35 @@ def top_players(
     return out[:limit]
 
 
+def ladder_positions(hero_id: int, regions: Sequence[str] = REGIONS) -> dict[int, dict[str, Any]]:
+    """Map account IDs to their current spot on the per hero leaderboards.
+
+    - pools every region and keeps the best rank per account
+    - skips entries that resolve to more than one account
+    - comes back empty when the leaderboards are unreachable
+    """
+    spots: dict[int, dict[str, Any]] = {}
+
+    for region in regions:
+        try:
+            entries = hero_leaderboard(region, hero_id)
+        except OSError:
+            continue
+
+        for e in entries:
+            ids = e.get("possible_account_ids") or []
+
+            if len(ids) != 1:
+                continue
+
+            spot = {"name": e.get("account_name"), "rank": e["rank"], "region": region}
+
+            if ids[0] not in spots or e["rank"] < spots[ids[0]]["rank"]:
+                spots[ids[0]] = spot
+
+    return spots
+
+
 def match_history(account_id: int) -> list[dict[str, Any]]:
     """List the recent matches for a player, by account ID."""
     d = api.get_json(f"v1/players/{account_id}/match-history", max_age=api.DAY)
@@ -92,15 +105,35 @@ def match_history(account_id: int) -> list[dict[str, Any]]:
     return d.get("matches", d) if isinstance(d, dict) else d
 
 
-def match_metadata(match_id: int) -> dict[str, Any]:
-    """Full match_info for a match ID."""
-    return api.get_json(f"v1/matches/{match_id}/metadata", permanent=True)["match_info"]
+def _body_path(match_id: int, archive_dir: str | Path) -> Path | None:
+    """Locate the archived body for a match.
+
+    - downloads the raw metadata when the match is not archived yet
+    """
+    path = extract.match_path(archive_dir, match_id)
+
+    if path is not None:
+        return path
+
+    download_metadata([match_id], archive_dir)
+
+    return extract.match_path(archive_dir, match_id)
+
+
+def match_info(match_id: int, archive_dir: str | Path = extract.ARCHIVE_DIR) -> MatchInfo | None:
+    """Load the MatchInfo for a match, either archived or downloaded on demand."""
+    path = _body_path(match_id, archive_dir)
+
+    if path is None:
+        return None
+
+    return extract.load(path)
 
 
 def salts(match_id: int) -> dict[str, Any] | None:
     """Return the metadata and replay salts for a match."""
     try:
-        return api.get_json(f"v1/matches/{match_id}/salts", permanent=True)
+        return api.get_json(f"v1/matches/{match_id}/salts", use_cache=False)
 
     except OSError:
         return None
@@ -118,65 +151,9 @@ def recent_hero_matches(account_id: int, hero_id: int, n: int = 10) -> list[dict
     return ms[:n]
 
 
-def build_order(
-    match_info: dict[str, Any], account_id: int, min_cost: int = 0
-) -> dict[str, Any] | None:
-    """Items one player bought and kept, in buy order with names and timing.
-
-    Works on a match_info dict from the api. Entries that don't
-    resolve to a shop item (ability rank-ups) are dropped, and min_cost
-    drops items cheaper than that.
-    """
-    im = items.item_map()
-
-    me = next((p for p in match_info["players"] if p["account_id"] == account_id), None)
-    if me is None:
-        return None
-
-    seq = []
-    for it in sorted(me["items"], key=lambda x: x["game_time_s"]):
-        item = im.get(it["item_id"])
-
-        if not item or not item.cost or item.cost < min_cost:
-            continue
-
-        seq.append(
-            {
-                "min": round(it["game_time_s"] / 60, 1),
-                "name": item.name,
-                "tier": item.tier,
-                "slot": item.slot,
-                "cost": item.cost,
-                "sold": bool(it.get("sold_time_s", 0)),
-            }
-        )
-
-    return {
-        "win": me["team"] == match_info["winning_team"],
-        "kda": (me["kills"], me["deaths"], me["assists"]),
-        "seq": seq,
-    }
-
-
-def player_builds(
-    account_id: int, hero_id: int, n: int = 10, min_cost: int = 0
-) -> list[dict[str, Any]]:
-    """List the N most recent ranked builds for a player on a hero, win and loss.
-
-    min_cost passes through to build_order.
-    """
-    builds = []
-    for m in recent_hero_matches(account_id, hero_id, n):
-        try:
-            b = build_order(match_metadata(m["match_id"]), account_id, min_cost)
-        except Exception:
-            continue
-
-        if b:
-            b["match_id"] = m["match_id"]
-            builds.append(b)
-
-    return builds
+def match_metadata(match_id: int) -> dict[str, Any]:
+    """Full match_info for a match ID."""
+    return api.get_json(f"v1/matches/{match_id}/metadata", permanent=True)["match_info"]
 
 
 def player_timelines(account_id: int, hero_id: int, n: int = 10) -> list[dict[str, Any]]:
@@ -193,47 +170,6 @@ def player_timelines(account_id: int, hero_id: int, n: int = 10) -> list[dict[st
             out.append(me)
 
     return out
-
-
-def download_builds(
-    players: dict[str, int], hero_id: int, n: int = 20, path: str | Path | None = None
-) -> dict[str, Any]:
-    """Pull n games each for a set of players into one saved snapshot (all items kept).
-
-    players maps player_name -> account_id. Writes {player: {account_id,
-    builds: [...]}} as json to path. path=None skips saving.
-    """
-    data = {}
-    for name, aid in players.items():
-        data[name] = {"account_id": aid, "builds": player_builds(aid, hero_id, n=n, min_cost=0)}
-
-    out = {"hero_id": hero_id, "players": data}
-
-    if path:
-        Path(path).parent.mkdir(parents=True, exist_ok=True)
-        Path(path).write_text(json.dumps(out), encoding="utf-8")
-
-    return out
-
-
-def load_builds(path: str | Path) -> dict[str, Any]:
-    """Read a build snapshot written by download_builds."""
-    return json.loads(Path(path).read_text(encoding="utf-8"))
-
-
-def flatten_builds(
-    data: dict[str, Any], *, win: bool | None = None
-) -> list[tuple[str, dict[str, Any]]]:
-    """Flatten a download_builds snapshot to (player, build) pairs.
-
-    win=True keeps only wins, False only losses, None everything.
-    """
-    return [
-        (name, b)
-        for name, pdata in data["players"].items()
-        for b in pdata["builds"]
-        if win is None or b["win"] == win
-    ]
 
 
 def item_frequency(builds: list[dict[str, Any]], *, include_sold: bool = False) -> dict[str, Any]:
@@ -312,28 +248,172 @@ def tracked_player_games(
     return games
 
 
-def download_matches(
-    tracked: list[dict[str, Any]], hero_id: int, n: int = 10
+def pool_members(
+    hero: str,
+    parquet_dir: str | Path | None = None,
+    config_path: str | Path | None = None,
 ) -> list[dict[str, Any]]:
-    """Query the API for recent ranked games from tracked players, one row per (match, player).
+    """Summarize the comparison pool of a hero with one entry per tracked player.
 
-    tracked rows need account_id and name, and leaderboard entries also carry
-    rank/region. Bodies persist in the API data directory (a match two tracked
-    players share is only downloaded once), and downloaded_at comes from the
-    body file's mtime, so re-runs keep the original download time.
+    - the pool is the [players.<hero>] table in config.toml, matched to the
+      downloads ledger by account id
+    - games counts downloaded matches on the hero, 0 before any download
+    - rank is the best ladder rank seen at download time
+    """
+    watchlist = config.config_players(hero, config_path)
+
+    if not watchlist:
+        return []
+
+    hero_id = heroes.hero_id_by_name(hero)
+    parquet_dir = PARQUET_DIR if parquet_dir is None else Path(parquet_dir)
+    stats: dict[int, dict[str, Any]] = {}
+
+    if queries.table_exists("downloads", parquet_dir):
+        ledger = (
+            queries.scan("downloads", parquet_dir)
+            .filter(
+                pl.col("hero_id") == hero_id,
+                pl.col("account_id").is_in(list(watchlist.values())),
+            )
+            .group_by("account_id")
+            .agg(
+                pl.col("match_id").n_unique().alias("games"),
+                pl.col("rank").min().alias("rank"),
+                pl.col("downloaded_at").max().alias("downloaded_at"),
+            )
+            .collect()
+        )
+        stats = {r["account_id"]: r for r in ledger.iter_rows(named=True)}
+
+    return [
+        {
+            "name": name,
+            "account_id": a,
+            "games": stats.get(a, {}).get("games", 0),
+            "rank": stats.get(a, {}).get("rank"),
+            "downloaded_at": stats.get(a, {}).get("downloaded_at"),
+        }
+        for name, a in watchlist.items()
+    ]
+
+
+def pool_games(
+    hero: str,
+    parquet_dir: str | Path | None = None,
+    config_path: str | Path | None = None,
+) -> pl.LazyFrame:
+    """List the pool of a hero as one downloads ledger row per downloaded game.
+
+    - keeps match_id, account_id, rank, and downloaded_at
+    - comes back empty when nothing is tracked or downloaded yet
+    """
+    watchlist = config.config_players(hero, config_path)
+    parquet_dir = PARQUET_DIR if parquet_dir is None else Path(parquet_dir)
+
+    if not watchlist or not queries.table_exists("downloads", parquet_dir):
+        return pl.LazyFrame(
+            schema={
+                "match_id": pl.Int64,
+                "account_id": pl.Int64,
+                "rank": pl.Int64,
+                "downloaded_at": pl.Datetime("us", "UTC"),
+            }
+        )
+
+    hero_id = heroes.hero_id_by_name(hero)
+
+    return (
+        queries.scan("downloads", parquet_dir)
+        .filter(
+            pl.col("hero_id") == hero_id,
+            pl.col("account_id").is_in(list(watchlist.values())),
+        )
+        .select("match_id", "account_id", "rank", "downloaded_at")
+        .unique(subset=["match_id", "account_id"])
+    )
+
+
+def pool_builds(
+    hero: str,
+    parquet_dir: str | Path | None = None,
+    config_path: str | Path | None = None,
+) -> list[dict[str, Any]]:
+    """Collect one build dict per downloaded pool game from the item_events table.
+
+    - reads item_events, so it works offline from past downloads
+    - each build carries the config player label, the win, and the buy
+      sequence in build_order shape
+    """
+    parquet_dir = PARQUET_DIR if parquet_dir is None else Path(parquet_dir)
+
+    if not queries.table_exists("item_events", parquet_dir):
+        return []
+
+    watchlist = config.config_players(hero, config_path)
+    labels = {a: name for name, a in watchlist.items()}
+    events = (
+        pool_games(hero, parquet_dir, config_path)
+        .join(queries.scan("item_events", parquet_dir), on=["match_id", "account_id"])
+        .filter(pl.col("item").is_not_null(), pl.col("cost") > 0)
+        .join(
+            queries.scan("players", parquet_dir).select("match_id", "account_id", "won"),
+            on=["match_id", "account_id"],
+        )
+        .sort("match_id", "account_id", "game_time_s")
+        .collect()
+    )
+
+    builds: dict[tuple[int, int], dict[str, Any]] = {}
+
+    for r in events.iter_rows(named=True):
+        key = (r["match_id"], r["account_id"])
+        b = builds.setdefault(
+            key,
+            {
+                "match_id": r["match_id"],
+                "account_id": r["account_id"],
+                "player": labels.get(r["account_id"]),
+                "win": r["won"],
+                "seq": [],
+            },
+        )
+        b["seq"].append(
+            {
+                "min": round(r["game_time_s"] / 60, 1),
+                "name": r["item"],
+                "tier": r["tier"],
+                "slot": r["slot"],
+                "cost": r["cost"],
+                "sold": bool(r["sold_time_s"]),
+            }
+        )
+
+    return list(builds.values())
+
+
+def download_matches(
+    tracked: list[dict[str, Any]],
+    hero_id: int,
+    n: int = 10,
+    archive_dir: str | Path = extract.ARCHIVE_DIR,
+) -> list[dict[str, Any]]:
+    """Download recent ranked games from tracked players, one row per (match, player).
+
+    - tracked rows need account_id and name, leaderboard entries also carry rank/region
+    - bodies land in the archive as raw .bin files, a shared match downloads once
+    - downloaded_at is the mtime of the body file, which re-runs never touch
     """
     rows = []
 
     for t in tracked:
         for m in recent_hero_matches(t["account_id"], hero_id, n):
             match_id = m["match_id"]
+            path = _body_path(match_id, archive_dir)
 
-            try:
-                match_metadata(match_id)
-            except Exception:
+            if path is None:
                 continue
 
-            mtime = api.data_path(f"v1/matches/{match_id}/metadata").stat().st_mtime
             rows.append(
                 {
                     "match_id": match_id,
@@ -342,15 +422,17 @@ def download_matches(
                     "hero_id": hero_id,
                     "rank": t.get("rank"),
                     "region": t.get("region"),
-                    "downloaded_at": dt.datetime.fromtimestamp(mtime, dt.UTC),
+                    "downloaded_at": dt.datetime.fromtimestamp(path.stat().st_mtime, dt.UTC),
                 }
             )
 
     return rows
 
 
-def matches_by_id(match_ids: Sequence[int]) -> list[dict[str, Any]]:
-    """Download rows for specific match IDs, pulled from the API directly.
+def matches_by_id(
+    match_ids: Sequence[int], archive_dir: str | Path = extract.ARCHIVE_DIR
+) -> list[dict[str, Any]]:
+    """Download rows for specific match IDs straight into the archive.
 
     account_id/hero_id/rank/region come back null since no tracked player brought
     the match in. The body carries all 12 players, so every one lands in the tables
@@ -359,12 +441,11 @@ def matches_by_id(match_ids: Sequence[int]) -> list[dict[str, Any]]:
     rows = []
 
     for match_id in match_ids:
-        try:
-            match_metadata(match_id)
-        except Exception:
+        path = _body_path(match_id, archive_dir)
+
+        if path is None:
             continue
 
-        mtime = api.data_path(f"v1/matches/{match_id}/metadata").stat().st_mtime
         rows.append(
             {
                 "match_id": match_id,
@@ -373,7 +454,7 @@ def matches_by_id(match_ids: Sequence[int]) -> list[dict[str, Any]]:
                 "hero_id": None,
                 "rank": None,
                 "region": None,
-                "downloaded_at": dt.datetime.fromtimestamp(mtime, dt.UTC),
+                "downloaded_at": dt.datetime.fromtimestamp(path.stat().st_mtime, dt.UTC),
             }
         )
 
@@ -399,14 +480,17 @@ def _merge_downloads(out_dir: Path, download_rows: list[dict[str, Any]]) -> list
     )
 
 
-def _decode_bodies(match_ids: list[int]) -> Iterator[MatchInfo]:
-    """Decode the stored API body for each match id in order and skip any that fail."""
+def _decode_bodies(match_ids: list[int], archive_dir: str | Path) -> Iterator[MatchInfo]:
+    """Decode the stored body for each match id in order and skip any that fail."""
     for match_id in match_ids:
         try:
-            yield extract.from_api_json(match_metadata(match_id))
+            info = match_info(match_id, archive_dir)
 
         except Exception:
             continue
+
+        if info is not None:
+            yield info
 
 
 def download_metadata(match_ids: Sequence[int], archive_dir: str | Path) -> tuple[int, list[int]]:
@@ -437,7 +521,7 @@ def download_metadata(match_ids: Sequence[int], archive_dir: str | Path) -> tupl
             missing.append(match_id)
             continue
 
-        extract.store_meta(archive_dir, match_id, info["metadata_salt"], body)
+        extract.store_meta(archive_dir, match_id, info["metadata_salt"], body, url)
         written += 1
 
     return written, missing
@@ -463,6 +547,7 @@ def write_player_tables(
     download_rows: list[dict[str, Any]],
     out_dir: str | Path | None = None,
     exclude: Collection[str] = (),
+    archive_dir: str | Path = extract.ARCHIVE_DIR,
 ) -> dict[str, int]:
     """Materialize downloaded matches into their own parquet directory plus the downloads ledger.
 
@@ -471,7 +556,7 @@ def write_player_tables(
     - a legacy single-file store is re-laid-out into partitions first, without decoding anything
     - rebuilds every table from the stored match metadata when the columns
       drifted from schemas.py
-    - nothing is pruned, so a player's history builds up across runs
+    - nothing is pruned, so player history builds up across runs
     """
     out_dir = PARQUET_DIR if out_dir is None else Path(out_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
@@ -490,7 +575,7 @@ def write_player_tables(
     exported = export.exported_match_ids(out_dir)
     new_ids = [m for m in wanted if m not in exported]
 
-    export.export_infos(_decode_bodies(new_ids), out_dir, exclude)
+    export.export_infos(_decode_bodies(new_ids, archive_dir), out_dir, exclude)
 
     schemas.conform("downloads", downloads).write_parquet(out_dir / "downloads.parquet")
 

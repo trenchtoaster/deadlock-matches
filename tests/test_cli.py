@@ -247,12 +247,15 @@ def write_cache_entry(
     return f
 
 
-def run_main(tmp_path, *args, accounts="you = 42"):
+def run_main(tmp_path, *args, accounts="you = 42", extra=""):
     cfg = tmp_path / "config.toml"
     contents = 'timezone = "America/Chicago"'
 
     if accounts:
         contents += f"\n[accounts]\n{accounts}\n"
+
+    if extra:
+        contents += f"\n{extra}\n"
 
     cfg.write_text(contents)
     (tmp_path / "cache").mkdir(exist_ok=True)
@@ -302,41 +305,94 @@ def test_int_list_rejects_non_numeric():
         int_list("abc")
 
 
-def test_download_command_merges_config_players_after_top_players(tmp_path, monkeypatch, capsys):
+def test_download_command_defaults_to_the_watchlist(tmp_path, monkeypatch, capsys):
     cfg = tmp_path / "config.toml"
-    cfg.write_text('[players.Mirage]\nsomeplayer = 22\n"already-top" = 11\n')
+    cfg.write_text("[players.Mirage]\nsomeplayer = 22\nladderer = 11\n")
 
     monkeypatch.setattr(
         players,
-        "top_players",
-        lambda hero_id, limit: [{"account_id": 11, "name": "lead", "rank": 1, "region": "Asia"}],
+        "ladder_positions",
+        lambda hero_id: {11: {"name": "lead", "rank": 1, "region": "Asia"}},
     )
 
     seen = {}
 
-    def fake_download(tracked, hero_id, n):
+    def fake_download(tracked, hero_id, n, archive_dir):
         seen["tracked"] = tracked
-        seen["hero_id"] = hero_id
         seen["n"] = n
 
         return []
 
     monkeypatch.setattr(players, "download_matches", fake_download)
     monkeypatch.setattr(
-        players, "write_player_tables", lambda rows, out_dir, exclude: {"matches": 0}
+        players, "write_player_tables", lambda rows, out_dir, exclude, archive_dir: {"matches": 0}
     )
 
     main(["download", "--hero", "Mirage", "--games", "3", "--out", str(tmp_path)], config=cfg)
 
-    assert [t["account_id"] for t in seen["tracked"]] == [11, 22]
-    assert seen["tracked"][1]["name"] == "someplayer"
+    assert [t["account_id"] for t in seen["tracked"]] == [22, 11]
+    assert seen["tracked"][1]["rank"] == 1
+    assert seen["tracked"][1]["name"] == "ladderer"
     assert seen["n"] == 3
 
     out = capsys.readouterr().out
 
-    assert "lead" in out
     assert "someplayer" in out
+    assert "tracked" in out
     assert "rank 1" in out
+
+
+def test_download_command_account_fills_names_from_the_ladder(tmp_path, monkeypatch, capsys):
+    cfg = tmp_path / "config.toml"
+    cfg.write_text("")
+
+    monkeypatch.setattr(
+        players,
+        "ladder_positions",
+        lambda hero_id: {11: {"name": "lead", "rank": 4, "region": "Asia"}},
+    )
+    seen = {}
+
+    def fake_download(tracked, hero_id, n, archive_dir):
+        seen["tracked"] = tracked
+
+        return []
+
+    monkeypatch.setattr(players, "download_matches", fake_download)
+    monkeypatch.setattr(
+        players, "write_player_tables", lambda rows, out_dir, exclude, archive_dir: {"matches": 0}
+    )
+
+    main(["download", "--hero", "Mirage", "--account", "11,22", "--out", str(tmp_path)], config=cfg)
+
+    assert seen["tracked"][0]["name"] == "lead"
+    assert seen["tracked"][0]["rank"] == 4
+    assert seen["tracked"][1]["name"] == "22"
+
+    out = capsys.readouterr().out
+
+    assert "rank 4" in out
+    assert "picked" in out
+
+
+def test_download_command_without_targets_prints_guidance(tmp_path, monkeypatch, capsys):
+    cfg = tmp_path / "config.toml"
+    cfg.write_text("")
+
+    def boom(*args, **kwargs):
+        msg = "nothing should download"
+        raise AssertionError(msg)
+
+    monkeypatch.setattr(players, "download_matches", boom)
+    monkeypatch.setattr(players, "write_player_tables", boom)
+
+    main(["download", "--hero", "Mirage", "--out", str(tmp_path)], config=cfg)
+
+    out = capsys.readouterr().out
+
+    assert "No players tracked for Mirage" in out
+    assert "deadlock leaderboard" in out
+    assert "config.toml" in out
 
 
 def _sync_config(tmp_path):
@@ -438,25 +494,60 @@ def test_sync_refuses_an_account_not_in_config(tmp_path, monkeypatch, capsys):
 def test_builds_command_prints_shared_core(tmp_path, monkeypatch, capsys):
     monkeypatch.setattr(
         players,
-        "top_players",
-        lambda hero_id, limit: [{"account_id": 11, "name": "lead", "rank": 1, "region": "Asia"}],
+        "pool_members",
+        lambda hero, parquet_dir=None, config_path=None: [
+            {"name": "lead", "account_id": 11, "games": 2, "rank": 1, "downloaded_at": None}
+        ],
     )
 
-    win = {"win": True, "seq": [{"name": "Healbane", "min": 8, "slot": "spirit", "tier": 2}]}
-    loss = {"win": False, "seq": [{"name": "Healbane", "min": 9, "slot": "spirit", "tier": 2}]}
-    monkeypatch.setattr(players, "player_builds", lambda account_id, hero_id, n: [win, loss])
+    win = {
+        "account_id": 11,
+        "win": True,
+        "seq": [{"name": "Healbane", "min": 8, "slot": "spirit", "tier": 2}],
+    }
+    loss = {
+        "account_id": 11,
+        "win": False,
+        "seq": [{"name": "Healbane", "min": 9, "slot": "spirit", "tier": 2}],
+    }
+    monkeypatch.setattr(
+        players, "pool_builds", lambda hero, parquet_dir=None, config_path=None: [win, loss]
+    )
 
     main(["builds", "--hero", "Mirage"], config=tmp_path / "none.json")
 
     out = capsys.readouterr().out
 
-    assert "Top 1 Mirage players:" in out
+    assert "Tracked Mirage players (2 downloaded games):" in out
     assert "lead" in out
+    assert "1W 1L" in out
     assert "Healbane" in out
     assert "Win %" in out
     assert "Loss %" in out
     assert "100%" in out
     assert "spirit T2" in out
+
+
+def test_builds_command_without_tracked_players_prints_hint(tmp_path, capsys):
+    main(["builds", "--hero", "Mirage"], config=tmp_path / "none.json")
+
+    out = capsys.readouterr().out
+
+    assert "No players tracked for Mirage" in out
+    assert "deadlock leaderboard" in out
+
+
+def test_builds_command_without_downloads_prints_hint(tmp_path, monkeypatch, capsys):
+    monkeypatch.setattr(players, "PARQUET_DIR", tmp_path / "players-pq")
+    cfg = tmp_path / "config.toml"
+    cfg.write_text("[players.Mirage]\nsomeplayer = 22\n")
+
+    main(["builds", "--hero", "Mirage"], config=cfg)
+
+    out = capsys.readouterr().out
+
+    assert "No downloaded games from the tracked Mirage players yet" in out
+    assert 'deadlock download --hero "Mirage"' in out
 
 
 def test_download_command_unknown_hero(tmp_path, capsys):
@@ -468,14 +559,16 @@ def test_download_command_unknown_hero(tmp_path, capsys):
 def test_download_command_by_match_id(tmp_path, monkeypatch, capsys):
     seen = {}
 
-    def fake_by_id(match_ids):
+    def fake_by_id(match_ids, archive_dir):
         seen["ids"] = list(match_ids)
 
         return [{"match_id": m} for m in match_ids]
 
     monkeypatch.setattr(players, "matches_by_id", fake_by_id)
     monkeypatch.setattr(
-        players, "write_player_tables", lambda rows, out_dir, exclude: {"matches": len(rows)}
+        players,
+        "write_player_tables",
+        lambda rows, out_dir, exclude, archive_dir: {"matches": len(rows)},
     )
 
     main(["download", "--match", "900,901", "--out", str(tmp_path)], config=tmp_path / "none.json")
@@ -495,14 +588,14 @@ def test_download_command_by_account_skips_leaderboard(tmp_path, monkeypatch, ca
 
     seen = {}
 
-    def fake_download(tracked, hero_id, n):
+    def fake_download(tracked, hero_id, n, archive_dir):
         seen["tracked"] = tracked
 
         return []
 
     monkeypatch.setattr(players, "download_matches", fake_download)
     monkeypatch.setattr(
-        players, "write_player_tables", lambda rows, out_dir, exclude: {"matches": 0}
+        players, "write_player_tables", lambda rows, out_dir, exclude, archive_dir: {"matches": 0}
     )
 
     main(
@@ -552,11 +645,39 @@ def test_leaderboard_command_lists_players_and_match_ids(tmp_path, monkeypatch, 
     assert "11" in out
     assert "rank 1" in out
     assert "friend" in out
-    assert "config" in out
+    assert "tracked" in out
     assert "5011" in out
     assert "5022" in out
     assert "win" in out
     assert "10/2/8" in out
+
+
+def test_leaderboard_command_prints_paste_ready_lines(tmp_path, monkeypatch, capsys):
+    cfg = tmp_path / "config.toml"
+    cfg.write_text("[players.Mirage]\nfriend = 22\n")
+
+    monkeypatch.setattr(
+        players,
+        "top_players",
+        lambda hero_id, limit: [
+            {"account_id": 11, "name": "lead", "rank": 1, "region": "Asia"},
+            {"account_id": 22, "name": "friend", "rank": 3, "region": "Europe"},
+            {"account_id": 33, "name": "señor", "rank": 4, "region": "SAmerica"},
+        ],
+    )
+
+    main(["leaderboard", "--hero", "Mirage"], config=cfg)
+
+    out = capsys.readouterr().out
+
+    assert 'deadlock download --hero "Mirage"' in out
+    assert '[players."Mirage"]' in out
+
+    block = out.split('[players."Mirage"]')[1]
+
+    assert '"lead" = 11' in block
+    assert '"señor" = 33' in block
+    assert "22" not in block
 
 
 def test_parser_rejects_account_list_form(tmp_path):
@@ -2498,7 +2619,10 @@ def test_item_command_quotes_hero_in_download_hint(monkeypatch, capsys, tmp_path
     )
     cli_items.item_report(args, tmp_path / "none.toml")
 
-    assert 'Run `deadlock download --hero "Lady Geist"`' in capsys.readouterr().out
+    out = capsys.readouterr().out
+
+    assert "No players tracked for Lady Geist" in out
+    assert 'deadlock download --hero "Lady Geist"' in out
 
 
 def test_item_card_renders_every_item(capsys):

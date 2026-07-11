@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import datetime as dt
+import json
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
@@ -348,10 +349,25 @@ def rebuild_history(args: argparse.Namespace) -> None:
     print("\nReview the diff and commit the updated tables.")
 
 
+def no_pool_hint(hero: str, *, tracked_in_config: bool) -> str:
+    """Pick the hint that matches how far the tracking setup got for a hero."""
+    if tracked_in_config:
+        return (
+            f"No downloaded games from the tracked {hero} players yet: "
+            f'run `deadlock download --hero "{hero}"`'
+        )
+
+    return (
+        f"No players tracked for {hero} in config.toml: "
+        f'`deadlock leaderboard --hero "{hero}"` prints paste-ready lines, '
+        f'then run `deadlock download --hero "{hero}"`'
+    )
+
+
 def download_matches(args: argparse.Namespace, config: str | Path | None = None) -> None:
     """Build player tables from the API for specific match IDs, specific accounts, or top players."""
     if args.match:
-        rows = players.matches_by_id(args.match)
+        rows = players.matches_by_id(args.match, args.archive)
         got = len({r["match_id"] for r in rows})
         print(f"Downloading {len(args.match)} match ID(s), got {got}")
     else:
@@ -366,7 +382,12 @@ def download_matches(args: argparse.Namespace, config: str | Path | None = None)
 
         rows = _download_players(args, hero_id, config)
 
-    counts = players.write_player_tables(rows, out_dir=args.out, exclude=config_exclude(config))
+        if rows is None:
+            return
+
+    counts = players.write_player_tables(
+        rows, out_dir=args.out, exclude=config_exclude(config), archive_dir=args.archive
+    )
 
     for name, n in counts.items():
         print(f"  {name:<14} {n:>7,} rows")
@@ -376,26 +397,56 @@ def download_matches(args: argparse.Namespace, config: str | Path | None = None)
 
 def _download_players(
     args: argparse.Namespace, hero_id: int, config: str | Path | None
-) -> list[dict[str, Any]]:
-    """Recent games for the given accounts, or the top players plus config players by default."""
+) -> list[dict[str, Any]] | None:
+    """Recent games for the given accounts, or the config watchlist for the hero.
+
+    - never downloads anyone on its own, every player was named by the user
+    - the current leaderboards only fill in rank, region, and missing names
+    - None when there is nobody to download
+    """
+    watchlist = config_players(args.hero, config)
+
     if args.account:
         tracked = [{"name": str(a), "account_id": a} for a in args.account]
     else:
-        tracked = players.top_players(hero_id, limit=args.players)
-        known = {t["account_id"] for t in tracked}
-        tracked += [
-            {"name": name, "account_id": a}
-            for name, a in config_players(args.hero, config).items()
-            if a not in known
-        ]
+        tracked = [{"name": name, "account_id": a} for name, a in watchlist.items()]
+
+    if not tracked:
+        print(f"No players tracked for {args.hero}")
+        print(
+            f'`deadlock leaderboard --hero "{args.hero}"` prints paste-ready lines for '
+            "config.toml, or pass specific account IDs with --account"
+        )
+        return None
+
+    ladder = players.ladder_positions(hero_id)
+    watchlisted = set(watchlist.values())
+
+    for t in tracked:
+        spot = ladder.get(t["account_id"])
+
+        if spot is None:
+            continue
+
+        t["rank"] = spot["rank"]
+        t["region"] = spot["region"]
+
+        if str(t["name"]).isdigit() and spot.get("name"):
+            t["name"] = spot["name"]
 
     print(f"Downloading recent {args.hero} games for {len(tracked)} players:")
 
     for t in tracked:
-        where = f"rank {t['rank']:<4} {t['region']}" if t.get("rank") else "selected"
+        if t.get("rank"):
+            where = f"rank {t['rank']:<4} {t['region']}"
+        elif t["account_id"] in watchlisted:
+            where = "tracked"
+        else:
+            where = "picked"
+
         print(f"  {t['name']:<18} {where}")
 
-    rows = players.download_matches(tracked, hero_id, n=args.games)
+    rows = players.download_matches(tracked, hero_id, n=args.games, archive_dir=args.archive)
     unique = len({r["match_id"] for r in rows})
     print(f"\nRetrieved {unique} unique matches across {len(rows)} player games")
 
@@ -412,18 +463,23 @@ def leaderboard_report(args: argparse.Namespace, config: str | Path | None = Non
         print(f"Unknown hero: {args.hero}")
         return
 
+    watchlist = config_players(args.hero, config)
     top = players.top_players(hero_id, limit=args.players)
     known = {m["account_id"] for m in top}
     top += [
-        {"name": name, "account_id": a, "rank": None, "region": "config"}
-        for name, a in config_players(args.hero, config).items()
+        {"name": name, "account_id": a, "rank": None, "region": "tracked"}
+        for name, a in watchlist.items()
         if a not in known
     ]
 
     print(f"{args.hero} leaderboard:")
 
     for m in top:
-        where = f"rank {m['rank']:<4} {m['region']}" if m.get("rank") else "config"
+        where = f"rank {m['rank']:<4} {m['region']}" if m.get("rank") else "tracked"
+
+        if m["account_id"] in set(watchlist.values()) and m.get("rank"):
+            where += "  tracked"
+
         print(f"  {m['name']:<20} {m['account_id']:<12} {where}")
 
         if args.matches:
@@ -432,6 +488,18 @@ def leaderboard_report(args: argparse.Namespace, config: str | Path | None = Non
                 result = "win " if row["match_result"] == row["player_team"] else "loss"
                 kda = f"{row['player_kills']}/{row['player_deaths']}/{row['player_assists']}"
                 print(f"      {row['match_id']}  {when}  {result}  {kda}")
+
+    fresh = [m for m in top if m["account_id"] not in set(watchlist.values())]
+
+    if fresh:
+        print(
+            "\nTrack players by pasting lines into config.toml, "
+            f'then `deadlock download --hero "{args.hero}"`:'
+        )
+        print(f"\n[players.{json.dumps(args.hero)}]")
+
+        for m in fresh:
+            print(f"{json.dumps(m['name'], ensure_ascii=False)} = {m['account_id']}")
 
 
 def sync_tables(args: argparse.Namespace, config: str | Path | None = None) -> None:

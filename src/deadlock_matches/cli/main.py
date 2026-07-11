@@ -194,8 +194,6 @@ def build_parser(config: str | Path | None = None) -> argparse.ArgumentParser:
 
     b = command("builds")
     b.add_argument("--hero", required=True, help="hero display name, like Mirage")
-    b.add_argument("--players", type=int, default=6, help="top players to include")
-    b.add_argument("--games", type=int, default=10, help="recent ranked games per player")
     b.add_argument(
         "--min-percent",
         type=int,
@@ -317,7 +315,12 @@ def build_parser(config: str | Path | None = None) -> argparse.ArgumentParser:
     )
 
     f = command("download")
-    f.add_argument("--hero", default=None, help="hero display name, like Mirage")
+    f.add_argument(
+        "--hero",
+        default=None,
+        help="hero the players are tracked for, like Mirage. Without --account this "
+        "downloads everyone under [players.<Hero>] in config.toml",
+    )
     f.add_argument(
         "--match",
         type=int_list,
@@ -328,15 +331,14 @@ def build_parser(config: str | Path | None = None) -> argparse.ArgumentParser:
         "--account",
         type=int_list,
         default=None,
-        help="specific account ID(s) to pull instead of the leaderboard top players, needs --hero",
+        help="account ID(s) to download from instead of the tracked players, comma-separated, "
+        "needs --hero. Their games archive for `deadlock match` but only players in "
+        "config.toml join the comparisons",
     )
-    f.add_argument("--players", type=int, default=6, help="top players to track")
     f.add_argument("--games", type=int, default=5, help="recent ranked games per player")
     f.add_argument("--out", default=str(players.PARQUET_DIR), help="players parquet directory")
 
-    sy = sub.add_parser(
-        "sync", help="pull your matches into the parquet tables from the archive or the API"
-    )
+    sy = command("sync")
     sy.add_argument(
         "--source",
         choices=("local", "api"),
@@ -594,7 +596,7 @@ def main(argv: Sequence[str] | None = None, config: str | Path | None = None) ->
     elif args.cmd == "item":
         items.item_report(args, config)
     elif args.cmd == "builds":
-        items.builds_report(args)
+        items.builds_report(args, config)
     elif args.cmd == "compare":
         performance.compare_report(args, config)
     elif args.cmd == "match":

@@ -454,10 +454,14 @@ class Downloads(Table):
     player = Column(pl.String, "Tracked player's name at download time (leaderboard or config)")
     hero_id = Column(pl.Int64, "Hero the player was tracked for")
     rank = Column(
-        pl.Int64, "Leaderboard rank at download time, null for players selected in config"
+        pl.Int64,
+        "Leaderboard rank at download time, null for players picked by hand "
+        "(config watchlist or --account)",
     )
     region = Column(
-        pl.String, "Leaderboard region at download time, null for players selected in config"
+        pl.String,
+        "Leaderboard region at download time, null for players picked by hand "
+        "(config watchlist or --account)",
     )
     downloaded_at = Column(
         pl.Datetime("us", "UTC"),

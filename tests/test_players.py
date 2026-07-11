@@ -1,10 +1,11 @@
+import bz2
 import datetime as dt
 
 import polars as pl
 import pytest
 from google.protobuf import json_format
 
-from deadlock_matches import api, export, players, queries
+from deadlock_matches import export, extract, players, queries
 from deadlock_matches.extract import pb
 
 
@@ -50,54 +51,6 @@ def test_item_frequency_dedupes_within_a_build():
 
 def test_item_frequency_empty():
     assert players.item_frequency([]) == {"n": 0, "items": []}
-
-
-def test_build_order():
-    match_info = {
-        "winning_team": 0,
-        "players": [
-            {
-                "account_id": 7,
-                "team": 0,
-                "kills": 5,
-                "deaths": 1,
-                "assists": 9,
-                "items": [
-                    {"item_id": 3005970438, "game_time_s": 1200, "sold_time_s": 0},
-                    {"item_id": 3005970438, "game_time_s": 60, "sold_time_s": 300},
-                    {"item_id": 999999999, "game_time_s": 30, "sold_time_s": 0},
-                ],
-            }
-        ],
-    }
-
-    b = players.build_order(match_info, 7)
-
-    assert b is not None
-    assert b["win"] is True
-    assert [s["name"] for s in b["seq"]] == ["Escalating Exposure", "Escalating Exposure"]
-    assert [s["sold"] for s in b["seq"]] == [True, False]
-
-
-def test_build_order_min_cost_drops_cheap_items():
-    match_info = {
-        "winning_team": 0,
-        "players": [
-            {
-                "account_id": 7,
-                "team": 0,
-                "kills": 0,
-                "deaths": 0,
-                "assists": 0,
-                "items": [{"item_id": 3005970438, "game_time_s": 60, "sold_time_s": 0}],
-            }
-        ],
-    }
-
-    b = players.build_order(match_info, 7, min_cost=6500)
-
-    assert b is not None
-    assert b["seq"] == []
 
 
 def test_item_frequency_excludes_sold_by_default():
@@ -147,6 +100,23 @@ def _history_row(match_id, hero_id=52, mode=1, start=1):
     return {"match_id": match_id, "hero_id": hero_id, "match_mode": mode, "start_time": start}
 
 
+def _store_bin(archive_dir, match_id, info_json):
+    contents = pb.CMsgMatchMetaDataContents()
+    contents.match_info.CopyFrom(extract.from_api_json(info_json))
+
+    meta = pb.CMsgMatchMetaData()
+    meta.match_details = contents.SerializeToString()
+
+    extract.store_meta(archive_dir, match_id, 1, bz2.compress(meta.SerializeToString()))
+
+
+def _fake_download(match_ids, archive_dir):
+    for mid in match_ids:
+        _store_bin(archive_dir, mid, _match_json(mid))
+
+    return len(list(match_ids)), []
+
+
 def test_top_players_pools_regional_boards(monkeypatch):
     boards = {
         "Europe": [{"account_name": "eu1", "rank": 1, "possible_account_ids": [101]}],
@@ -191,6 +161,35 @@ def test_top_players_respects_limit(monkeypatch):
     assert [g["rank"] for g in got] == [1, 2, 3]
 
 
+def test_ladder_positions_keeps_best_rank_per_account(monkeypatch):
+    boards = {
+        "Europe": [
+            {"account_name": "eu1", "rank": 3, "possible_account_ids": [101]},
+            {"account_name": "smurf", "rank": 2, "possible_account_ids": [201, 202]},
+        ],
+        "Asia": [{"account_name": "eu1", "rank": 1, "possible_account_ids": [101]}],
+    }
+    monkeypatch.setattr(players, "hero_leaderboard", lambda region, hero_id: boards.get(region, []))
+
+    spots = players.ladder_positions(66, regions=["Europe", "Asia"])
+
+    assert spots == {101: {"name": "eu1", "rank": 1, "region": "Asia"}}
+
+
+def test_ladder_positions_survives_unreachable_boards(monkeypatch):
+    def flaky(region, hero_id):
+        if region == "Europe":
+            raise OSError("down")
+
+        return [{"account_name": "na1", "rank": 9, "possible_account_ids": [301]}]
+
+    monkeypatch.setattr(players, "hero_leaderboard", flaky)
+
+    spots = players.ladder_positions(66, regions=["Europe", "NAmerica"])
+
+    assert spots == {301: {"name": "na1", "rank": 9, "region": "NAmerica"}}
+
+
 def test_recent_hero_matches(monkeypatch):
     rows = [
         _history_row(1, start=5),
@@ -212,20 +211,22 @@ def test_download_matches(tmp_path, monkeypatch):
         22: [_history_row(900, start=2), _history_row(901, start=1)],
     }
     monkeypatch.setattr(players, "match_history", lambda aid: hist[aid])
-    monkeypatch.setattr(api, "DATA_DIR", tmp_path)
 
-    def fake_metadata(match_id):
-        api.data_path(f"v1/matches/{match_id}/metadata").write_text("{}", encoding="utf-8")
-        return _match_json(match_id)
+    calls = []
 
-    monkeypatch.setattr(players, "match_metadata", fake_metadata)
+    def fake_download(match_ids, archive_dir):
+        calls.append(list(match_ids))
+
+        return _fake_download(match_ids, archive_dir)
+
+    monkeypatch.setattr(players, "download_metadata", fake_download)
 
     tracked = [
         {"account_id": 11, "name": "someone", "rank": 3, "region": "Asia"},
         {"account_id": 22, "name": "pinned"},
     ]
 
-    rows = players.download_matches(tracked, 52, n=5)
+    rows = players.download_matches(tracked, 52, n=5, archive_dir=tmp_path / "archive")
 
     assert [(r["match_id"], r["account_id"]) for r in rows] == [(900, 11), (900, 22), (901, 22)]
     assert rows[0]["rank"] == 3
@@ -233,29 +234,22 @@ def test_download_matches(tmp_path, monkeypatch):
     assert rows[1]["rank"] is None
     assert all(r["hero_id"] == 52 for r in rows)
     assert all(r["downloaded_at"].tzinfo is not None for r in rows)
+    assert calls == [[900], [901]]
 
 
-def test_download_matches_skips_failed_downloads(monkeypatch):
+def test_download_matches_skips_failed_downloads(tmp_path, monkeypatch):
     monkeypatch.setattr(players, "match_history", lambda aid: [_history_row(900)])
+    monkeypatch.setattr(players, "download_metadata", lambda ids, archive_dir: (0, list(ids)))
 
-    def boom(match_id):
-        raise OSError("api down")
+    tracked = [{"account_id": 11, "name": "x"}]
 
-    monkeypatch.setattr(players, "match_metadata", boom)
-
-    assert players.download_matches([{"account_id": 11, "name": "x"}], 52) == []
+    assert players.download_matches(tracked, 52, archive_dir=tmp_path / "archive") == []
 
 
 def test_matches_by_id(tmp_path, monkeypatch):
-    monkeypatch.setattr(api, "DATA_DIR", tmp_path)
+    monkeypatch.setattr(players, "download_metadata", _fake_download)
 
-    def fake_metadata(match_id):
-        api.data_path(f"v1/matches/{match_id}/metadata").write_text("{}", encoding="utf-8")
-        return _match_json(match_id)
-
-    monkeypatch.setattr(players, "match_metadata", fake_metadata)
-
-    rows = players.matches_by_id([900, 901])
+    rows = players.matches_by_id([900, 901], tmp_path / "archive")
 
     assert [r["match_id"] for r in rows] == [900, 901]
     assert all(r["account_id"] is None and r["hero_id"] is None for r in rows)
@@ -263,13 +257,10 @@ def test_matches_by_id(tmp_path, monkeypatch):
     assert all(r["downloaded_at"].tzinfo is not None for r in rows)
 
 
-def test_matches_by_id_skips_unreachable(monkeypatch):
-    def boom(match_id):
-        raise OSError("api down")
+def test_matches_by_id_skips_unreachable(tmp_path, monkeypatch):
+    monkeypatch.setattr(players, "download_metadata", lambda ids, archive_dir: (0, list(ids)))
 
-    monkeypatch.setattr(players, "match_metadata", boom)
-
-    assert players.matches_by_id([900, 901]) == []
+    assert players.matches_by_id([900, 901], tmp_path / "archive") == []
 
 
 def test_merge_downloads_sorts_mixed_null_accounts(tmp_path):
@@ -298,8 +289,36 @@ def test_merge_downloads_sorts_mixed_null_accounts(tmp_path):
     assert [r["account_id"] for r in merged] == [11, None]
 
 
+def test_match_info_reads_the_archive(tmp_path):
+    _store_bin(tmp_path, 900, _match_json(900))
+
+    info = players.match_info(900, tmp_path)
+
+    assert info is not None
+    assert info.match_id == 900
+    assert info.players[0].account_id == 11
+
+
+def test_match_info_downloads_missing_matches(tmp_path, monkeypatch):
+    monkeypatch.setattr(players, "download_metadata", _fake_download)
+
+    info = players.match_info(900, tmp_path / "archive")
+
+    assert info is not None
+    assert info.match_id == 900
+    assert extract.has_match(tmp_path / "archive", 900)
+
+
+def test_match_info_none_when_unavailable(tmp_path, monkeypatch):
+    monkeypatch.setattr(players, "download_metadata", lambda ids, archive_dir: (0, list(ids)))
+
+    assert players.match_info(900, tmp_path / "archive") is None
+
+
 def test_write_player_tables(tmp_path, monkeypatch):
-    monkeypatch.setattr(players, "match_metadata", lambda mid: _match_json(mid))
+    monkeypatch.setattr(
+        players, "match_info", lambda mid, archive_dir: extract.from_api_json(_match_json(mid))
+    )
 
     t0 = dt.datetime(2026, 7, 1, tzinfo=dt.UTC)
     rows = [
@@ -331,7 +350,9 @@ def test_write_player_tables(tmp_path, monkeypatch):
 
 
 def test_write_player_tables_rebuilds_drifted_tables(tmp_path, monkeypatch):
-    monkeypatch.setattr(players, "match_metadata", lambda mid: _match_json(mid))
+    monkeypatch.setattr(
+        players, "match_info", lambda mid, archive_dir: extract.from_api_json(_match_json(mid))
+    )
 
     row = {
         "match_id": 900,
@@ -358,7 +379,9 @@ def test_write_player_tables_rebuilds_drifted_tables(tmp_path, monkeypatch):
 
 
 def test_write_player_tables_keeps_earliest_download(tmp_path, monkeypatch):
-    monkeypatch.setattr(players, "match_metadata", lambda mid: _match_json(mid))
+    monkeypatch.setattr(
+        players, "match_info", lambda mid, archive_dir: extract.from_api_json(_match_json(mid))
+    )
 
     t0 = dt.datetime(2026, 7, 1, tzinfo=dt.UTC)
     first = {
@@ -398,7 +421,9 @@ def tracked_pq(tmp_path, monkeypatch):
         901: _match_json(901, account_id=22, hero_id=1),
     }
     data[901]["start_time"] = data[901]["start_time"] + 5 * 86400
-    monkeypatch.setattr(players, "match_metadata", lambda mid: data[mid])
+    monkeypatch.setattr(
+        players, "match_info", lambda mid, archive_dir: extract.from_api_json(data[mid])
+    )
 
     t0 = dt.datetime(2026, 7, 1, tzinfo=dt.UTC)
     rows = [
@@ -425,6 +450,115 @@ def tracked_pq(tmp_path, monkeypatch):
     players.write_player_tables(rows, out_dir=out)
 
     return out
+
+
+def test_pool_members_joins_config_to_ledger(tracked_pq, tmp_path):
+    cfg = tmp_path / "config.toml"
+    cfg.write_text('[players.Mirage]\n"Some One" = 11\nfresh = 99\n')
+
+    members = players.pool_members("Mirage", parquet_dir=tracked_pq, config_path=cfg)
+
+    assert [m["name"] for m in members] == ["Some One", "fresh"]
+    assert members[0]["account_id"] == 11
+    assert members[0]["games"] == 1
+    assert members[0]["rank"] == 1
+    assert members[0]["downloaded_at"] == dt.datetime(2026, 7, 1, tzinfo=dt.UTC)
+    assert members[1] == {
+        "name": "fresh",
+        "account_id": 99,
+        "games": 0,
+        "rank": None,
+        "downloaded_at": None,
+    }
+
+
+def test_pool_members_empty_without_config(tracked_pq, tmp_path):
+    members = players.pool_members(
+        "Mirage", parquet_dir=tracked_pq, config_path=tmp_path / "none.toml"
+    )
+
+    assert members == []
+
+
+def test_pool_games_filters_to_config_accounts_per_hero(tracked_pq, tmp_path):
+    cfg = tmp_path / "config.toml"
+    cfg.write_text("[players.Mirage]\nsomeone = 11\n[players.Infernus]\nother = 22\n")
+
+    mirage = players.pool_games("Mirage", parquet_dir=tracked_pq, config_path=cfg).collect()
+    infernus = players.pool_games("Infernus", parquet_dir=tracked_pq, config_path=cfg).collect()
+
+    assert mirage["match_id"].to_list() == [900]
+    assert mirage["account_id"].to_list() == [11]
+    assert infernus["match_id"].to_list() == [901]
+
+
+def test_pool_games_ignores_untracked_ledger_rows(tracked_pq, tmp_path):
+    cfg = tmp_path / "config.toml"
+    cfg.write_text("[players.Mirage]\nsomebody_else = 999\n")
+
+    out = players.pool_games("Mirage", parquet_dir=tracked_pq, config_path=cfg).collect()
+
+    assert out.is_empty()
+
+
+def test_pool_games_empty_without_ledger(tmp_path):
+    cfg = tmp_path / "config.toml"
+    cfg.write_text("[players.Mirage]\nsomeone = 11\n")
+
+    out = players.pool_games("Mirage", parquet_dir=tmp_path, config_path=cfg).collect()
+
+    assert out.is_empty()
+    assert out.columns == ["match_id", "account_id", "rank", "downloaded_at"]
+
+
+MYSTIC_SHOT = 395867183
+
+
+def test_pool_builds_reads_item_events(tmp_path, monkeypatch):
+    data = _match_json(900, account_id=11)
+    data["players"][0]["items"] = [
+        {"item_id": MYSTIC_SHOT, "game_time_s": 480, "sold_time_s": 0, "flags": 0},
+        {"item_id": 999999999, "game_time_s": 500, "sold_time_s": 0, "flags": 0},
+    ]
+    monkeypatch.setattr(players, "match_info", lambda mid, archive_dir: extract.from_api_json(data))
+
+    out = tmp_path / "pq"
+    players.write_player_tables(
+        [
+            {
+                "match_id": 900,
+                "account_id": 11,
+                "player": "Someone",
+                "hero_id": 52,
+                "rank": 1,
+                "region": "NAmerica",
+                "downloaded_at": dt.datetime(2026, 7, 1, tzinfo=dt.UTC),
+            }
+        ],
+        out_dir=out,
+    )
+
+    cfg = tmp_path / "config.toml"
+    cfg.write_text('[players.Mirage]\n"Some One" = 11\n')
+
+    builds = players.pool_builds("Mirage", parquet_dir=out, config_path=cfg)
+
+    assert len(builds) == 1
+
+    b = builds[0]
+
+    assert b["player"] == "Some One"
+    assert b["win"] is True
+    assert [s["name"] for s in b["seq"]] == ["Mystic Shot"]
+    assert b["seq"][0]["min"] == 8.0
+    assert b["seq"][0]["sold"] is False
+
+
+def test_pool_builds_empty_without_tables(tmp_path):
+    cfg = tmp_path / "config.toml"
+    cfg.write_text("[players.Mirage]\nsomeone = 11\n")
+
+    assert players.pool_builds("Mirage", parquet_dir=tmp_path, config_path=cfg) == []
 
 
 def test_tracked_player_games(tracked_pq):
@@ -458,11 +592,12 @@ def test_tracked_player_games_since(tracked_pq):
 def test_write_player_tables_skips_already_built(tmp_path, monkeypatch):
     calls = []
 
-    def fake_meta(mid):
+    def fake_info(mid, archive_dir):
         calls.append(mid)
-        return _match_json(mid)
 
-    monkeypatch.setattr(players, "match_metadata", fake_meta)
+        return extract.from_api_json(_match_json(mid))
+
+    monkeypatch.setattr(players, "match_info", fake_info)
 
     t0 = dt.datetime(2026, 7, 1, tzinfo=dt.UTC)
     base = {

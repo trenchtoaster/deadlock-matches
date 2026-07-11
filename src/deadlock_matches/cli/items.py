@@ -7,7 +7,8 @@ from typing import TYPE_CHECKING
 
 from deadlock_matches import heroes, items, meta, players, queries
 from deadlock_matches.cli import cards
-from deadlock_matches.config import format_accounts
+from deadlock_matches.cli.data import no_pool_hint
+from deadlock_matches.config import config_players, format_accounts
 
 if TYPE_CHECKING:
     import argparse
@@ -100,20 +101,25 @@ def item_report(args: argparse.Namespace, config: str | Path | None = None) -> N
 
         print()
 
-    players_events = Path(players.PARQUET_DIR) / "item_events.parquet"
+    pool = config_players(args.hero, config)
 
-    if players_events.exists():
-        top = queries.item_value(item.name, parquet_dir=players.PARQUET_DIR, hero=args.hero)
+    if pool and queries.table_exists("item_events", players.PARQUET_DIR):
+        top = queries.item_value(
+            item.name,
+            parquet_dir=players.PARQUET_DIR,
+            hero=args.hero,
+            accounts=list(pool.values()),
+        )
 
         if top["builds"]:
             percent = top["percent_of_hero_damage"]
             note = f", {percent:.1f}% of their hero damage" if percent else ""
             print(
-                f"Top {args.hero} players: {top['per_min']:,.0f} damage per minute owned "
-                f"across {top['builds']} builds{note} (deadlock-api.com)\n"
+                f"Tracked {args.hero} players: {top['per_min']:,.0f} damage per minute owned "
+                f"across {top['builds']} builds{note} (their downloaded games)\n"
             )
     else:
-        print(f'Run `deadlock download --hero "{args.hero}"` to compare against top players\n')
+        print(no_pool_hint(args.hero, tracked_in_config=bool(pool)) + "\n")
 
     try:
         badge = meta.min_badge(args.min_rating)
@@ -152,25 +158,41 @@ def item_report(args: argparse.Namespace, config: str | Path | None = None) -> N
         )
 
 
-def builds_report(args: argparse.Namespace) -> None:
-    """Print the items top players buy on a hero, in wins and in losses."""
+def builds_report(args: argparse.Namespace, config: str | Path | None = None) -> None:
+    """Print the items the tracked players buy on a hero, in wins and in losses."""
     hero_id = heroes.hero_id_by_name(args.hero)
     if hero_id is None:
         print(f"Unknown hero: {args.hero}")
         return
 
-    top = players.top_players(hero_id, limit=args.players)
-    print(f"Top {len(top)} {args.hero} players:\n")
-    print(f"  {'Player':<18} {'Rank':>5}  {'Region':<9} Record")
+    members = players.pool_members(args.hero, config_path=config)
 
-    wins, losses = [], []
-    for m in top:
-        bs = players.player_builds(m["account_id"], hero_id, n=args.games)
-        w = [b for b in bs if b["win"]]
-        losses += [b for b in bs if not b["win"]]
-        wins += w
+    if not members:
+        print(no_pool_hint(args.hero, tracked_in_config=False))
+        return
 
-        print(f"  {m['name']:<18} {m['rank']:>5}  {m['region']:<9} {len(w)}W {len(bs) - len(w)}L")
+    builds = players.pool_builds(args.hero, config_path=config)
+
+    if not builds:
+        print(no_pool_hint(args.hero, tracked_in_config=True))
+        return
+
+    by_account: dict[int, list[dict]] = {}
+
+    for b in builds:
+        by_account.setdefault(b["account_id"], []).append(b)
+
+    print(f"Tracked {args.hero} players ({len(builds)} downloaded games):\n")
+    print(f"  {'Player':<18} {'Games':>5} {'Rank':>5}  Record")
+
+    for m in members:
+        bs = by_account.get(m["account_id"], [])
+        w = sum(1 for b in bs if b["win"])
+        rank = "-" if m["rank"] is None else str(m["rank"])
+        print(f"  {m['name']:<18} {m['games']:>5} {rank:>5}  {w}W {len(bs) - w}L")
+
+    wins = [b for b in builds if b["win"]]
+    losses = [b for b in builds if not b["win"]]
 
     aw = players.item_frequency(wins)
     lossmap = {r["name"]: r["percent"] for r in players.item_frequency(losses)["items"]}
