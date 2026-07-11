@@ -378,6 +378,83 @@ def test_write_player_tables_rebuilds_drifted_tables(tmp_path, monkeypatch):
     assert "party" in pl.read_parquet_schema(target)
 
 
+def test_write_player_tables_carries_forward_undecodable_matches(tmp_path, monkeypatch):
+    monkeypatch.setattr(
+        players, "match_info", lambda mid, archive_dir: extract.from_api_json(_match_json(mid))
+    )
+
+    row = {
+        "match_id": 900,
+        "account_id": 11,
+        "player": "someone",
+        "hero_id": 52,
+        "rank": 3,
+        "region": "Asia",
+        "downloaded_at": dt.datetime(2026, 7, 1, tzinfo=dt.UTC),
+    }
+    out = tmp_path / "pq"
+    players.write_player_tables([row], out_dir=out)
+
+    target = next((out / "players").glob("*.parquet"))
+    pl.read_parquet(target).drop("party").write_parquet(target)
+
+    assert export.schema_drift(out) is not None
+
+    attempted = []
+
+    def gone(mid, archive_dir):
+        attempted.append(mid)
+        raise RuntimeError("body no longer available")
+
+    monkeypatch.setattr(players, "match_info", gone)
+
+    counts = players.write_player_tables([], out_dir=out)
+
+    assert attempted == [900]
+    assert export.schema_drift(out) is None
+    assert counts["matches"] == 1
+
+    matches = queries.scan("matches", out).collect()
+
+    assert matches["match_id"].to_list() == [900]
+    assert "party" in pl.read_parquet_schema(next((out / "players").glob("*.parquet")))
+
+
+def test_write_player_tables_fills_a_missing_required_table(tmp_path, monkeypatch):
+    import shutil
+
+    monkeypatch.setattr(
+        players, "match_info", lambda mid, archive_dir: extract.from_api_json(_match_json(mid))
+    )
+
+    row = {
+        "match_id": 900,
+        "account_id": 11,
+        "player": "someone",
+        "hero_id": 52,
+        "rank": 3,
+        "region": "Asia",
+        "downloaded_at": dt.datetime(2026, 7, 1, tzinfo=dt.UTC),
+    }
+    out = tmp_path / "pq"
+    players.write_player_tables([row], out_dir=out)
+
+    shutil.rmtree(out / "buffs")
+
+    assert export.schema_drift(out) is not None
+
+    def gone(mid, archive_dir):
+        raise RuntimeError("body no longer available")
+
+    monkeypatch.setattr(players, "match_info", gone)
+
+    players.write_player_tables([], out_dir=out)
+
+    assert export.schema_drift(out) is None
+    assert queries.table_exists("buffs", out)
+    assert queries.scan("matches", out).collect()["match_id"].to_list() == [900]
+
+
 def test_write_player_tables_keeps_earliest_download(tmp_path, monkeypatch):
     monkeypatch.setattr(
         players, "match_info", lambda mid, archive_dir: extract.from_api_json(_match_json(mid))

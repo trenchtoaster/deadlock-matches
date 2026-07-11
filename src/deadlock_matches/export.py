@@ -853,6 +853,129 @@ def clear_partition(name: str, out_dir: Path) -> None:
     (out_dir / f"{name}.parquet").unlink(missing_ok=True)
 
 
+def _carry_forward(name: str, out_dir: Path, staging: Path, decoded: Collection[int]) -> None:
+    """Copy the old partitions of one table into staging, reshaped and minus the freshly decoded ids.
+
+    - a match whose body could not be decoded keeps its old row so nothing is dropped
+    - genuinely new columns fill with null for those carried rows
+    """
+    old = out_dir / name
+
+    if not old.is_dir():
+        return
+
+    keep = list(decoded)
+
+    for month_file in sorted(old.glob("*.parquet")):
+        rows = pl.read_parquet(month_file).filter(~pl.col("match_id").is_in(keep))
+
+        if not rows.is_empty():
+            write_partitioned(name, _reshape_to_schema(name, rows), month_file.stem, staging)
+
+
+def _swap_into_place(staged: Path, target: Path) -> None:
+    """Replace target with staged through a backup so the live table is only ever a rename away.
+
+    - the old table moves to a sibling backup, staged moves into place, then the backup is dropped
+    - a failed move restores the backup so the table is never left missing
+    """
+    backup = target.parent / f"{target.name}.backup"
+
+    if backup.exists():
+        shutil.rmtree(backup)
+
+    if target.is_dir():
+        target.replace(backup)
+
+    try:
+        staged.replace(target)
+
+    except OSError:
+        if backup.is_dir():
+            backup.replace(target)
+
+        raise
+
+    if backup.is_dir():
+        shutil.rmtree(backup)
+
+
+def _restore_backups(out_dir: Path) -> None:
+    """Recover any table left as a .backup by a crash midway through a previous swap."""
+    for name in sorted(schemas.PARTITIONED):
+        backup = out_dir / f"{name}.backup"
+
+        if not backup.is_dir():
+            continue
+
+        target = out_dir / name
+
+        if target.is_dir():
+            shutil.rmtree(backup)
+
+        else:
+            backup.replace(target)
+
+
+def _fill_missing_tables(out_dir: Path, exclude: Collection[str]) -> None:
+    """Write an empty partition for any table still missing, so a missing directory stops reading as drift."""
+    matches_dir = out_dir / "matches"
+
+    if not matches_dir.is_dir():
+        return
+
+    months = sorted(f.stem for f in matches_dir.glob("*.parquet"))
+
+    if not months:
+        return
+
+    for name in sorted(schemas.PARTITIONED):
+        if name in exclude or (out_dir / name).is_dir():
+            continue
+
+        write_partitioned(name, schemas.conform(name, []), months[0], out_dir)
+
+
+def rebuild_drifted_partitions(
+    infos: Iterable[MatchInfo], out_dir: Path, exclude: Collection[str]
+) -> None:
+    """Rebuild the drifted partitions without ever leaving live tables destroyed.
+
+    - decodes the wanted bodies into a staging directory first
+    - carries any match that could not be decoded forward from the old partitions
+    - swaps each table into place through a backup once staging holds the replacement
+    - a table newly required by the schema but absent everywhere becomes an empty partition
+    """
+    _restore_backups(out_dir)
+
+    staging = out_dir.parent / f"{out_dir.name}.rebuild"
+
+    if staging.exists():
+        shutil.rmtree(staging)
+
+    staging.mkdir(parents=True)
+
+    try:
+        export_infos(infos, staging, exclude)
+        decoded = exported_match_ids(staging)
+
+        for name in sorted(schemas.PARTITIONED):
+            if name in exclude:
+                continue
+
+            _carry_forward(name, out_dir, staging, decoded)
+
+            staged = staging / name
+
+            if staged.is_dir():
+                _swap_into_place(staged, out_dir / name)
+
+        _fill_missing_tables(out_dir, exclude)
+
+    finally:
+        shutil.rmtree(staging, ignore_errors=True)
+
+
 def _reshape_to_schema(name: str, df: pl.DataFrame) -> pl.DataFrame:
     """Fit old rows to the current schema and drop columns we no longer support."""
     exprs = []

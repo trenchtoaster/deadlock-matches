@@ -1184,3 +1184,68 @@ def test_gold_source_matches_protobuf_enum():
     }
 
     assert {m.name: m.value for m in export.GoldSource} == expected
+
+
+def test_swap_into_place_replaces_and_leaves_no_backup(tmp_path):
+    target = tmp_path / "players"
+    target.mkdir()
+    (target / "2026-07.parquet").write_text("live")
+
+    staged = tmp_path / ".rebuild" / "players"
+    staged.mkdir(parents=True)
+    (staged / "2026-07.parquet").write_text("new")
+
+    export._swap_into_place(staged, target)
+
+    assert (target / "2026-07.parquet").read_text() == "new"
+    assert not (tmp_path / "players.backup").exists()
+
+
+def test_swap_into_place_restores_the_table_on_failure(tmp_path, monkeypatch):
+    from pathlib import Path
+
+    target = tmp_path / "players"
+    target.mkdir()
+    (target / "2026-07.parquet").write_text("live")
+
+    staged = tmp_path / ".rebuild" / "players"
+    staged.mkdir(parents=True)
+    (staged / "2026-07.parquet").write_text("new")
+
+    real_replace = Path.replace
+
+    def flaky(self, dst):
+        if self == staged:
+            raise OSError("swap interrupted")
+
+        return real_replace(self, dst)
+
+    monkeypatch.setattr(Path, "replace", flaky)
+
+    with pytest.raises(OSError, match="swap interrupted"):
+        export._swap_into_place(staged, target)
+
+    assert (target / "2026-07.parquet").read_text() == "live"
+    assert not (tmp_path / "players.backup").exists()
+
+
+def test_restore_backups_recovers_a_stale_backup(tmp_path):
+    backup = tmp_path / "players.backup"
+    backup.mkdir()
+    (backup / "2026-07.parquet").write_text("saved")
+
+    export._restore_backups(tmp_path)
+
+    assert (tmp_path / "players" / "2026-07.parquet").read_text() == "saved"
+    assert not backup.exists()
+
+
+def test_restore_backups_drops_a_backup_when_the_table_is_live(tmp_path):
+    (tmp_path / "players").mkdir()
+    backup = tmp_path / "players.backup"
+    backup.mkdir()
+
+    export._restore_backups(tmp_path)
+
+    assert (tmp_path / "players").is_dir()
+    assert not backup.exists()

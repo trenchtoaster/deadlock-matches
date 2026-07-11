@@ -533,8 +533,8 @@ def write_player_tables(
     - downloads accumulates across runs and the earliest downloaded_at wins per (match, player, hero)
     - match bodies are immutable so only match_ids not already built get decoded and appended
     - a legacy single-file store is re-laid-out into partitions first, without decoding anything
-    - rebuilds every table from the stored match metadata when the columns
-      drifted from schemas.py
+    - a schema drift rebuilds from the stored bodies into a staging area and swaps it in,
+      carrying any match that cannot be decoded forward so live tables are never lost
     - nothing is pruned, so player history builds up across runs
     """
     out_dir = PARQUET_DIR if out_dir is None else Path(out_dir)
@@ -547,9 +547,7 @@ def write_player_tables(
         export.migrate_to_partitions(out_dir, exclude)
 
     if export.schema_drift(out_dir, exclude):
-        for name in schemas.PARTITIONED:
-            if name not in exclude:
-                export.clear_partition(name, out_dir)
+        export.rebuild_drifted_partitions(_decode_bodies(wanted, archive_dir), out_dir, exclude)
 
     exported = export.exported_match_ids(out_dir)
     new_ids = [m for m in wanted if m not in exported]
