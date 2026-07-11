@@ -49,6 +49,7 @@ def write_cache_entry(
     abandon_s=None,
     not_scored=False,
     badges=None,
+    paths=False,
 ):
     contents = pb.CMsgMatchMetaDataContents()
     info = contents.match_info
@@ -180,6 +181,22 @@ def write_cache_entry(
 
     if shots is not None:
         p.stats[-1].shots_hit, p.stats[-1].shots_missed = shots
+
+    if paths:
+        mp = info.match_paths
+        mp.interval_s = 1.0
+        mp.x_resolution = 100
+        mp.y_resolution = 100
+
+        track = mp.paths.add()
+        track.player_slot = p.player_slot
+        track.x_max = 10000.0
+        track.y_max = 10000.0
+        track.x_pos.extend(range(10))
+        track.y_pos.extend([0] * 10)
+        track.health.extend([100] * 10)
+        track.combat_type.extend([1] * 4 + [0] * 6)
+        track.move_type.extend([0, 4, 4, 3, 0, 7, 8, 7, 6, 0])
 
     for victim_slot, killer_slot, t in death_log:
         victim = p if victim_slot == 1 else enemy
@@ -1305,10 +1322,86 @@ def test_match_stacks_flag_without_any_counters(capsys, tmp_path):
     assert "No stack counters in match 100" in out
 
 
+def test_match_movement_flag_prints_lobby_and_intervals(capsys, tmp_path):
+    cache = tmp_path / "cache"
+    cache.mkdir()
+    write_cache_entry(cache, match_id=100, stats=[(300, 3000)], paths=True)
+
+    run_main(tmp_path, "match", "--account", "42", "--movement")
+
+    out = capsys.readouterr().out
+
+    assert "Movement" in out
+    assert re.search(r"Mirage \*\s+ally", out)
+    assert "Mirage per interval" in out
+    assert "Meters" in out
+    assert "Dashes" in out
+    assert "0-5m" in out
+    assert "Total" in out
+    assert "20.0%" in out
+
+
+def test_match_movement_flag_without_paths(capsys, tmp_path):
+    cache = tmp_path / "cache"
+    cache.mkdir()
+    write_cache_entry(cache, match_id=100, stats=[(300, 3000)])
+
+    run_main(tmp_path, "match", "--account", "42", "--movement")
+
+    out = capsys.readouterr().out
+
+    assert "no movement rows in match 100" in out
+
+
+def test_movement_by_player_table(capsys):
+    metrics = {
+        "distance_min": 39.37 * 400.0,
+        "stationary_percent": 7.0,
+        "slide_percent": 8.0,
+        "in_air_percent": 20.0,
+        "zipline_percent": 9.0,
+        "combat_percent": 25.0,
+        "dashes_min": 2.0,
+        "air_dashes_min": 0.5,
+    }
+    you = pl.DataFrame([{**metrics, "distance_min": 39.37 * 350.0}])
+    top = pl.DataFrame(
+        [
+            {"match_id": 900, "account_id": 11, **metrics},
+            {"match_id": 901, "account_id": 22, **metrics},
+            {"match_id": 902, "account_id": 33, **metrics},
+        ]
+    )
+    tracked = pl.DataFrame(
+        [
+            {"match_id": 900, "account_id": 11, "rank": 5},
+            {"match_id": 901, "account_id": 22, "rank": None},
+            {"match_id": 902, "account_id": 33, "rank": None},
+        ]
+    )
+
+    performance._movement_by_player(
+        you, top, tracked, labels={11: "Someone", 22: "other", 33: "스노우맨"}
+    )
+
+    out = capsys.readouterr().out
+
+    assert re.search(r"you\s+-\s+1\s+-\s+350\.0", out)
+    assert re.search(r"Someone\s+11\s+1\s+5\s+400\.0", out)
+    assert re.search(r"other\s+22\s+1\s+-\s+400\.0", out)
+    assert re.search(r"스노우맨\s+33\s+1\s+-\s+400\.0", out)
+
+
+def test_fit_name_counts_wide_characters_double():
+    assert performance._fit_name("스노우맨", 14) == "스노우맨" + " " * 6
+    assert performance._fit_name("스노우맨", 6) == "스노우"
+    assert performance._fit_name("a-very-long-player-name", 14) == "a-very-long-pl"
+
+
 COUNTERSPELL = 1414025773
 
 
-def test_match_combat_flag_prints_gunfight_and_ranges(capsys, tmp_path):
+def test_match_combat_flag_prints_aim_and_ranges(capsys, tmp_path):
     cache = tmp_path / "cache"
     cache.mkdir()
     write_cache_entry(

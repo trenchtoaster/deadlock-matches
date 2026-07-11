@@ -6,6 +6,7 @@ import datetime as dt
 import itertools
 import re
 import statistics as st
+import unicodedata
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
@@ -599,6 +600,10 @@ def match_report(args: argparse.Namespace, config: str | Path | None = None) -> 
 
     if args.combat:
         combat_report(row, args)
+        return
+
+    if args.movement:
+        match_movement_report(row, args)
         return
 
     if args.deaths or args.kills:
@@ -1702,6 +1707,77 @@ def _lobby_aim_table(row: dict[str, Any], args: argparse.Namespace) -> None:
     )
 
 
+MOVEMENT_HEADER = (
+    f"{'Meters':>8}{'/min':>7}{'Stationary':>12}{'Slide':>8}"
+    f"{'In air':>8}{'Zipline':>9}{'Fighting':>10}{'Dashes':>8}{'Air dash':>10}"
+)
+
+
+def _movement_cells(r: dict[str, Any]) -> str:
+    """Format the movement metric cells of one row, matching MOVEMENT_HEADER."""
+
+    def pct(value: float | None) -> str:
+        return f"{value:.1f}%" if value is not None else "-"
+
+    meters = f"{r['distance'] / UNITS_PER_METER:,.0f}"
+    pace = "-"
+
+    if r["distance_min"] is not None:
+        pace = f"{r['distance_min'] / UNITS_PER_METER:,.0f}"
+
+    return (
+        f"{meters:>8}{pace:>7}{pct(r['stationary_percent']):>12}"
+        f"{pct(r['slide_percent']):>8}{pct(r['in_air_percent']):>8}"
+        f"{pct(r['zipline_percent']):>9}{pct(r['combat_percent']):>10}"
+        f"{r['dashes']:>8}{r['air_dashes']:>10}"
+    )
+
+
+def match_movement_report(row: dict[str, Any], args: argparse.Namespace) -> None:
+    """Print movement summed for every player in the match, then one player per interval.
+
+    - percents cover alive seconds, stationary and the pace cover moving seconds
+    - intervals spent fully dead print "-" for every percent
+    """
+    try:
+        intervals = queries.movement_intervals(
+            row["match_id"], row["account_id"], args.interval * 60, args.parquet
+        )
+        total = queries.movement_intervals(
+            row["match_id"], row["account_id"], max(row["duration_s"], 60), args.parquet
+        )
+    except ValueError as e:
+        print(e)
+        return
+
+    lobby = (
+        queries.movement_scoreboard(row["match_id"], args.parquet)
+        .sort(pl.col("team") == row["team"], "distance", descending=[True, True])
+        .collect()
+        .to_dicts()
+    )
+    heroes_shown = [
+        f"{r['hero'] or '?'} *" if r["account_id"] == row["account_id"] else r["hero"] or "?"
+        for r in lobby
+    ]
+    width = max(max(len(h) for h in heroes_shown), 4) + 2
+
+    print("\n  Movement")
+    print(f"  {'Hero':<{width}} {'Side':<5}{MOVEMENT_HEADER}")
+
+    for hero_shown, r in zip(heroes_shown, lobby, strict=True):
+        side = "ally" if r["team"] == row["team"] else "enemy"
+        print(f"  {hero_shown:<{width}} {side:<5}{_movement_cells(r)}")
+
+    print(f"\n  {row['hero']} per interval")
+    print(f"  {'Time':<9}{MOVEMENT_HEADER}")
+
+    for r in intervals.iter_rows(named=True):
+        print(f"  {_span(r):<9}{_movement_cells(r)}")
+
+    print(f"  {'Total':<9}{_movement_cells(total.row(0, named=True))}")
+
+
 def souls_report(row: dict[str, Any], args: argparse.Namespace) -> None:
     """Print the souls by source per interval for one player, then the farm grouping.
 
@@ -2159,24 +2235,21 @@ def deaths_report(args: argparse.Namespace, config: str | Path | None = None) ->
 
 
 MOVEMENT_METRICS = [
+    ("meters /min", "distance_min"),
+    ("stationary %", "stationary_percent"),
     ("slide %", "slide_percent"),
-    ("ground dashes /min", "dashes_min"),
-    ("air dashes /min", "air_dashes_min"),
     ("in air %", "in_air_percent"),
     ("zipline %", "zipline_percent"),
     ("fighting players %", "combat_percent"),
-    ("distance /min", "distance_min"),
-    ("stationary %", "stationary_percent"),
+    ("ground dashes /min", "dashes_min"),
+    ("air dashes /min", "air_dashes_min"),
 ]
 
 
 def movement_report(args: argparse.Namespace, config: str | Path | None = None) -> None:
     """Compare movement metrics between the player and select other players."""
-    if not queries.table_exists("movement", args.parquet):
-        print(
-            'No movement table: remove "movement" from the exclude list in config.toml '
-            "and run `deadlock sync`"
-        )
+    if not queries.table_exists("movement_intervals", args.parquet):
+        print("No movement_intervals table yet: run `deadlock sync`")
         return
 
     hero_id = heroes.hero_id_by_name(args.hero)
@@ -2184,55 +2257,143 @@ def movement_report(args: argparse.Namespace, config: str | Path | None = None) 
         print(f"Unknown hero: {args.hero}")
         return
 
+    hero = heroes.hero_name(hero_id)
+    metric_columns = [col for _, col in MOVEMENT_METRICS]
     mine = (
         queries.my_games(args.parquet, accounts=args.account)
         .filter(pl.col("hero_id") == hero_id)
         .select("match_id", "account_id")
     )
-    you = queries.movement_profile(args.parquet).join(mine, on=["match_id", "account_id"]).collect()
+    you = (
+        queries.movement_profile(args.parquet)
+        .join(mine, on=["match_id", "account_id"])
+        .select(metric_columns)
+        .collect()
+    )
 
     if you.is_empty():
-        print(f"No {args.hero} games in your tables")
+        print(f"No {hero} games in your tables")
         return
 
+    labels = {a: name for name, a in config_players(hero, config).items()}
     top = None
-    if queries.table_exists("movement", players.PARQUET_DIR):
-        tracked = (
-            queries.scan("downloads", players.PARQUET_DIR)
-            .filter(pl.col("hero_id") == hero_id)
-            .select("match_id", "account_id")
-        )
+    tracked = None
+
+    if labels and queries.table_exists("movement_intervals", players.PARQUET_DIR):
+        tracked = players.pool_games(hero, config_path=config).collect()
         top = (
             queries.movement_profile(players.PARQUET_DIR)
-            .join(tracked, on=["match_id", "account_id"])
+            .join(tracked.lazy().select("match_id", "account_id"), on=["match_id", "account_id"])
+            .select("match_id", "account_id", *metric_columns)
             .collect()
         )
 
         if top.is_empty():
             top = None
 
-    title = f"{args.hero} movement: you ({len(you)} games)"
-    if top is not None:
-        title += f" vs top players ({len(top)} games)"
+    title = f"{hero} movement: you ({len(you)} games)"
+    if top is not None and tracked is not None:
+        newest = tracked.get_column("downloaded_at").max()
+        title += (
+            f" vs {tracked.get_column('account_id').n_unique()} tracked players "
+            f"({len(top)} games, last download {newest:%Y-%m-%d})"
+        )
     print(title + "\n")
+
+    if args.by == "player":
+        if top is None or tracked is None:
+            print(no_pool_hint(hero, tracked_in_config=bool(labels)))
+            return
+
+        _movement_by_player(you, top, tracked, labels)
+        return
 
     header = f"  {'Metric':<24}{'You':>9}"
     if top is not None:
-        header += f"{'Top':>9}{'Gap':>9}"
+        header += f"{'Tracked':>9}{'Gap':>9}"
     print(header)
 
     for label, col in MOVEMENT_METRICS:
-        yours = _mean(you, col)
+        scale = UNITS_PER_METER if col == "distance_min" else 1.0
+        yours = _mean(you, col) / scale
         line = f"  {label:<24}{yours:>9,.1f}"
 
         if top is not None:
-            theirs = _mean(top, col)
+            theirs = _mean(top, col) / scale
             line += f"{theirs:>9,.1f}{theirs - yours:>+9,.1f}"
 
         print(line)
 
     if top is None:
-        print(
-            f'\nNo top player movement tables: run `deadlock download --hero "{args.hero}"` '
-            'without "movement" in the config.toml exclude list'
+        print("\n" + no_pool_hint(hero, tracked_in_config=bool(labels)))
+
+
+def _fit_name(name: str, width: int) -> str:
+    """Cut a name to a display width and pad it there, wide characters count double."""
+    out = ""
+    used = 0
+
+    for c in name:
+        w = 2 if unicodedata.east_asian_width(c) in "WF" else 1
+
+        if used + w > width:
+            break
+
+        out += c
+        used += w
+
+    return out + " " * (width - used)
+
+
+NAME_WIDTH = 14
+
+
+def _movement_by_player(
+    you: pl.DataFrame, top: pl.DataFrame, tracked: pl.DataFrame, labels: dict[int, str]
+) -> None:
+    """Print one movement row per tracked player and a you row for contrast.
+
+    - each row averages the per game metrics of that player
+    - names are the labels from [players.<hero>] in config.toml
+    - Rank is the best hero ladder rank at download time, "-" when they were
+      never on the ladder
+    """
+    columns = [col for _, col in MOVEMENT_METRICS]
+    rows = (
+        top.join(
+            tracked.select("match_id", "account_id", "rank"),
+            on=["match_id", "account_id"],
         )
+        .group_by("account_id")
+        .agg(
+            pl.len().alias("games"),
+            pl.col("rank").min().alias("rank"),
+            pl.col(columns).mean(),
+        )
+        .sort("distance_min", descending=True)
+        .to_dicts()
+    )
+
+    print(
+        f"  {_fit_name('Player', NAME_WIDTH)}{'Account':>11}{'Games':>7}{'Rank':>8}"
+        f"{'m /min':>9}{'Stationary':>12}{'Slide':>8}{'In air':>8}{'Zipline':>9}"
+        f"{'Fighting':>10}{'Dash/min':>10}{'Air dash':>10}"
+    )
+
+    def line(label: str, account: str, games: int, rank: str, r: dict[str, Any]) -> str:
+        return (
+            f"  {_fit_name(label, NAME_WIDTH)}{account:>11}{games:>7,}{rank:>8}"
+            f"{r['distance_min'] / UNITS_PER_METER:>9,.1f}"
+            f"{r['stationary_percent']:>11,.1f}%{r['slide_percent']:>7,.1f}%"
+            f"{r['in_air_percent']:>7,.1f}%{r['zipline_percent']:>8,.1f}%"
+            f"{r['combat_percent']:>9,.1f}%{r['dashes_min']:>10,.1f}{r['air_dashes_min']:>10,.1f}"
+        )
+
+    yours = {col: _mean(you, col) for col in columns}
+    print(line("you", "-", len(you), "-", yours))
+
+    for r in rows:
+        name = labels.get(r["account_id"], str(r["account_id"]))
+        rank = "-" if r["rank"] is None else str(r["rank"])
+
+        print(line(name, str(r["account_id"]), r["games"], rank, r))

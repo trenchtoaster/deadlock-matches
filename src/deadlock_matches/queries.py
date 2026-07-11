@@ -2009,8 +2009,125 @@ def team_intervals(
     )
 
 
+MOVEMENT_COUNTS = [
+    "alive_s",
+    "moving_s",
+    "stationary_s",
+    "slide_s",
+    "in_air_s",
+    "zipline_s",
+    "combat_s",
+    "dashes",
+    "air_dashes",
+    "distance",
+]
+
+
+def _movement_percents() -> list[pl.Expr]:
+    """Derive the percent and pace columns from summed movement counts."""
+    alive = pl.col("alive_s")
+    moving = pl.col("moving_s")
+
+    return [
+        pl.when(alive > 0).then(100 * pl.col("slide_s") / alive).alias("slide_percent"),
+        pl.when(alive > 0).then(100 * pl.col("in_air_s") / alive).alias("in_air_percent"),
+        pl.when(alive > 0).then(100 * pl.col("zipline_s") / alive).alias("zipline_percent"),
+        pl.when(alive > 0).then(100 * pl.col("combat_s") / alive).alias("combat_percent"),
+        pl.when(moving > 0).then(100 * pl.col("stationary_s") / moving).alias("stationary_percent"),
+        pl.when(moving > 0).then(pl.col("distance") / (moving / 60)).alias("distance_min"),
+    ]
+
+
+def movement_intervals(
+    match_id: int,
+    account_id: int,
+    interval_s: int = 300,
+    parquet_dir: str | Path | None = None,
+) -> pl.DataFrame:
+    """Split the movement for one player into intervals of distance and state counts.
+
+    - sums the per minute movement_intervals rows into the requested buckets
+    - percents cover alive seconds, stationary and pace cover moving seconds
+    - intervals spent fully dead keep zero counts and null percents
+    - the last interval ends at the match end, so it can be shorter than the rest
+    """
+    if not table_exists("movement_intervals", parquet_dir):
+        msg = "movement_intervals table not built yet, run `deadlock sync`"
+        raise ValueError(msg)
+
+    duration = (
+        scan("matches", parquet_dir)
+        .filter(pl.col("match_id") == match_id)
+        .select("duration_s")
+        .collect()
+    )
+
+    if duration.is_empty():
+        msg = f"match {match_id} not in the tables"
+        raise ValueError(msg)
+
+    buckets = (
+        scan("movement_intervals", parquet_dir)
+        .filter(pl.col("match_id") == match_id, pl.col("account_id") == account_id)
+        .group_by((pl.col("start_s") // interval_s).alias("interval"))
+        .agg(pl.col(MOVEMENT_COUNTS).sum())
+        .collect()
+    )
+
+    if buckets.is_empty():
+        msg = f"account {account_id} has no movement rows in match {match_id}"
+        raise ValueError(msg)
+
+    duration_s = int(duration.item())
+    last = buckets.select(pl.col("interval").max()).item()
+    n = max((duration_s - 1) // interval_s + 1, last + 1)
+
+    return (
+        pl.DataFrame({"interval": range(n)}, schema={"interval": pl.Int64})
+        .join(buckets, on="interval", how="left")
+        .sort("interval")
+        .with_columns(pl.col(MOVEMENT_COUNTS).fill_null(0))
+        .with_columns(
+            (pl.col("interval") * interval_s).alias("start_s"),
+            ((pl.col("interval") + 1) * interval_s).clip(upper_bound=duration_s).alias("end_s"),
+        )
+        .with_columns(_movement_percents())
+        .select(
+            "start_s",
+            "end_s",
+            *MOVEMENT_COUNTS,
+            "slide_percent",
+            "in_air_percent",
+            "zipline_percent",
+            "combat_percent",
+            "stationary_percent",
+            "distance_min",
+        )
+    )
+
+
+def movement_scoreboard(match_id: int, parquet_dir: str | Path | None = None) -> pl.LazyFrame:
+    """Sum the movement of every player in one match.
+
+    - the movement_profile columns without the farm pace
+    - hero and team come joined from the players table
+    - players without movement rows stay out
+    """
+    return (
+        scan("movement_intervals", parquet_dir)
+        .filter(pl.col("match_id") == match_id)
+        .group_by("match_id", "account_id")
+        .agg(pl.col(MOVEMENT_COUNTS).sum())
+        .with_columns(_movement_percents())
+        .join(
+            scan("players", parquet_dir).select("match_id", "account_id", "hero", "team"),
+            on=["match_id", "account_id"],
+        )
+    )
+
+
 def movement_profile(parquet_dir: str | Path | None = None) -> pl.LazyFrame:
-    """Movement metrics per player per match from the movement table, alive seconds only.
+    """Movement metrics per player per match from the movement_intervals table.
 
     - time sliding, in the air, ziplining, and fighting players as a percent
       of alive seconds
@@ -2019,52 +2136,15 @@ def movement_profile(parquet_dir: str | Path | None = None) -> pl.LazyFrame:
     - farm souls (troopers, jungle, treasure, denies) for pace per minute and per distance
     """
     grp = "match_id", "account_id"
-    contiguous = pl.col("game_time_s") - pl.col("prev_time") == 1
-    walking = (pl.col("move_type") != "ziplining") & (pl.col("prev_move") != "ziplining")
 
     metrics = (
-        scan("movement", parquet_dir)
-        .filter(pl.col("health_percent") > 0)
-        .sort("match_id", "account_id", "game_time_s")
-        .with_columns(
-            pl.col("game_time_s").shift(1).over(grp).alias("prev_time"),
-            pl.col("move_type").shift(1).over(grp).alias("prev_move"),
-            pl.col("x").shift(1).over(grp).alias("prev_x"),
-            pl.col("y").shift(1).over(grp).alias("prev_y"),
-        )
-        .with_columns(
-            ((pl.col("x") - pl.col("prev_x")) ** 2 + (pl.col("y") - pl.col("prev_y")) ** 2)
-            .sqrt()
-            .alias("step")
-        )
-        .with_columns(
-            pl.when(contiguous & walking & (pl.col("step") < 2500))
-            .then(pl.col("step"))
-            .alias("step")
-        )
+        scan("movement_intervals", parquet_dir)
         .group_by(*grp)
-        .agg(
-            pl.len().alias("alive_s"),
-            (pl.col("move_type") == "slide").mean().mul(100).alias("slide_percent"),
-            (pl.col("move_type") == "in_air").mean().mul(100).alias("in_air_percent"),
-            (pl.col("move_type") == "ziplining").mean().mul(100).alias("zipline_percent"),
-            (pl.col("combat_type") == "player").mean().mul(100).alias("combat_percent"),
-            ((pl.col("move_type") == "ground_dash") & (pl.col("prev_move") != "ground_dash"))
-            .sum()
-            .alias("dashes"),
-            ((pl.col("move_type") == "air_dash") & (pl.col("prev_move") != "air_dash"))
-            .sum()
-            .alias("air_dashes"),
-            pl.col("step").sum().alias("distance"),
-            pl.col("step").is_not_null().sum().alias("moving_s"),
-            (pl.col("step") < 40).mean().mul(100).alias("stationary_percent"),
-        )
+        .agg(pl.col(MOVEMENT_COUNTS).sum())
+        .with_columns(_movement_percents())
         .with_columns(
             (pl.col("dashes") / (pl.col("alive_s") / 60)).alias("dashes_min"),
             (pl.col("air_dashes") / (pl.col("alive_s") / 60)).alias("air_dashes_min"),
-            pl.when(pl.col("moving_s") > 0)
-            .then(pl.col("distance") / (pl.col("moving_s") / 60))
-            .alias("distance_min"),
         )
     )
 

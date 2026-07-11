@@ -418,6 +418,24 @@ class Movement(Table):
     )
 
 
+class MovementIntervals(Table):
+    """One row per player per minute with movement state counts, dashes, and distance."""
+
+    match_id = MATCH_ID
+    account_id = ACCOUNT_ID
+    start_s = Column(pl.Int64, "Game time in seconds when the minute starts")
+    alive_s = Column(pl.Int64, "Seconds alive inside the minute")
+    moving_s = Column(pl.Int64, "Alive seconds with a measured step")
+    stationary_s = Column(pl.Int64, "Moving seconds that covered under 40 units")
+    slide_s = Column(pl.Int64, "Seconds sliding")
+    in_air_s = Column(pl.Int64, "Seconds in the air")
+    zipline_s = Column(pl.Int64, "Seconds on a zipline")
+    combat_s = Column(pl.Int64, "Seconds in combat with an enemy player")
+    dashes = Column(pl.Int64, "Ground dashes started inside the minute")
+    air_dashes = Column(pl.Int64, "Air dashes started inside the minute")
+    distance = Column(pl.Float64, "World units covered inside the minute")
+
+
 class Deaths(Table):
     """One row per death, with position, killer, and respawn time."""
 
@@ -642,6 +660,7 @@ TABLES: dict[str, dict[str, Column]] = {
     "mid_boss": MidBoss.spec(),
     "objectives": Objectives.spec(),
     "movement": Movement.spec(),
+    "movement_intervals": MovementIntervals.spec(),
     "deaths": Deaths.spec(),
     "downloads": Downloads.spec(),
     "item_history": ItemHistory.spec(),
@@ -700,6 +719,7 @@ IDENTITY: dict[str, tuple[str, ...]] = {
     "mid_boss": ("match_id", "destroyed_time_s"),
     "objectives": ("match_id", "team", "objective_id"),
     "movement": ("match_id", "account_id", "game_time_s"),
+    "movement_intervals": ("match_id", "account_id", "start_s"),
     "deaths": ("match_id", "account_id", "game_time_s"),
 }
 

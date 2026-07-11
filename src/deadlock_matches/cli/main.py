@@ -316,6 +316,13 @@ def build_parser(config: str | Path | None = None) -> argparse.ArgumentParser:
         "by aim against heroes, the fire the enemy team put at you, damage "
         "by range, parries, comeback souls, and per-hero counters",
     )
+    view.add_argument(
+        "--movement",
+        action="store_true",
+        help="how you moved per interval: meters covered and the pace while "
+        "moving, time standing still, sliding, in the air, on ziplines, and "
+        "in fights, plus dashes and air dashes",
+    )
 
     f = command("download")
     f.add_argument(
@@ -402,6 +409,13 @@ def build_parser(config: str | Path | None = None) -> argparse.ArgumentParser:
 
     mv = command("movement")
     mv.add_argument("--hero", required=True, help="hero display name, like Mirage")
+    mv.add_argument(
+        "--by",
+        choices=("player",),
+        default=None,
+        help="one row per tracked player instead of the pooled Tracked column, with "
+        "their games, ladder rank at download time, and the same metrics",
+    )
     mv.add_argument(
         "--account",
         type=account_list,

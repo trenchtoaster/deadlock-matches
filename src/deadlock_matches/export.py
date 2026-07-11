@@ -145,7 +145,12 @@ def _movement_frame(info: MatchInfo, account_id: int, path: Any) -> pl.DataFrame
             "health_percent": _to_length(path.health, n),
             "combat_raw": _to_length(path.combat_type, n),
             "move_raw": _to_length(path.move_type, n),
-        }
+        },
+        schema_overrides={
+            "health_percent": pl.Int64,
+            "combat_raw": pl.Int64,
+            "move_raw": pl.Int64,
+        },
     ).select(
         match_id=pl.lit(info.match_id),
         account_id=pl.lit(account_id),
@@ -153,12 +158,62 @@ def _movement_frame(info: MatchInfo, account_id: int, path: Any) -> pl.DataFrame
         x=path.x_min + pl.col("x_pos") * sx,
         y=path.y_min + pl.col("y_pos") * sy,
         health_percent=pl.col("health_percent"),
-        combat_type=pl.col("combat_raw")
-        .cast(pl.String)
-        .replace({str(k): v for k, v in COMBAT_NAMES.items()}),
-        move_type=pl.col("move_raw")
-        .cast(pl.String)
-        .replace({str(k): v for k, v in MOVE_NAMES.items()}),
+        combat_type=pl.col("combat_raw").replace_strict(
+            COMBAT_NAMES, default=pl.col("combat_raw").cast(pl.String), return_dtype=pl.String
+        ),
+        move_type=pl.col("move_raw").replace_strict(
+            MOVE_NAMES, default=pl.col("move_raw").cast(pl.String), return_dtype=pl.String
+        ),
+    )
+
+
+def _movement_intervals_frame(frame: pl.DataFrame) -> pl.DataFrame:
+    """Aggregate per second movement data for one player to per minute counts.
+
+    - keeps alive seconds only
+    - distance skips zipline seconds, teleports, and gaps between alive seconds
+    - the counts sum to the same numbers at any coarser interval
+    """
+    contiguous = pl.col("game_time_s") - pl.col("prev_time") == 1
+    walking = (pl.col("move_type") != "ziplining") & (pl.col("prev_move") != "ziplining")
+
+    return (
+        frame.filter(pl.col("health_percent") > 0)
+        .sort("game_time_s")
+        .with_columns(
+            pl.col("game_time_s").shift(1).alias("prev_time"),
+            pl.col("move_type").shift(1).alias("prev_move"),
+            pl.col("x").shift(1).alias("prev_x"),
+            pl.col("y").shift(1).alias("prev_y"),
+        )
+        .with_columns(
+            ((pl.col("x") - pl.col("prev_x")) ** 2 + (pl.col("y") - pl.col("prev_y")) ** 2)
+            .sqrt()
+            .alias("step")
+        )
+        .with_columns(
+            pl.when(contiguous & walking & (pl.col("step") < 2500))
+            .then(pl.col("step"))
+            .alias("step")
+        )
+        .group_by("match_id", "account_id", (pl.col("game_time_s") // 60 * 60).alias("start_s"))
+        .agg(
+            pl.len().alias("alive_s"),
+            pl.col("step").is_not_null().sum().alias("moving_s"),
+            (pl.col("step") < 40).sum().alias("stationary_s"),
+            (pl.col("move_type") == "slide").sum().alias("slide_s"),
+            (pl.col("move_type") == "in_air").sum().alias("in_air_s"),
+            (pl.col("move_type") == "ziplining").sum().alias("zipline_s"),
+            (pl.col("combat_type") == "player").sum().alias("combat_s"),
+            ((pl.col("move_type") == "ground_dash") & (pl.col("prev_move") != "ground_dash"))
+            .sum()
+            .alias("dashes"),
+            ((pl.col("move_type") == "air_dash") & (pl.col("prev_move") != "air_dash"))
+            .sum()
+            .alias("air_dashes"),
+            pl.col("step").sum().alias("distance"),
+        )
+        .sort("start_s")
     )
 
 
@@ -237,6 +292,8 @@ def build_tables(
     - proc vs stat attribution is derived at read time from damage, see queries.item_attribution
     - exclude skips tables by name (the exclude list in config.toml), which
       keeps the big per-second movement table out of the rebuild
+    - movement_intervals holds per minute counts from the same data and
+      still builds when movement itself is excluded
     """
     infos = list(infos)
     ability_names = {a.id: a.name for a in abilities.ability_map().values()}
@@ -256,6 +313,7 @@ def build_tables(
     mid_boss: list[dict] = []
     objectives: list[dict] = []
     tracks: list[pl.DataFrame] = []
+    track_intervals: list[pl.DataFrame] = []
     deaths: list[dict] = []
 
     for info in infos:
@@ -356,8 +414,17 @@ def build_tables(
                 )
 
             track = path_by_slot.get(p.player_slot)
-            if "movement" not in exclude and track is not None:
-                tracks.append(_movement_frame(info, p.account_id, track))
+            want_track = "movement" not in exclude
+            want_intervals = "movement_intervals" not in exclude
+
+            if track is not None and (want_track or want_intervals):
+                frame = _movement_frame(info, p.account_id, track)
+
+                if want_track:
+                    tracks.append(frame)
+
+                if want_intervals:
+                    track_intervals.append(_movement_intervals_frame(frame))
 
             deaths.extend(
                 {
@@ -525,6 +592,11 @@ def build_tables(
 
     if "movement" not in exclude:
         tables["movement"] = schemas.conform("movement", pl.concat(tracks) if tracks else [])
+
+    if "movement_intervals" not in exclude:
+        tables["movement_intervals"] = schemas.conform(
+            "movement_intervals", pl.concat(track_intervals) if track_intervals else []
+        )
 
     return {name: df for name, df in tables.items() if name not in exclude}
 

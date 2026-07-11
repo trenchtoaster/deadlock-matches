@@ -99,7 +99,8 @@ def ensure_config(path: str | Path | None = None) -> None:
         return
 
     starter = f"""# tables the export skips. movement is one row per player per second,
-# delete it from this list to export it
+# delete it from this list to export it. the per minute movement_intervals
+# table always builds
 exclude = ["movement"]
 
 # matches group into local days in this zone

@@ -203,6 +203,7 @@ def test_tables_have_expected_rows():
     assert len(tables["mid_boss"]) == 2
     assert len(tables["objectives"]) == 2
     assert len(tables["movement"]) == 3
+    assert len(tables["movement_intervals"]) == 1
     assert len(tables["deaths"]) == 1
     assert len(tables["stacks"]) == 3
     assert len(tables["custom_stats"]) == 2
@@ -268,7 +269,34 @@ def test_exclude_skips_movement():
     tables = export.build_tables([build_match()], exclude=("movement",))
 
     assert "movement" not in tables
-    assert len(tables["deaths"]) == 1
+
+
+def test_movement_intervals_built_without_movement():
+    tables = export.build_tables([build_match()], exclude=("movement",))
+
+    assert len(tables["movement_intervals"]) == 1
+
+
+def test_exclude_skips_movement_intervals():
+    tables = export.build_tables([build_match()], exclude=("movement", "movement_intervals"))
+
+    assert "movement_intervals" not in tables
+
+
+def test_movement_intervals_counts():
+    mi = export.build_tables([build_match()])["movement_intervals"]
+    row = mi.row(0, named=True)
+
+    assert len(mi) == 1
+    assert row["start_s"] == 0
+    assert row["alive_s"] == 2
+    assert row["moving_s"] == 1
+    assert row["stationary_s"] == 0
+    assert row["slide_s"] == 1
+    assert row["combat_s"] == 1
+    assert row["dashes"] == 0
+    assert row["air_dashes"] == 0
+    assert row["distance"] == pytest.approx((1000.0**2 + 250.0**2) ** 0.5)
 
 
 def test_matches_average_badges():
