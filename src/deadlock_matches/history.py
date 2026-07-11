@@ -98,6 +98,28 @@ def record_asof(
     return json.loads(rows.filter(pl.col("from") == chosen).item(0, "record"))
 
 
+def read_states(path: Path) -> list[dict[str, Any]]:
+    """Return every stored era as {from, build, records}, oldest first.
+
+    Rebuilds the shape build_asset_history writes, so a backfill can resume from
+    the last committed era instead of rescanning every client build.
+    """
+    table = _table(path)
+
+    if table is None:
+        return []
+
+    out = []
+
+    for (frm, build), group in table.sort("from").group_by(
+        ["from", "build"], maintain_order=True
+    ):
+        records = {rid: json.loads(rec) for rid, rec in group.select("id", "record").iter_rows()}
+        out.append({"from": frm, "build": build, "records": records})
+
+    return out
+
+
 def record_history(path: Path, record_id: str | int) -> list[tuple[str, int, dict[str, Any]]]:
     """Return each stored era as (from, build, record) for one id, oldest first."""
     table = _table(path)

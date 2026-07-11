@@ -73,6 +73,14 @@ def test_eras_lists_each_era_oldest_first(tmp_path):
     assert history.eras(tmp_path / "none.parquet") == []
 
 
+def test_read_states_round_trips_written_states(tmp_path):
+    path = tmp_path / "h.parquet"
+    history.write(path, STATES)
+
+    assert history.read_states(path) == STATES
+    assert history.read_states(tmp_path / "none.parquet") == []
+
+
 def test_record_history_returns_each_era_for_one_id(tmp_path):
     path = tmp_path / "h.parquet"
     history.write(path, STATES)

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import datetime as dt
 import hashlib
 import json
 import re
@@ -512,17 +513,23 @@ def build_asset_history(
     path: Path,
     start_date: str = HISTORY_START,
     progress: Callable[[int, int, list[int]], None] | None = None,
+    *,
+    full: bool = False,
 ) -> int:
-    """Build a committed asset history by scanning every client build for change points.
+    """Build a committed asset history by scanning client builds for change points.
 
     - load(build) returns the {id: record} map at a client build
     - one era per patch that changed any stored record
-    - walks every build so a value that changes and reverts between two builds is
-      still captured, which a bisection over the endpoints would miss
+    - resumes from the last committed era, scanning only builds newer than it, so a
+      run right after a patch appends the new era instead of rehashing every build
+    - full rescans every build from start_date, needed when the API corrects an old
+      build or start_date moves earlier
+    - walks every scanned build so a value that changes and reverts between two builds
+      is still captured, which a bisection over the endpoints would miss
     - builds the API has no data for are skipped, the scan continues from the next one
-    - refuses to write when every build was skipped, so an unreachable endpoint
+    - refuses to write when a fresh table would be empty, so an unreachable endpoint
       cannot blank a committed table
-    - progress(done, total, skipped_builds) is called after every build
+    - progress(done, total, skipped_builds) is called after every scanned build
     """
     dates = client_version_dates()
     builds = sorted(b for b, d in dates.items() if d >= start_date)
@@ -531,12 +538,21 @@ def build_asset_history(
         msg = f"no client builds on or after {start_date}"
         raise ValueError(msg)
 
+    existing = [] if full else history.read_states(path)
+
+    if existing and existing[-1]["build"] in set(builds):
+        prev: str | None = _digest(existing[-1]["records"])
+        pending = [b for b in builds if b > existing[-1]["build"]]
+    else:
+        existing = []
+        prev = None
+        pending = builds
+
     cache: dict[int, dict | None] = {}
     states: list[dict[str, Any]] = []
     skipped: list[int] = []
-    prev: str | None = None
 
-    for done, build in enumerate(builds, start=1):
+    for done, build in enumerate(pending, start=1):
         records = _load_build(build, cache, load)
 
         if records is None:
@@ -549,15 +565,18 @@ def build_asset_history(
                 prev = digest
 
         if progress is not None:
-            progress(done, len(builds), skipped)
+            progress(done, len(pending), skipped)
 
-    if not states:
+    combined = existing + states
+
+    if not combined:
         msg = f"no client build since {start_date} could be loaded, refusing to overwrite {path}"
         raise RuntimeError(msg)
 
-    history.write(path, states)
+    if states or not existing:
+        history.write(path, combined)
 
-    return len(states)
+    return len(combined)
 
 
 def _by_id(record: dict[str, Any]) -> str:
@@ -582,6 +601,8 @@ def build_item_history(
     start_date: str = HISTORY_START,
     path: Path | None = None,
     progress: Callable[[int, int, list[int]], None] | None = None,
+    *,
+    full: bool = False,
 ) -> int:
     """Build the committed item history from the assets API.
 
@@ -591,13 +612,15 @@ def build_item_history(
     path = items.ITEM_HISTORY_PARQUET if path is None else path
     load = _endpoint_load("v1/assets/items/by-type/upgrade", _item_snapshot, _by_id)
 
-    return build_asset_history(load, path, start_date, progress)
+    return build_asset_history(load, path, start_date, progress, full=full)
 
 
 def build_hero_history(
     start_date: str = HISTORY_START,
     path: Path | None = None,
     progress: Callable[[int, int, list[int]], None] | None = None,
+    *,
+    full: bool = False,
 ) -> int:
     """Build the committed hero history from the assets API.
 
@@ -607,7 +630,7 @@ def build_hero_history(
     path = heroes.HERO_HISTORY_PARQUET if path is None else path
     load = _endpoint_load("v1/assets/heroes", _hero_snapshot, _by_id)
 
-    return build_asset_history(load, path, start_date, progress)
+    return build_asset_history(load, path, start_date, progress, full=full)
 
 
 def _ability_load(build: int) -> dict[str, Any]:
@@ -626,6 +649,8 @@ def build_ability_history(
     start_date: str = HISTORY_START,
     path: Path | None = None,
     progress: Callable[[int, int, list[int]], None] | None = None,
+    *,
+    full: bool = False,
 ) -> int:
     """Build the committed ability history from the assets API.
 
@@ -634,7 +659,7 @@ def build_ability_history(
     """
     path = abilities.ABILITY_HISTORY_PARQUET if path is None else path
 
-    return build_asset_history(_ability_load, path, start_date, progress)
+    return build_asset_history(_ability_load, path, start_date, progress, full=full)
 
 
 def _rank_record(record: dict[str, Any]) -> dict[str, Any]:
@@ -651,6 +676,8 @@ def build_rank_history(
     start_date: str = HISTORY_START,
     path: Path | None = None,
     progress: Callable[[int, int, list[int]], None] | None = None,
+    *,
+    full: bool = False,
 ) -> int:
     """Build the committed rank history from the assets API.
 
@@ -660,7 +687,7 @@ def build_rank_history(
     path = skill_rating.RANK_HISTORY_PARQUET if path is None else path
     load = _endpoint_load("v1/assets/ranks", _rank_record, _by_tier)
 
-    return build_asset_history(load, path, start_date, progress)
+    return build_asset_history(load, path, start_date, progress, full=full)
 
 
 def _statue_load(build: int) -> dict[str, Any]:
@@ -676,6 +703,8 @@ def build_statue_history(
     start_date: str = HISTORY_START,
     path: Path | None = None,
     progress: Callable[[int, int, list[int]], None] | None = None,
+    *,
+    full: bool = False,
 ) -> int:
     """Build the committed statue history from the assets API.
 
@@ -684,7 +713,7 @@ def build_statue_history(
     """
     path = statues.STATUE_HISTORY_PARQUET if path is None else path
 
-    return build_asset_history(_statue_load, path, start_date, progress)
+    return build_asset_history(_statue_load, path, start_date, progress, full=full)
 
 
 def refresh_abilities(path: Path | None = None) -> int:
@@ -787,3 +816,40 @@ def refresh_items(path: Path | None = None) -> int:
     items.item_by_class_name.cache_clear()
 
     return len(records)
+
+
+LIVE_HISTORY_CHECKS = (
+    ("items", items.ITEMS_JSON, items.ITEM_HISTORY_PARQUET, "id"),
+    ("heroes", heroes.HEROES_JSON, heroes.HERO_HISTORY_PARQUET, "id"),
+    ("abilities", abilities.ABILITIES_JSON, abilities.ABILITY_HISTORY_PARQUET, "class_name"),
+    ("ranks", skill_rating.SKILL_RATING_JSON, skill_rating.RANK_HISTORY_PARQUET, "tier"),
+    ("statues", statues.STATUES_JSON, statues.STATUE_HISTORY_PARQUET, "class_name"),
+)
+
+
+def history_lags() -> list[tuple[str, str, int]]:
+    """Return (name, date, build) for each asset type whose committed history trails its live snapshot.
+
+    - compares the live snapshot the refresh just wrote against the newest committed
+      record, so a live patch already captured stays quiet
+    - types with no committed history are skipped
+    """
+    now = dt.datetime.now(tz=dt.UTC)
+    out = []
+
+    for name, json_path, hist_path, field in LIVE_HISTORY_CHECKS:
+        newest = history.records_asof(hist_path, now)
+
+        if newest is None:
+            continue
+
+        records = json.loads(json_path.read_text(encoding="utf-8"))
+        live = {str(rec[field]): rec for rec in records}
+
+        if _digest(live) == _digest(newest):
+            continue
+
+        frm, build = history.eras(hist_path)[-1]
+        out.append((name, frm[:10], build))
+
+    return out

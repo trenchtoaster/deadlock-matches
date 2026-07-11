@@ -559,6 +559,11 @@ def build_parser(config: str | Path | None = None) -> argparse.ArgumentParser:
         action="store_true",
         help="run the backfill, otherwise it only says what it would do",
     )
+    at.add_argument(
+        "--full",
+        action="store_true",
+        help="rescan every build instead of resuming from the last committed era (maintainer)",
+    )
 
     sc = command("schema")
     sc.add_argument(

@@ -5,7 +5,7 @@ import urllib.error
 
 import pytest
 
-from deadlock_matches import abilities, assets, heroes, items
+from deadlock_matches import abilities, assets, heroes, history, items
 
 HERO_REC = {
     "id": 52,
@@ -963,3 +963,131 @@ def test_build_item_history_reports_progress_per_build(tmp_path, monkeypatch):
     )
 
     assert seen == [(1, 3, []), (2, 3, []), (3, 3, [])]
+
+
+def test_build_item_history_resumes_from_the_last_era(tmp_path, monkeypatch):
+    path = tmp_path / "item_history.parquet"
+    builds = {b: f"2026-01-0{b}T00:00:00" for b in (1, 2, 3)}
+    items_at = {1: _item_recs(500), 2: _item_recs(500), 3: _item_recs(800)}
+    monkeypatch.setattr(assets.api, "get_json", _fake_assets(builds, items_at))
+    first = assets.build_item_history(start_date="2026-01-01", path=path)
+
+    builds |= {4: "2026-01-04T00:00:00", 5: "2026-01-05T00:00:00"}
+    items_at |= {4: _item_recs(800), 5: _item_recs(1000)}
+    monkeypatch.setattr(assets.api, "get_json", _fake_assets(builds, items_at))
+
+    seen = []
+    n = assets.build_item_history(
+        start_date="2026-01-01", path=path, progress=lambda *a: seen.append(a)
+    )
+
+    assert first == 2
+    assert n == 3
+    assert [done for done, _total, _skipped in seen] == [1, 2]
+    assert {total for _done, total, _skipped in seen} == {2}
+
+    early = items.item_asof(10, dt.datetime(2026, 1, 2), path)
+    late = items.item_asof(10, dt.datetime(2026, 1, 5), path)
+
+    assert early is not None
+    assert early.cost == 500
+    assert late is not None
+    assert late.cost == 1000
+
+
+def test_build_item_history_incremental_no_change_leaves_the_file(tmp_path, monkeypatch):
+    path = tmp_path / "item_history.parquet"
+    builds = {b: f"2026-01-0{b}T00:00:00" for b in (1, 2, 3)}
+    monkeypatch.setattr(
+        assets.api, "get_json", _fake_assets(builds, {b: _item_recs(500) for b in builds})
+    )
+    assets.build_item_history(start_date="2026-01-01", path=path)
+    mtime = path.stat().st_mtime_ns
+
+    builds |= {4: "2026-01-04T00:00:00"}
+    monkeypatch.setattr(
+        assets.api, "get_json", _fake_assets(builds, {b: _item_recs(500) for b in builds})
+    )
+    n = assets.build_item_history(start_date="2026-01-01", path=path)
+
+    assert n == 1
+    assert path.stat().st_mtime_ns == mtime
+
+
+def test_build_item_history_incremental_captures_a_revert_in_new_builds(tmp_path, monkeypatch):
+    path = tmp_path / "item_history.parquet"
+    builds = {b: f"2026-01-0{b}T00:00:00" for b in (1, 2, 3)}
+    monkeypatch.setattr(
+        assets.api, "get_json", _fake_assets(builds, {b: _item_recs(500) for b in builds})
+    )
+    assets.build_item_history(start_date="2026-01-01", path=path)
+
+    builds |= {4: "2026-01-04T00:00:00", 5: "2026-01-05T00:00:00"}
+    items_at = {1: _item_recs(500), 2: _item_recs(500), 3: _item_recs(500)}
+    items_at |= {4: _item_recs(800), 5: _item_recs(500)}
+    monkeypatch.setattr(assets.api, "get_json", _fake_assets(builds, items_at))
+
+    n = assets.build_item_history(start_date="2026-01-01", path=path)
+
+    fourth = items.item_asof(10, dt.datetime(2026, 1, 4), path)
+    fifth = items.item_asof(10, dt.datetime(2026, 1, 5), path)
+
+    assert n == 3
+    assert fourth is not None
+    assert fourth.cost == 800
+    assert fifth is not None
+    assert fifth.cost == 500
+
+
+def test_build_item_history_full_rescans_an_old_build_correction(tmp_path, monkeypatch):
+    path = tmp_path / "item_history.parquet"
+    builds = {b: f"2026-01-0{b}T00:00:00" for b in (1, 2, 3)}
+    items_at = {1: _item_recs(500), 2: _item_recs(500), 3: _item_recs(800)}
+    monkeypatch.setattr(assets.api, "get_json", _fake_assets(builds, items_at))
+    assets.build_item_history(start_date="2026-01-01", path=path)
+
+    corrected = {1: _item_recs(500), 2: _item_recs(999), 3: _item_recs(800)}
+    monkeypatch.setattr(assets.api, "get_json", _fake_assets(builds, corrected))
+
+    incremental = assets.build_item_history(start_date="2026-01-01", path=path)
+    full = assets.build_item_history(start_date="2026-01-01", path=path, full=True)
+
+    assert incremental == 2
+    assert full == 3
+
+
+def _stub_history(tmp_path, monkeypatch, live, stored):
+    """Point one LIVE_HISTORY_CHECKS entry at a json snapshot and parquet built from these records."""
+    json_path = tmp_path / "items.json"
+    hist_path = tmp_path / "item_history.parquet"
+    json_path.write_text(json.dumps(live), encoding="utf-8")
+
+    if stored is not None:
+        history.write(
+            hist_path,
+            [{"from": "2026-06-30T10:07:00", "build": 6601, "records": stored}],
+        )
+
+    monkeypatch.setattr(assets, "LIVE_HISTORY_CHECKS", (("items", json_path, hist_path, "id"),))
+
+
+def test_history_lags_flags_a_trailing_type(tmp_path, monkeypatch):
+    _stub_history(
+        tmp_path, monkeypatch, [{"id": 10, "cost": 500}], {"10": {"id": 10, "cost": 800}}
+    )
+
+    assert assets.history_lags() == [("items", "2026-06-30", 6601)]
+
+
+def test_history_lags_quiet_when_live_matches_history(tmp_path, monkeypatch):
+    _stub_history(
+        tmp_path, monkeypatch, [{"id": 10, "cost": 800}], {"10": {"id": 10, "cost": 800}}
+    )
+
+    assert assets.history_lags() == []
+
+
+def test_history_lags_skips_a_type_without_history(tmp_path, monkeypatch):
+    _stub_history(tmp_path, monkeypatch, [{"id": 10, "cost": 500}], None)
+
+    assert assets.history_lags() == []

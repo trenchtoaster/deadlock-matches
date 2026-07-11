@@ -3246,6 +3246,49 @@ def test_history_builders_cover_every_build_function():
     assert in_assets - {"build_asset_history"} == listed
 
 
+def test_live_history_checks_match_history_builders():
+    checks = {name for name, *_ in assets.LIVE_HISTORY_CHECKS}
+    builders = {name for name, _path, _fn in data.HISTORY_BUILDERS}
+
+    assert checks == builders
+
+
+def _stub_refreshes(monkeypatch):
+    for fn in (
+        "refresh_heroes",
+        "refresh_items",
+        "refresh_abilities",
+        "refresh_skill_rating",
+        "refresh_accolades",
+        "refresh_statues",
+    ):
+        monkeypatch.setattr(assets, fn, lambda *a, **k: 0)
+
+
+def test_assets_warns_when_history_trails(monkeypatch, capsys):
+    _stub_refreshes(monkeypatch)
+    monkeypatch.setattr(assets, "history_lags", lambda: [("items", "2026-06-30", 6601)])
+
+    main(["assets"], config="none.json")
+
+    out = capsys.readouterr().out
+
+    assert "items history is behind the live patch" in out
+    assert "6601" in out
+    assert "--backfill" in out
+
+
+def test_assets_quiet_when_history_current(monkeypatch, capsys):
+    _stub_refreshes(monkeypatch)
+    monkeypatch.setattr(assets, "history_lags", list)
+
+    main(["assets"], config="none.json")
+
+    out = capsys.readouterr().out
+
+    assert "behind the live patch" not in out
+
+
 def test_hero_card_as_of_shows_era_label(capsys, tmp_path):
     main(["hero", "Mirage", "--as-of", "2026-02-01"], config=tmp_path / "none.json")
 

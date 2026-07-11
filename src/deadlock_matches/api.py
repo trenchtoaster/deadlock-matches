@@ -137,6 +137,7 @@ def get_json(
 
     if use_cache and target.exists() and not _expired(target, max_age):
         fetch_counts["cached"] += 1
+
         return _read_body(target)
 
     req = urllib.request.Request(f"{BASE}/{path}", headers={"User-Agent": "deadlock-matches/1.0"})
@@ -147,6 +148,7 @@ def get_json(
     except OSError:
         if use_cache and target.exists():
             fetch_counts["cached"] += 1
+
             return _read_body(target)
 
         raise

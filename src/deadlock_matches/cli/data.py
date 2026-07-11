@@ -290,6 +290,16 @@ def refresh_assets(_args: argparse.Namespace) -> None:
     for name in sorted(old_items - new_items):
         print(f"  gone item: {name}")
 
+    lags = assets.history_lags()
+
+    if lags:
+        print()
+
+        for name, date, build in lags:
+            print(f"  {name} history is behind the live patch (newest build {build}, {date})")
+
+        print("  run deadlock assets --backfill to capture the current patch")
+
 
 HISTORY_BUILDERS = (
     ("items", items.ITEM_HISTORY_PARQUET, "build_item_history"),
@@ -317,10 +327,18 @@ def rebuild_history(args: argparse.Namespace) -> None:
             print(f"  {name:<9} {len(history.eras(path))} eras at {_tilde(path)}")
 
         builds = sum(d >= assets.HISTORY_START for d in assets.client_version_dates().values())
-        print(
-            f"\nThis scans every client build since {assets.HISTORY_START} ({builds} builds per "
-            f"asset type) and overwrites those committed files."
-        )
+
+        if args.full:
+            print(
+                f"\n--full rescans every client build since {assets.HISTORY_START} ({builds} "
+                f"builds per asset type) and overwrites those committed files."
+            )
+        else:
+            print(
+                "\nThis scans only the builds newer than the last committed era and appends any "
+                "new ones. Use --full to rescan every build after an old-build correction."
+            )
+
         print("The API calls are cached after the first run, so a rerun is cheap.")
         print("End users do not need it, they read the committed tables.")
         print("Re-run with --confirm to proceed, then review and commit the result.")
@@ -349,7 +367,7 @@ def rebuild_history(args: argparse.Namespace) -> None:
             )
             print(f"\r{line:<76}", end="", flush=True)
 
-        eras = build(progress=show)
+        eras = build(progress=show, full=args.full)
         size = path.stat().st_size / 1024 if path.is_file() else 0.0
         line = f"  {name:<9} {before} -> {eras} eras  {size:.0f} KB at {_tilde(path)}"
         print(f"\r{line:<76}")
