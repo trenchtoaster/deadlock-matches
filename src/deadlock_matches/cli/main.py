@@ -238,6 +238,13 @@ def build_parser(config: str | Path | None = None) -> argparse.ArgumentParser:
         help="every item purchase in buy order, with when it was sold, what upgrade "
         "consumed it, and the ability it was imbued into",
     )
+    view.add_argument(
+        "--accolades",
+        action="store_true",
+        help="the end of match stat awards: your number and stars for each graded "
+        "stat, including stats no other table records (gun/melee/ability kills, "
+        "close and long range kills, killstreaks, urn deliveries)",
+    )
 
     f = sub.add_parser(
         "download", help="retrieve tracked player matches into a separate parquet table"

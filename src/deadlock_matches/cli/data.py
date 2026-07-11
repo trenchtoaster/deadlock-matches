@@ -248,6 +248,7 @@ def refresh_assets(_args: argparse.Namespace) -> None:
     n_items = assets.refresh_items()
     n_abilities = assets.refresh_abilities()
     n_tiers = assets.refresh_skill_rating()
+    n_accolades = assets.refresh_accolades()
 
     new_items = {i.name for i in items.item_map().values()}
     new_heroes = {h.name for h in heroes.hero_map().values()}
@@ -256,6 +257,7 @@ def refresh_assets(_args: argparse.Namespace) -> None:
     print(f"items.json: {n_items} upgrade items")
     print(f"abilities.json: {n_abilities} abilities/guns")
     print(f"skill_rating.json: {n_tiers} skill rating tiers")
+    print(f"accolades.json: {n_accolades} accolades")
 
     for name in sorted(new_heroes - old_heroes):
         print(f"  new hero: {name}")

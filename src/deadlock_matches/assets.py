@@ -9,7 +9,7 @@ import time
 import urllib.error
 from typing import TYPE_CHECKING, Any
 
-from deadlock_matches import abilities, api, heroes, history, items, skill_rating
+from deadlock_matches import abilities, accolades, api, heroes, history, items, skill_rating
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -565,6 +565,28 @@ def refresh_skill_rating(path: Path | None = None) -> int:
         json.dumps([{"tier": r["tier"], "name": r["name"]} for r in records]), encoding="utf-8"
     )
     skill_rating.tier_map.cache_clear()
+
+    return len(records)
+
+
+def refresh_accolades(path: Path | None = None) -> int:
+    """Redownload accolades.json (the end of match stat awards) and clear the lookup cache.
+
+    path defaults to the bundled snapshot.
+    """
+    path = accolades.ACCOLADES_JSON if path is None else path
+    records = api.get_json("v1/assets/accolades", use_cache=False)
+
+    path.write_text(
+        json.dumps(
+            [
+                {"id": r["id"], "class_name": r["class_name"], "name": r["flavor_name"]}
+                for r in records
+            ]
+        ),
+        encoding="utf-8",
+    )
+    accolades.accolade_map.cache_clear()
 
     return len(records)
 

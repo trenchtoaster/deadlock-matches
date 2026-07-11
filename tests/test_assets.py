@@ -105,6 +105,27 @@ ITEM_REC = {
 }
 
 
+ACCOLADE_REC = {
+    "class_name": "kills",
+    "id": 1,
+    "tracked_stat_name": "kills",
+    "flavor_name": "Killer Instinct",
+    "description": '<span class="StatValue">{stat_value}</span> kills',
+    "threshold_type": "automatic",
+}
+
+
+def test_refresh_accolades_keeps_id_stat_and_flavor_name(tmp_path, monkeypatch):
+    monkeypatch.setattr(assets.api, "get_json", lambda path, **kw: [ACCOLADE_REC])
+    p = tmp_path / "accolades.json"
+
+    assert assets.refresh_accolades(p) == 1
+
+    rec = json.loads(p.read_text())[0]
+
+    assert rec == {"id": 1, "class_name": "kills", "name": "Killer Instinct"}
+
+
 def test_refresh_heroes_flattens_stats(tmp_path, monkeypatch):
     monkeypatch.setattr(assets.api, "get_json", lambda path, **kw: [HERO_REC])
     p = tmp_path / "heroes.json"

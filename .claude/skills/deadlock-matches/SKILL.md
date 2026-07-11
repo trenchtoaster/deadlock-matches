@@ -27,7 +27,7 @@ uv run deadlock history [--days N] [--since 2026-07-01]
                                           # result, K/D/A, souls, damage, timestamp, and match id,
                                           # newest last, last 10 games by default. Run it to get
                                           # the match id that match/download take
-uv run deadlock match [12345678] [--hero Wraith] [--interval 10] [--souls|--damage|--healing|--teams|--abilities|--items|--deaths|--kills]
+uv run deadlock match [12345678] [--hero Wraith] [--interval 10] [--souls|--damage|--healing|--teams|--abilities|--items|--accolades|--deaths|--kills]
                                           # prints the 12-player final scoreboard (lobby average,
                                           # K/D/A, souls, damage, obj damage, healing, prevented,
                                           # last hits, denies, resolved player starred), then that
@@ -68,7 +68,13 @@ uv run deadlock match [12345678] [--hero Wraith] [--interval 10] [--souls|--dama
                                           # shop price, "sold at", "into <upgrade> at" (flags=1
                                           # component consumption paired to the buy at
                                           # sold_time_s via components), and "imbues <ability>"
-                                          # from imbued_ability
+                                          # from imbued_ability;
+                                          # --accolades = the post-game stat awards from the
+                                          # accolades table (value + threshold, stars shown =
+                                          # threshold+1, names from bundled accolades.json) —
+                                          # the ONLY source for gun/melee/ability kill splits,
+                                          # close/long-range kills and damage, killstreak kills,
+                                          # first blood, urn deliveries, and barrier absorption
 uv run deadlock item "Mercurial Magnum"   # the shop card: innate stats, then each passive/active
                                           # section with the game's labels and units (offline)
 uv run deadlock item "Escalating Exposure" --hero Mirage [--min-rating all] [--since 2026-06-30]
@@ -189,7 +195,7 @@ queries.my_games().group_by("hero").agg(pl.len().alias("games"), pl.col("won").m
 
 ### Tables and schema caveats
 
-Tables: `matches`, `players`, `stats`, `soul_sources`, `item_events`, `damage`, `damage_sources`, `objectives`, `mid_boss`, `movement`, `deaths` (`deadlock schema <table>` prints columns). Other players' games are the SAME tables under the sibling `parquet-players/` dir via `deadlock download` — read `queries.scan(table, players.PARQUET_DIR)` and `players.tracked_player_games(...)`.
+Tables: `matches`, `players`, `stats`, `soul_sources`, `item_events`, `accolades`, `damage`, `damage_sources`, `objectives`, `mid_boss`, `movement`, `deaths` (`deadlock schema <table>` prints columns). Other players' games are the SAME tables under the sibling `parquet-players/` dir via `deadlock download` — read `queries.scan(table, players.PARQUET_DIR)` and `players.tracked_player_games(...)`.
 
 The CLI commands and the `queries.py` helpers above already apply every per-table caveat — relaying their output or reusing a helper needs nothing more. **Read `references/schema-caveats.md` BEFORE hand-writing raw polars against a table no helper covers** — it has each table's columns and verified traps. The four that bite most, always in force:
 

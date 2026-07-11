@@ -37,6 +37,7 @@ def write_cache_entry(
     damage=(),
     ability_items=(),
     item_events=(),
+    accolades=(),
     objectives=False,
     gold_sources=(),
     death_log=(),
@@ -102,6 +103,12 @@ def write_cache_entry(
 
         if imbued:
             it.imbued_ability_id = imbued[0]
+
+    for accolade_id, value, threshold in accolades:
+        acc = p.accolades.add()
+        acc.accolade_id = accolade_id
+        acc.accolade_stat_value = value
+        acc.accolade_threshold_achieved = threshold
 
     for victim_slot, killer_slot, t in death_log:
         victim = p if victim_slot == 1 else enemy
@@ -837,6 +844,27 @@ def test_match_items_upgrade_note_without_a_matching_buy(capsys, tmp_path):
     )
 
 
+def test_match_accolades_flag_prints_stat_awards(capsys, tmp_path):
+    cache = tmp_path / "cache"
+    cache.mkdir()
+    write_cache_entry(
+        cache,
+        match_id=100,
+        stats=[(300, 3000)],
+        accolades=[(4, 39303, 0), (1, 7, 2), (999, 3, -1)],
+    )
+
+    run_main(tmp_path, "match", "--account", "42", "--accolades")
+
+    out = capsys.readouterr().out
+
+    assert "Accolades" in out
+    assert re.search(r"kills\s+7\s+\*\*\*\s+Killer Instinct", out)
+    assert re.search(r"player damage\s+39,303\s+\*\s+Bring the Pain", out)
+    assert re.search(r"id999\s+3", out)
+    assert "thresholds cleared" in out
+
+
 def test_match_souls_flag_prints_source_and_group_table(capsys, tmp_path):
     cache = tmp_path / "cache"
     cache.mkdir()
@@ -1114,6 +1142,9 @@ def test_match_views_mutually_exclusive(tmp_path):
 
     with pytest.raises(SystemExit):
         build_parser(tmp_path / "config.toml").parse_args(["match", "--items", "--abilities"])
+
+    with pytest.raises(SystemExit):
+        build_parser(tmp_path / "config.toml").parse_args(["match", "--accolades", "--items"])
 
 
 def test_winrate_prints_daily_table(capsys, tmp_path):

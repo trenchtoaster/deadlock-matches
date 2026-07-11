@@ -9,6 +9,7 @@ from typing import TYPE_CHECKING, Any
 import polars as pl
 
 from deadlock_matches import (
+    accolades,
     export,
     extract,
     heroes,
@@ -448,6 +449,10 @@ def match_report(args: argparse.Namespace, config: str | Path | None = None) -> 
         items_report(row, args)
         return
 
+    if args.accolades:
+        accolades_report(row, args)
+        return
+
     if args.deaths or args.kills:
         death_log_report(row, args, kills=args.kills)
         return
@@ -676,6 +681,44 @@ def items_report(row: dict[str, Any], args: argparse.Namespace) -> None:
         )
 
     print("\n  'into' means the item was consumed by that upgrade, not sold.")
+
+
+def accolades_report(row: dict[str, Any], args: argparse.Namespace) -> None:
+    """Print the end of match stat awards with the value and stars for each."""
+    if not queries.table_exists("accolades", args.parquet):
+        print("No accolades table yet, run `deadlock sync --full`")
+        return
+
+    df = (
+        queries.scan("accolades", args.parquet)
+        .filter(
+            pl.col("match_id") == row["match_id"],
+            pl.col("account_id") == row["account_id"],
+        )
+        .sort("accolade_id")
+        .collect()
+    )
+
+    if df.is_empty():
+        print(f"No accolades found for {row['hero']} in match {row['match_id']}")
+        return
+
+    catalog = accolades.accolade_map()
+    rows = df.to_dicts()
+    labels = [(r["accolade"] or f"id{r['accolade_id']}").replace("_", " ") for r in rows]
+    width = max(max(len(s) for s in labels), 4) + 2
+
+    print("\n  Accolades")
+    print(f"  {'Stat':<{width}} {'Value':>8}  {'Stars':<6} {'Award'}")
+
+    for label, r in zip(labels, rows, strict=True):
+        entry = catalog.get(r["accolade_id"])
+        award = entry.name if entry else ""
+        stars = "*" * (r["threshold"] + 1)
+
+        print(f"  {label:<{width}} {r['value']:>8,}  {stars:<6} {award}")
+
+    print("\n  Stars counts the reward thresholds cleared, up to three.")
 
 
 def souls_report(row: dict[str, Any], args: argparse.Namespace) -> None:

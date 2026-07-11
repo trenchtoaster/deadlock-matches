@@ -18,6 +18,7 @@ import polars as pl
 
 from deadlock_matches import (
     abilities,
+    accolades,
     asset_tables,
     extract,
     heroes,
@@ -208,8 +209,8 @@ def build_tables(
 ) -> dict[str, pl.DataFrame]:
     """Build the parquet tables from MatchInfo messages.
 
-    - builds matches, players, stats, soul_sources, item_events, damage,
-      damage_sources, mid_boss, objectives, and deaths
+    - builds matches, players, stats, soul_sources, item_events, accolades,
+      damage, damage_sources, mid_boss, objectives, and deaths
     - item cost/tier/slot resolve against the committed item history era live at
       match time, so rebuilds price each match on its own patch
     - proc vs stat attribution is derived at read time from damage, see queries.item_attribution
@@ -218,12 +219,14 @@ def build_tables(
     """
     infos = list(infos)
     ability_names = {a.id: a.name for a in abilities.ability_map().values()}
+    accolade_names = {a.id: a.class_name for a in accolades.accolade_map().values()}
 
     matches: list[dict] = []
     players: list[dict] = []
     stats: list[dict] = []
     sources: list[dict] = []
     item_events: list[dict] = []
+    accolade_rows: list[dict] = []
     damage: list[dict] = []
     damage_sources: list[dict] = []
     mid_boss: list[dict] = []
@@ -365,6 +368,18 @@ def build_tables(
                         "imbued_ability": ability_names.get(it.imbued_ability_id),
                     }
                 )
+
+            accolade_rows.extend(
+                {
+                    "match_id": info.match_id,
+                    "account_id": p.account_id,
+                    "accolade_id": a.accolade_id,
+                    "accolade": accolade_names.get(a.accolade_id),
+                    "value": a.accolade_stat_value,
+                    "threshold": a.accolade_threshold_achieved,
+                }
+                for a in p.accolades
+            )
         details = info.damage_matrix.source_details
         sample_times = list(info.damage_matrix.sample_time_s)
         cumulative: dict[tuple[int, int, bool], dict[int, int]] = {}
@@ -427,6 +442,7 @@ def build_tables(
         "stats": schemas.conform("stats", stats),
         "soul_sources": schemas.conform("soul_sources", sources),
         "item_events": schemas.conform("item_events", item_events),
+        "accolades": schemas.conform("accolades", accolade_rows),
         "damage": schemas.conform("damage", damage),
         "damage_sources": schemas.conform("damage_sources", damage_sources),
         "mid_boss": schemas.conform("mid_boss", mid_boss),

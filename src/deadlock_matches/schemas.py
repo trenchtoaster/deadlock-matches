@@ -233,6 +233,19 @@ class ItemEvents(Table):
     imbued_ability = Column(pl.String, "Display name of the imbued ability, null when not imbued")
 
 
+class Accolades(Table):
+    """End of match stat awards, one row per accolade per player."""
+
+    match_id = MATCH_ID
+    account_id = ACCOUNT_ID
+    accolade_id = Column(pl.Int64, "Numeric accolade id")
+    accolade = Column(
+        pl.String, "Stat the accolade grades (kills, headshot_damage, ...), null for unknown ids"
+    )
+    value = Column(pl.Int64, "The player's number for that stat this match")
+    threshold = Column(pl.Int64, "Highest star threshold reached, 0-based, -1 = none reached")
+
+
 class Damage(Table):
     """Final damage matrix numbers for each dealer, source, and target."""
 
@@ -541,6 +554,7 @@ TABLES: dict[str, dict[str, Column]] = {
     "stats": Stats.spec(),
     "soul_sources": SoulSources.spec(),
     "item_events": ItemEvents.spec(),
+    "accolades": Accolades.spec(),
     "damage": Damage.spec(),
     "damage_sources": DamageSources.spec(),
     "mid_boss": MidBoss.spec(),
@@ -587,6 +601,7 @@ IDENTITY: dict[str, tuple[str, ...]] = {
     "stats": ("match_id", "account_id", "time_stamp_s"),
     "soul_sources": ("match_id", "account_id", "time_stamp_s", "source"),
     "item_events": ("match_id", "account_id", "game_time_s", "item_id"),
+    "accolades": ("match_id", "account_id", "accolade_id"),
     "damage": ("match_id", "dealer_account_id", "target_player_slot", "source_class", "stat"),
     "damage_sources": (
         "match_id",

@@ -58,6 +58,16 @@ def build_match(match_id=100, winning_team=pb.k_ECitadelLobbyTeam_Team1):
     it2.sold_time_s = 300
     it2.flags = 1
 
+    acc = a.accolades.add()
+    acc.accolade_id = 1
+    acc.accolade_stat_value = 7
+    acc.accolade_threshold_achieved = 1
+
+    acc2 = a.accolades.add()
+    acc2.accolade_id = 999
+    acc2.accolade_stat_value = 3
+    acc2.accolade_threshold_achieved = -1
+
     mb = info.mid_boss.add()
     mb.destroyed_time_s = 1300
     mb.team_killed = pb.k_ECitadelLobbyTeam_Team1
@@ -288,6 +298,21 @@ def test_item_events_priced_from_committed_history():
 
     assert priced is not None
     assert ee["cost"][0] == priced.cost
+
+
+def test_accolades_named_from_snapshot():
+    acc = export.build_tables([build_match()])["accolades"]
+
+    kills = acc.filter(pl.col("accolade_id") == 1)
+
+    assert kills["accolade"][0] == "kills"
+    assert kills["value"][0] == 7
+    assert kills["threshold"][0] == 1
+
+    unknown = acc.filter(pl.col("accolade_id") == 999)
+
+    assert unknown["accolade"][0] is None
+    assert unknown["threshold"][0] == -1
 
 
 def test_damage_maps_slots_to_accounts():

@@ -351,6 +351,30 @@ Your team: The Hidden King
   'into' means the item was consumed by that upgrade, not sold.
 ```
 
+- `--accolades`: the end-of-match stat awards with your number and the reward thresholds you cleared. Several of these stats exist nowhere else in the data: the gun/melee/ability kill split, close and long range kills and damage, killstreak kills, Sinner's Sacrifice jackpots, urn deliveries, and barrier absorption
+
+```
+  Accolades
+  Stat                           Value  Stars  Award
+  kills                             14  **     Killer Instinct
+  ...
+  secures                           18  *      Social Security
+  breakables destroyed              97  *      Championship Box-er
+  pickups collected powerup         15  **     Power Overwhelming
+  sinners sacrifice jackpot          7  **     Ka-Ching
+  killstreak kills                   5  **     We're Going Streaking
+  closeup kills                      6  ***    Up Close and Personal
+  long distance kills                2  *      From Downtown
+  gun kills                          4  ***    Gunslinger
+  ability kills                      6  *      The Deadly Spirit
+  ...
+  damage absorbed                1,033         Well Protected
+  headshots                         93  *      Pow, Right in the Kisser
+  headshot damage                4,793  **     Head First
+
+  Stars counts the reward thresholds cleared, up to three.
+```
+
 - `--deaths`: each death with who killed you, how long the fight lasted, how far away the killer stood, and your respawn timer. A death to troopers or an objective shows `not a player`
 
 ```
