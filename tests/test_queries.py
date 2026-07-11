@@ -264,6 +264,42 @@ def build_interval_match(match_id=500):
     return info
 
 
+def build_laning_match(match_id=800):
+    info = build_match(match_id=match_id)
+    info.players[0].assigned_lane = 1
+    info.players[1].assigned_lane = 1
+
+    green = (
+        (44, 3, pb.k_ECitadelLobbyTeam_Team1, 3),
+        (45, 4, pb.k_ECitadelLobbyTeam_Team0, 4),
+    )
+    for account_id, hero_id, team, slot in green:
+        p = info.players.add()
+        p.account_id = account_id
+        p.hero_id = hero_id
+        p.team = team
+        p.player_slot = slot
+        p.assigned_lane = 6
+
+        s = p.stats.add()
+        s.time_stamp_s = 540
+        s.net_worth = 4000
+
+    d = info.players[0].death_details.add()
+    d.game_time_s = 100
+    d.killer_player_slot = 2
+
+    d = info.players[1].death_details.add()
+    d.game_time_s = 400
+    d.killer_player_slot = 1
+
+    d = info.players[2].death_details.add()
+    d.game_time_s = 700
+    d.killer_player_slot = 4
+
+    return info
+
+
 def build_sold_match(match_id=300, *, rebuy=False):
     info = build_match(match_id=match_id)
     info.players[0].items[1].sold_time_s = 900
@@ -1636,6 +1672,41 @@ def laning_pq(tmp_path):
         df.write_parquet(tmp_path / f"{name}.parquet")
 
     return tmp_path
+
+
+def test_laning_stats_reads_the_last_snapshot_inside_the_window(laning_pq):
+    df = queries.laning_stats(800, 540, parquet_dir=laning_pq)
+
+    me = df.filter(pl.col("account_id") == 42).row(0, named=True)
+
+    assert df.height == 4
+    assert me["souls"] == 1800
+    assert me["damage"] == 200
+    assert me["snap_s"] == 180
+    assert me["lane"] == "yellow"
+
+    late = df.filter(pl.col("account_id") == 44).row(0, named=True)
+
+    assert late["souls"] == 4000
+    assert late["snap_s"] == 540
+    assert late["lane"] == "green"
+
+
+def test_laning_stats_counts_kills_inside_the_window(laning_pq):
+    df = queries.laning_stats(800, 540, parquet_dir=laning_pq)
+
+    kd = {r["account_id"]: (r["kills"], r["deaths"]) for r in df.iter_rows(named=True)}
+
+    assert kd[42] == (1, 1)
+    assert kd[43] == (1, 1)
+    assert kd[44] == (0, 0)
+    assert kd[45] == (0, 0)
+
+
+def test_laning_stats_unknown_match(laning_pq):
+    with pytest.raises(ValueError, match="not in the tables"):
+        queries.laning_stats(999, 540, parquet_dir=laning_pq)
+
 
 def test_source_intervals_matches_damage_intervals(interval_pq):
     games = pl.DataFrame({"match_id": [500], "account_id": [42]})

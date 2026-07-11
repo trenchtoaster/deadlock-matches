@@ -281,6 +281,17 @@ def build_parser(config: str | Path | None = None) -> argparse.ArgumentParser:
         "the victim, the game time, the distance, and the respawn it cost them",
     )
     view.add_argument(
+        "--laning",
+        type=int,
+        nargs="?",
+        const=9,
+        default=None,
+        metavar="MINUTES",
+        help="the laning phase lane by lane through the first MINUTES minutes "
+        "(default 9, matching the snapshot cadence): team and player stat rows "
+        "per lane with the diff, the lane kills, and guardian falls",
+    )
+    view.add_argument(
         "--abilities",
         action="store_true",
         help="ability unlocks and upgrades in game-time order",

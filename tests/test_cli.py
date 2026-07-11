@@ -46,6 +46,7 @@ def write_cache_entry(
     teammates=0,
     team_gold_sources=(),
     death_log=(),
+    lanes=False,
     abandon_s=None,
     not_scored=False,
     badges=None,
@@ -96,6 +97,10 @@ def write_cache_entry(
         enemy.team = pb.k_ECitadelLobbyTeam_Team0
         enemy.net_worth = stats[-1][1] // 2
         enemy.player_slot = 2
+
+        if lanes:
+            p.assigned_lane = 1
+            enemy.assigned_lane = 1
 
     sources_at = {}
     for t, source, gold, orbs in gold_sources:
@@ -1663,6 +1668,46 @@ def test_match_kills_lists_victims(capsys, tmp_path):
     assert re.search(r"Time\s+Kill\s+Killed in\s+Distance\s+Respawn", out)
     assert re.search(r"6:40\s+Infernus\s+2.5s\s+10m\s+20s", out)
     assert "Killed by" not in out
+
+
+def test_match_laning_lane_blocks(capsys, tmp_path):
+    cache = tmp_path / "cache"
+    cache.mkdir()
+    write_cache_entry(
+        cache,
+        match_id=100,
+        stats=[(300, 3000), (600, 5000)],
+        death_log=((1, 2, 310), (2, 1, 700)),
+        objectives=True,
+        lanes=True,
+    )
+
+    run_main(tmp_path, "match", "100", "--laning", "--account", "42")
+
+    out = capsys.readouterr().out
+
+    assert "Laning phase through 9:00 (stat columns read at the 5:00 snapshot)" in out
+    assert re.search(
+        r"Yellow \(your lane\)\n\s+Lane\s+Souls\s+Kills\s+Deaths\s+Damage\s+Taken", out
+    )
+    assert re.search(r"Yours\s+3,000", out)
+    assert re.search(r"\* Mirage\s+3,000\s+0\s+1", out)
+    assert re.search(r"Infernus\s+1,500\s+1\s+0", out)
+    assert re.search(r"Net\s+\+1,500\s+-1\s+\+1", out)
+    assert re.search(r"5:10\s+Infernus kills Mirage", out)
+    assert "Mirage kills Infernus" not in out
+    assert re.search(r"6:40\s+enemy Guardian falls", out)
+    assert out.index("Infernus kills Mirage") < out.index("enemy Guardian falls")
+
+
+def test_match_laning_without_lanes(capsys, tmp_path):
+    cache = tmp_path / "cache"
+    cache.mkdir()
+    write_cache_entry(cache, match_id=100, stats=[(300, 3000)])
+
+    run_main(tmp_path, "match", "100", "--laning", "6", "--account", "42")
+
+    assert "No lane assignments in this match" in capsys.readouterr().out
 
 
 def test_match_deaths_without_the_table(capsys, tmp_path):

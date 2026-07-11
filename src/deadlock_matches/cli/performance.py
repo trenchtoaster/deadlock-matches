@@ -461,6 +461,149 @@ def _killer_meters(d: dict[str, Any]) -> float | None:
     return units / UNITS_PER_METER
 
 
+LANING_COLUMNS = (
+    ("Souls", "souls", 8),
+    ("Kills", "kills", 7),
+    ("Deaths", "deaths", 8),
+    ("Damage", "damage", 9),
+    ("Taken", "damage_taken", 9),
+    ("Healing", "healing", 9),
+    ("Prevented", "heal_prevented", 11),
+    ("Last hits", "last_hits", 11),
+    ("Denies", "denies", 8),
+)
+
+
+def _laning_cells(r: dict[str, Any], *, signed: bool = False) -> str:
+    """Format every stat column of one laning row."""
+    sign = "+" if signed else ""
+
+    return "".join(format(r[field], f">{sign}{width},") for _, field, width in LANING_COLUMNS)
+
+
+def _guardian_falls(
+    row: dict[str, Any], args: argparse.Namespace, lane: str, mark_s: int
+) -> list[tuple[int, str]]:
+    """List the guardian falls of one lane inside the window from the player side."""
+    fallen = (
+        queries.scan("objectives", args.parquet)
+        .filter(
+            pl.col("match_id") == row["match_id"],
+            pl.col("lane") == lane,
+            pl.col("objective") == "Guardian",
+            pl.col("destroyed_time_s").is_not_null(),
+            pl.col("destroyed_time_s") <= mark_s,
+        )
+        .sort("destroyed_time_s")
+        .collect()
+    )
+
+    falls = []
+
+    for o in fallen.iter_rows(named=True):
+        side = "your" if o["team"] == row["team"] else "enemy"
+
+        falls.append((o["destroyed_time_s"], f"{side} Guardian falls"))
+
+    return falls
+
+
+def laning_report(row: dict[str, Any], args: argparse.Namespace) -> None:
+    """Print the laning phase lane by lane: team and player stats, kills, guardians."""
+    if args.laning <= 0:
+        print("--laning takes a positive number of minutes")
+        return
+
+    mark_s = args.laning * 60
+    df = queries.laning_stats(row["match_id"], mark_s, args.parquet).with_columns(
+        (pl.col("creeps") + pl.col("neutrals")).alias("last_hits")
+    )
+
+    lanes = [lane for lane in df["lane"].unique().sort().to_list() if lane is not None]
+
+    if not lanes:
+        print("No lane assignments in this match")
+        return
+
+    if row["lane"] in lanes:
+        lanes.remove(row["lane"])
+        lanes.insert(0, row["lane"])
+
+    snap_s = df.select(pl.col("snap_s").max()).item()
+    note = ""
+
+    if snap_s is not None and snap_s != mark_s:
+        minutes, seconds = divmod(snap_s, 60)
+        note = f" (stat columns read at the {minutes}:{seconds:02d} snapshot)"
+
+    print(f"Laning phase through {args.laning}:00{note}")
+
+    names = dict(df.select("account_id", "hero").iter_rows())
+    name_w = max(max(len(n) for n in names.values()), 11)
+    label_w = name_w + 5
+    kill_log = (
+        queries.scan("deaths", args.parquet)
+        .filter(pl.col("match_id") == row["match_id"], pl.col("game_time_s") <= mark_s)
+        .select("account_id", "killer_account_id", "game_time_s")
+        .sort("game_time_s")
+        .collect()
+    )
+
+    header = "".join(f"{label:>{width}}" for label, _, width in LANING_COLUMNS)
+
+    for lane in lanes:
+        here = df.filter(pl.col("lane") == lane)
+        yours = here.filter(pl.col("team") == row["team"]).sort(
+            pl.col("account_id") != row["account_id"], pl.col("souls"), descending=[False, True]
+        )
+        enemy = here.filter(pl.col("team") != row["team"]).sort("souls", descending=True)
+        title = f"{lane.capitalize()} (your lane)" if lane == row["lane"] else lane.capitalize()
+
+        print(f"\n{title}")
+        print(f"  {'Lane':<{label_w}}{header}")
+
+        side_sums = {}
+
+        for side, group in (("Yours", yours), ("Enemy", enemy)):
+            sums = group.sum().row(0, named=True)
+            side_sums[side] = sums
+
+            print(f"  {side:<{label_w}}{_laning_cells(sums)}")
+
+            for p in group.iter_rows(named=True):
+                star = "*" if p["account_id"] == row["account_id"] else " "
+                label = f" {star} {p['hero']}"
+
+                print(f"  {label:<{label_w}}{_laning_cells(p)}")
+
+        diff = {
+            field: side_sums["Yours"][field] - side_sums["Enemy"][field]
+            for _, field, _ in LANING_COLUMNS
+        }
+
+        print(f"  {'Net':<{label_w}}{_laning_cells(diff, signed=True)}")
+
+        deaths_here = kill_log.filter(pl.col("account_id").is_in(here["account_id"].implode()))
+        events = [
+            (
+                e["game_time_s"],
+                f"{names.get(e['killer_account_id'], 'not a player')} kills {names[e['account_id']]}",
+            )
+            for e in deaths_here.iter_rows(named=True)
+        ]
+        falls = _guardian_falls(row, args, lane, mark_s)
+        events = sorted(events + falls)
+
+        if events:
+            print()
+
+        for t, text in events:
+            minutes, seconds = divmod(t, 60)
+
+            print(f"  {f'{minutes}:{seconds:02d}':<7} {text}")
+
+        if not falls:
+            print("  both guardians up")
 
 
 def _enemy_damage_table(
@@ -655,6 +798,10 @@ def match_report(args: argparse.Namespace, config: str | Path | None = None) -> 
 
     if args.movement:
         match_movement_report(row, args)
+        return
+
+    if args.laning is not None:
+        laning_report(row, args)
         return
 
     if args.deaths or args.kills:

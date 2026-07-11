@@ -1892,6 +1892,70 @@ LANING_STATS = {
 }
 
 
+def laning_stats(
+    match_id: int,
+    mark_s: int,
+    parquet_dir: str | Path | None = None,
+) -> pl.DataFrame:
+    """Snapshot every player in one match at the last sample inside a window.
+
+    - stat columns read the last snapshot at or before mark_s per player, and
+      snap_s says which sample that was
+    - kills and deaths count death events inside the window instead, since the
+      snapshot fields drift from the match screen
+    - one row per player with hero, team, and lane joined
+    """
+    players = (
+        scan("players", parquet_dir)
+        .filter(pl.col("match_id") == match_id)
+        .select("account_id", "hero", "team", "lane")
+        .collect()
+    )
+
+    if players.is_empty():
+        msg = f"match {match_id} not in the tables"
+        raise ValueError(msg)
+
+    snaps = (
+        scan("stats", parquet_dir)
+        .filter(pl.col("match_id") == match_id, pl.col("time_stamp_s") <= mark_s)
+        .group_by("account_id")
+        .agg(
+            pl.col(list(LANING_STATS)).sort_by("time_stamp_s").last(),
+            pl.col("time_stamp_s").max().alias("snap_s"),
+        )
+        .rename(LANING_STATS)
+    )
+
+    victims = (
+        scan("deaths", parquet_dir)
+        .filter(pl.col("match_id") == match_id, pl.col("game_time_s") <= mark_s)
+        .group_by("account_id")
+        .agg(pl.len().cast(pl.Int64).alias("deaths"))
+    )
+
+    killers = (
+        scan("deaths", parquet_dir)
+        .filter(
+            pl.col("match_id") == match_id,
+            pl.col("game_time_s") <= mark_s,
+            pl.col("killer_account_id").is_not_null(),
+        )
+        .group_by(pl.col("killer_account_id").alias("account_id"))
+        .agg(pl.len().cast(pl.Int64).alias("kills"))
+    )
+
+    return (
+        players.lazy()
+        .join(snaps, on="account_id", how="left")
+        .join(killers, on="account_id", how="left")
+        .join(victims, on="account_id", how="left")
+        .with_columns(pl.col(*LANING_STATS.values(), "kills", "deaths").fill_null(0))
+        .sort("team", "lane", "account_id")
+        .collect()
+    )
+
+
 def soul_intervals(
     match_id: int,
     account_id: int,
