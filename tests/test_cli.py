@@ -44,6 +44,8 @@ def write_cache_entry(
     shots=None,
     objectives=False,
     gold_sources=(),
+    teammates=0,
+    team_gold_sources=(),
     death_log=(),
     abandon_s=None,
     not_scored=False,
@@ -68,6 +70,16 @@ def write_cache_entry(
     if abandon_s is not None:
         p.abandon_match_time_s = abandon_s
 
+    mates = []
+
+    for i in range(teammates):
+        mate = info.players.add()
+        mate.account_id = 43 + i
+        mate.hero_id = 2 + i
+        mate.team = pb.k_ECitadelLobbyTeam_Team1
+        mate.player_slot = 3 + i
+        mates.append(mate)
+
     if stats:
         p.kills = 5
         p.deaths = 2
@@ -88,6 +100,10 @@ def write_cache_entry(
     for t, source, gold, orbs in gold_sources:
         sources_at.setdefault(t, []).append((source, gold, orbs))
 
+    team_sources_at = {}
+    for t, source, gold, orbs in team_gold_sources:
+        team_sources_at.setdefault(t, []).append((source, gold, orbs))
+
     for t, worth in stats:
         s = p.stats.add()
         s.time_stamp_s = t
@@ -98,6 +114,23 @@ def write_cache_entry(
             gs.source = source
             gs.gold = gold
             gs.gold_orbs = orbs
+
+        for source, gold, orbs in team_sources_at.get(t, ()):
+            gs = s.gold_sources.add()
+            gs.source = source
+            gs.gold = gold
+            gs.gold_orbs = orbs
+
+        for mate in mates:
+            ms = mate.stats.add()
+            ms.time_stamp_s = t
+            ms.net_worth = worth
+
+            for source, gold, orbs in team_sources_at.get(t, ()):
+                gs = ms.gold_sources.add()
+                gs.source = source
+                gs.gold = gold
+                gs.gold_orbs = orbs
 
         es = enemy.stats.add()
         es.time_stamp_s = t
@@ -1213,7 +1246,7 @@ def test_match_souls_flag_prints_source_and_group_table(capsys, tmp_path):
     assert "Souls by source, 5-minute intervals" in out
     assert re.search(r"Troopers\s+1,000\s+1,000\s+2,000\s+50%", out)
     assert re.search(r"Objectives\s+0\s+800\s+800\s+20%", out)
-    assert re.search(r"Urn\s+0\s+200\s+200\s+5%", out)
+    assert re.search(r"Rift & Urn\s+0\s+200\s+200\s+5%", out)
     assert re.search(r"Bounty\s+0\s+400\s+400\s+10%", out)
     assert re.search(r"Cultist Sacrifice\s+0\s+600\s+600\s+15%", out)
     assert re.search(r"Total\s+1,000\s+3,000\s+4,000", out)
@@ -1437,6 +1470,146 @@ def test_match_teams_view(capsys, tmp_path):
     assert re.search(r"5-10m\s+2,000\s+1,000\s+\+2,500", out)
     assert "6:40  your team destroys the enemy Guardian (yellow)" in out
     assert "8:20  your team kills the mid boss, enemy team steals the Rejuvenator" in out
+
+
+def test_match_teams_lists_rift_win_your_team(capsys, tmp_path):
+    cache = tmp_path / "cache"
+    cache.mkdir()
+    write_cache_entry(
+        cache,
+        match_id=100,
+        stats=[(600, 4000), (900, 6000)],
+        teammates=5,
+        team_gold_sources=[(900, 5, 247, 0)],
+        objectives=True,
+    )
+
+    run_main(tmp_path, "match", "--account", "42", "--teams")
+
+    out = capsys.readouterr().out
+
+    assert "your team wins an Unstable Rift (+247 souls each)" in out
+
+
+def test_match_teams_rift_win_reads_as_enemy_from_other_side(capsys, tmp_path):
+    cache = tmp_path / "cache"
+    cache.mkdir()
+    write_cache_entry(
+        cache,
+        match_id=100,
+        stats=[(600, 4000), (900, 6000)],
+        teammates=5,
+        team_gold_sources=[(900, 5, 247, 0)],
+        objectives=True,
+    )
+
+    run_main(tmp_path, "match", "--account", "77", "--teams")
+
+    out = capsys.readouterr().out
+
+    assert "enemy team wins an Unstable Rift (+247 souls each)" in out
+
+
+def test_match_teams_lists_urn_delivery(capsys, tmp_path):
+    cache = tmp_path / "cache"
+    cache.mkdir()
+    write_cache_entry(
+        cache,
+        match_id=100,
+        stats=[(600, 4000), (1800, 9000)],
+        gold_sources=[(1800, 5, 2350, 0)],
+        objectives=True,
+    )
+
+    run_main(tmp_path, "match", "--account", "42", "--teams")
+
+    out = capsys.readouterr().out
+
+    assert "your team delivers the Soul Urn (Mirage, +2,350 souls)" in out
+
+
+def test_match_teams_no_objective_lines_before_rework(capsys, tmp_path):
+    cache = tmp_path / "cache"
+    cache.mkdir()
+    write_cache_entry(
+        cache,
+        match_id=100,
+        start_time=1780000000,
+        stats=[(600, 4000), (1800, 9000)],
+        teammates=5,
+        team_gold_sources=[(900, 5, 247, 0)],
+        gold_sources=[(1800, 5, 2350, 0)],
+        objectives=True,
+    )
+
+    run_main(tmp_path, "match", "--account", "42", "--teams")
+
+    out = capsys.readouterr().out
+
+    assert "Unstable Rift" not in out
+    assert "Soul Urn" not in out
+
+
+def test_rift_minute_inverts_the_bounty():
+    assert performance._rift_minute(247) == 13.0
+    assert performance._rift_minute(284) == 14.0
+    assert performance._rift_minute(432) == 18.0
+
+
+def test_urn_minute_inverts_the_bounty():
+    assert performance._urn_minute(950) == 10.0
+    assert performance._urn_minute(2350) == 30.0
+
+
+def test_detect_rift_reads_the_shared_payout():
+    assert performance._detect_rift([247] * 6, 6, 0, 1800) == 247
+
+
+def test_detect_rift_allows_one_urn_runner_in_the_window():
+    assert performance._detect_rift([247, 247, 247, 247, 247, 3000], 6, 0, 1800) == 247
+
+
+def test_detect_rift_subtracts_the_comeback_bonus():
+    assert performance._detect_rift([574] * 6, 6, 327, 1800) == 574
+
+
+def test_detect_rift_ignores_a_split_window():
+    assert performance._detect_rift([247, 247, 247, 100, 200, 300], 6, 0, 1800) is None
+
+
+def test_detect_rift_rejects_an_off_formula_amount():
+    assert performance._detect_rift([364] * 6, 6, 0, 1800) is None
+
+
+def test_detect_rift_rejects_a_payout_before_the_first_spawn():
+    assert performance._detect_rift([54] * 6, 6, 0, 1800) is None
+
+
+def test_detect_rift_rejects_a_payout_past_the_final_whistle():
+    assert performance._detect_rift([987] * 6, 6, 0, 900) is None
+
+
+def test_detect_urn_names_the_solo_runner():
+    assert performance._detect_urn([2350], ["Mirage"], 0, 1800) == ("Mirage", 2350)
+
+
+def test_detect_urn_sets_aside_a_shared_rift_payout():
+    gains = [247, 247, 247, 247, 247, 2597]
+    heroes = ["A", "B", "C", "D", "E", "Runner"]
+
+    assert performance._detect_urn(gains, heroes, 247, 1800) == ("Runner", 2350)
+
+
+def test_detect_urn_picks_the_runner_over_orb_sharers():
+    assert performance._detect_urn([2000, 300], ["Runner", "Ally"], 0, 1800) == ("Runner", 2000)
+
+
+def test_detect_urn_ignores_small_treasure_gains():
+    assert performance._detect_urn([500], ["Mirage"], 0, 1800) is None
+
+
+def test_detect_urn_rejects_a_bounty_past_the_final_whistle():
+    assert performance._detect_urn([2350], ["Mirage"], 0, 1200) is None
 
 
 def test_match_teams_perspective_follows_hero(capsys, tmp_path):

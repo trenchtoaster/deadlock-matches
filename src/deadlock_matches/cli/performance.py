@@ -62,7 +62,7 @@ SOUL_LABELS = {
     "players": "Enemy Kills",
     "assists": "Kill Assists",
     "bosses": "Objectives",
-    "treasure": "Urn",
+    "treasure": "Rift & Urn",
     "team_bonus": "Team Catch-Up",
     "trophy_collector": "Trophy Collector",
     "cultist_sacrifice": "Cultist Sacrifice",
@@ -564,7 +564,179 @@ def _objective_events(row: dict[str, Any], args: argparse.Namespace) -> list[tup
 
         events.append((m["destroyed_time_s"], line))
 
+    events.extend(_objective_income_events(row, args))
+
     return sorted(events)
+
+
+RIFT_ERA_START = dt.datetime(2026, 6, 30, 10, 7, 19, tzinfo=dt.UTC)
+"""Release of client build 6601, the Unstable Rift rework in the deadlock-api version timeline.
+
+- earlier matches ran the old urn-KOTH rules with a different bounty
+- the build and its date come from assets.client_version_dates
+"""
+
+RIFT_SHARE_BASE = 247
+RIFT_SHARE_PER_MIN = 37
+RIFT_START_MIN = 13
+
+URN_BOUNTY_BASE = 250
+URN_BOUNTY_PER_MIN = 70
+URN_FIRST_SPAWN_MIN = 10
+
+
+def _rift_minute(share: int) -> float:
+    """Recover the capture minute from a rift share of souls."""
+    return (share - RIFT_SHARE_BASE) / RIFT_SHARE_PER_MIN + RIFT_START_MIN
+
+
+def _urn_minute(bounty: int) -> float:
+    """Recover the spawn minute from an urn runner bounty."""
+    return (bounty - URN_BOUNTY_BASE) / URN_BOUNTY_PER_MIN
+
+
+def _detect_rift(gains: list[int], team_size: int, comeback: int, duration_s: int) -> int | None:
+    """Detect a rift win in this snapshot window from the shared team payout.
+
+    - a rift win pays every player on the winning team the same souls at once
+    """
+    modal = max(set(gains), key=gains.count)
+    modal_count = gains.count(modal)
+
+    if modal_count < 5 or modal_count < team_size - 1:
+        return None
+
+    minute = _rift_minute(modal - comeback)
+
+    if abs(minute - round(minute)) > 0.05:
+        return None
+
+    if not RIFT_START_MIN - 0.5 <= minute <= duration_s / 60 + 1:
+        return None
+
+    return modal
+
+
+def _detect_urn(
+    gains: list[int], hero_names: list[str], shared: int, duration_s: int
+) -> tuple[str, int] | None:
+    """Detect an urn delivery in this window and name the runner.
+
+    - the runner banks the largest treasure gain once any shared rift payout is set aside
+    """
+    top_gain, runner = max(zip(gains, hero_names, strict=True))
+    bounty = top_gain - shared
+
+    if bounty < URN_BOUNTY_BASE + URN_BOUNTY_PER_MIN * (URN_FIRST_SPAWN_MIN - 0.5):
+        return None
+
+    if _urn_minute(bounty) > duration_s / 60 + 2:
+        return None
+
+    return runner, bounty
+
+
+def _objective_income_events(
+    row: dict[str, Any], args: argparse.Namespace
+) -> list[tuple[int, str]]:
+    """List every Unstable Rift win and Soul Urn delivery in the match.
+
+    - both pay into the treasure soul source
+    - a rift win pays the whole team at once, a comeback win adds the Comeback Gold Koth stat
+    - an urn delivery pays one runner
+    - only games on the rework build are read, earlier eras ran other rules
+    """
+    if row["start_time"] < RIFT_ERA_START:
+        return []
+
+    if not queries.table_exists("soul_sources", args.parquet):
+        return []
+
+    match_id = row["match_id"]
+
+    roster = (
+        queries.scan("players", args.parquet)
+        .filter(pl.col("match_id") == match_id)
+        .select("account_id", "team", "hero")
+        .collect()
+    )
+    team_size = dict(roster.group_by("team").len().iter_rows())
+
+    treasure = (
+        queries.scan("soul_sources", args.parquet)
+        .filter(pl.col("match_id") == match_id, pl.col("source_name") == "treasure")
+        .select("account_id", "time_stamp_s", "souls", "souls_orbs")
+        .sort("account_id", "time_stamp_s")
+        .with_columns((pl.col("souls") + pl.col("souls_orbs")).alias("total"))
+        .with_columns(
+            pl.col("total").diff().over("account_id").fill_null(pl.col("total")).alias("gain")
+        )
+        .filter(pl.col("gain") > 0)
+        .collect()
+        .join(roster, on="account_id")
+    )
+
+    if treasure.is_empty():
+        return []
+
+    comeback = _comeback_by_window(match_id, roster, args)
+
+    windows = (
+        treasure.group_by("team", "time_stamp_s")
+        .agg(pl.col("gain"), pl.col("hero"))
+        .sort("time_stamp_s")
+    )
+
+    events = []
+
+    for w in windows.iter_rows(named=True):
+        team, t = w["team"], w["time_stamp_s"]
+        actor = "your team" if team == row["team"] else "enemy team"
+        c = comeback.get((team, t), 0)
+
+        payout = _detect_rift(w["gain"], team_size.get(team, 6), c, row["duration_s"])
+
+        if payout is not None:
+            behind = " while behind" if c else ""
+            events.append((t, f"{actor} wins an Unstable Rift{behind} (+{payout:,} souls each)"))
+
+        urn = _detect_urn(w["gain"], w["hero"], payout or 0, row["duration_s"])
+
+        if urn is not None:
+            runner, bounty = urn
+            events.append((t, f"{actor} delivers the Soul Urn ({runner}, +{bounty:,} souls)"))
+
+    return events
+
+
+def _comeback_by_window(
+    match_id: int, roster: pl.DataFrame, args: argparse.Namespace
+) -> dict[tuple[int, int], int]:
+    """Read the comeback souls for each team and snapshot from the rift Koth stat."""
+    if not queries.table_exists("custom_stats", args.parquet):
+        return {}
+
+    koth = queries.custom_stats(
+        stat="Comeback Gold Koth", final=False, matches=[match_id], parquet_dir=args.parquet
+    ).collect()
+
+    if koth.is_empty():
+        return {}
+
+    windows = (
+        koth.join(roster.select("account_id", "team"), on="account_id")
+        .sort("account_id", "time_stamp_s")
+        .with_columns(
+            pl.col("value").diff().over("account_id").fill_null(pl.col("value")).alias("inc")
+        )
+        .filter(pl.col("inc") > 0)
+        .group_by("team", "time_stamp_s")
+        .agg(pl.col("inc").first().alias("comeback"))
+    )
+
+    return {
+        (t, ts): c for t, ts, c in windows.select("team", "time_stamp_s", "comeback").iter_rows()
+    }
 
 
 def teams_report(row: dict[str, Any], args: argparse.Namespace) -> None:
