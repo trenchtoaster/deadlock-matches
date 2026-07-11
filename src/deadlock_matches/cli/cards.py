@@ -12,6 +12,7 @@ if TYPE_CHECKING:
     from pathlib import Path
 
 UNITS_PER_METER = 39.37
+BASE_MELEE = (50.0, 116.0)
 
 
 def _as_of_note(when: dt.date | None) -> str:
@@ -287,6 +288,9 @@ def _scale_label(stat: str) -> str:
     if stat == "tech_power":
         return "spirit"
 
+    if stat == "base_weapon_damage_increase":
+        return "% weapon damage"
+
     return stat.removesuffix("_damage").replace("_", " ")
 
 
@@ -395,9 +399,15 @@ def ability_report(args: argparse.Namespace) -> None:
         return
 
     spirit = getattr(args, "spirit", None)
+    melee = getattr(args, "melee", None)
+    weapon = getattr(args, "weapon", None)
 
     if spirit is not None and (args.souls is not None or args.level is not None):
         print("--spirit is the total and already includes boons, drop --souls or --level")
+        return
+
+    if melee is not None and (args.souls is not None or args.level is not None):
+        print("--melee is the total and already includes boons, drop --souls or --level")
         return
 
     when = getattr(args, "as_of", None)
@@ -415,6 +425,14 @@ def ability_report(args: argparse.Namespace) -> None:
     if spirit is not None:
         ctx["tech_power"] = spirit
 
+    if melee is not None:
+        base_light, base_heavy = hero.melee_damage(1) if hero else BASE_MELEE
+        ctx["light_melee_damage"] = melee
+        ctx["heavy_melee_damage"] = melee * (base_heavy / base_light if base_light else 0.0)
+
+    if weapon is not None:
+        ctx["base_weapon_damage_increase"] = weapon
+
     where = []
 
     if args.souls is not None or args.level is not None:
@@ -422,6 +440,12 @@ def ability_report(args: argparse.Namespace) -> None:
 
     if ctx.get("tech_power"):
         where.append(f"{ctx['tech_power']:g} spirit")
+
+    if melee is not None:
+        where.append(f"{melee:g} light melee")
+
+    if weapon is not None:
+        where.append(f"{weapon:g}% weapon damage")
 
     owner = f"{heroes.hero_name(ability.hero)} " if ability.hero else ""
     note = f" at {', '.join(where)}" if where and ability.kind == "ability" else ""

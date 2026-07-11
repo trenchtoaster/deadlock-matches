@@ -232,6 +232,12 @@ def build_parser(config: str | Path | None = None) -> argparse.ArgumentParser:
         action="store_true",
         help="ability unlocks and upgrades in game-time order",
     )
+    view.add_argument(
+        "--items",
+        action="store_true",
+        help="every item purchase in buy order, with when it was sold, what upgrade "
+        "consumed it, and the ability it was imbued into",
+    )
 
     f = sub.add_parser(
         "download", help="retrieve tracked player matches into a separate parquet table"
@@ -374,6 +380,20 @@ def build_parser(config: str | Path | None = None) -> argparse.ArgumentParser:
         default=None,
         help="resolve scaling at this total spirit power, the number the in-game "
         "stat screen shows, items included",
+    )
+    ab.add_argument(
+        "--melee",
+        type=float,
+        default=None,
+        help="resolve melee scaling at this light melee damage, the number the in-game "
+        "stat screen shows, items included; heavy melee keeps the hero's ratio",
+    )
+    ab.add_argument(
+        "--weapon",
+        type=float,
+        default=None,
+        help="resolve weapon scaling at this bonus weapon damage percent, the number "
+        "the in-game stat screen shows, items and weapon shop investment included",
     )
     ab.add_argument("--as-of", type=dt.date.fromisoformat, default=None, help=AS_OF_HELP)
     ab.add_argument("--changes", action="store_true", help=CHANGES_HELP)

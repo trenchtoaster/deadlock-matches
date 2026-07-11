@@ -325,6 +325,24 @@ Your team: The Hidden King
   Req souls is the threshold for that unlock or cumulative AP spend.
 ```
 
+- `--items`: every item purchase in buy order, with the shop price on that patch, when an item was sold, the upgrade that consumed it, and the ability an item was imbued into
+
+```
+  Item purchases
+    Time   #  Item                   Slot      Tier    Cost
+    0:39   1  Extra Regen            vitality     1     800
+    3:12   2  High-Velocity Rounds   weapon       1     800  into Opening Rounds at 7:41
+    5:58   3  Quicksilver Reload     spirit       2   1,600  imbues Fire Scarabs
+    7:41   4  Opening Rounds         weapon       2   1,600
+    9:04   5  Healbane               vitality     2   1,600  sold at 31:10
+   12:33   6  Extra Spirit           spirit       1     800  into Surge of Power at 12:33
+   12:33   7  Surge of Power         spirit       3   3,200  imbues Djinn's Mark
+   ...
+   31:10  15  Leech                  vitality     4   6,400
+
+  'into' means the item was consumed by that upgrade, not sold.
+```
+
 - `--deaths`: each death with who killed you, how long the fight lasted, how far away the killer stood, and your respawn timer. A death to troopers or an objective shows `not a player`
 
 ```
@@ -479,6 +497,11 @@ uv run deadlock ability "Fire Scarabs" --souls 50000
   - in the example below, the ability is level 36 at 48,600 souls, so the scaling is based on 38.5 spirit power that Mirage has at that point (no items)
 - `--spirit 100` computes the values at that total spirit power instead (useful to check how much an ability does at 50, 100, 250 spirit for example)
   - the total already includes boons, so it replaces `--souls` and `--level` rather than combining with them
+- `--melee 80` does the same for melee scaling at that light melee damage, and heavy melee keeps the hero's heavy to light ratio
+  - the two combine: `--spirit 100 --melee 80` resolves both kinds of scaling on one card
+- `--weapon 58` resolves weapon scaling (Gutshot, Ira Domini, Consecrating Grenade) at that bonus weapon damage percent, the stat screen number that counts items and the weapon shop investment
+  - boons never add weapon damage percent, so this one combines with `--souls` and `--level` too
+  - Kinetic Carbine uses its own hidden weapon formula and stays unresolved
 
 ```
 Fire Scarabs  (Mirage ability at level 36, 38.5 spirit)

@@ -27,7 +27,7 @@ uv run deadlock history [--days N] [--since 2026-07-01]
                                           # result, K/D/A, souls, damage, timestamp, and match id,
                                           # newest last, last 10 games by default. Run it to get
                                           # the match id that match/download take
-uv run deadlock match [12345678] [--hero Wraith] [--interval 10] [--souls|--damage|--healing|--teams|--abilities|--deaths|--kills]
+uv run deadlock match [12345678] [--hero Wraith] [--interval 10] [--souls|--damage|--healing|--teams|--abilities|--items|--deaths|--kills]
                                           # prints the 12-player final scoreboard (lobby average,
                                           # K/D/A, souls, damage, obj damage, healing, prevented,
                                           # last hits, denies, resolved player starred), then that
@@ -63,7 +63,12 @@ uv run deadlock match [12345678] [--hero Wraith] [--interval 10] [--souls|--dama
                                           # out), worded from the resolved player's side;
                                           # --abilities = ability unlocks/upgrades in spend order,
                                           # with the level and soul requirement for that unlock
-                                          # or cumulative AP spend
+                                          # or cumulative AP spend;
+                                          # --items = every purchase in buy order with the era
+                                          # shop price, "sold at", "into <upgrade> at" (flags=1
+                                          # component consumption paired to the buy at
+                                          # sold_time_s via components), and "imbues <ability>"
+                                          # from imbued_ability
 uv run deadlock item "Mercurial Magnum"   # the shop card: innate stats, then each passive/active
                                           # section with the game's labels and units (offline)
 uv run deadlock item "Escalating Exposure" --hero Mirage [--min-rating all] [--since 2026-06-30]
@@ -103,15 +108,23 @@ uv run deadlock movement --hero Mirage    # slide/dash/air movement profile vs t
 uv run deadlock hero Mirage --souls 25000 # boon stats at a soul breakpoint (health, spirit,
                                           # melee, gun damage, AP), --level N works too,
                                           # no breakpoint = base card + per boon gains
-uv run deadlock ability "Dust Devil" [--hero Mirage] [--souls 25000 | --spirit 100]
+uv run deadlock ability "Dust Devil" [--hero Mirage] [--souls 25000 | --spirit 100 --melee 80] [--weapon 58]
                                           # ability/gun numbers: base, spirit scaling, and a
                                           # section per tier with the values it changes;
                                           # --souls/--level resolves boon scaling (spirit,
                                           # melee); --spirit N resolves at a total spirit
-                                          # power instead (the in-game stat, items included)
-                                          # and rejects --souls/--level since the total
-                                          # already includes boons; --hero for names on
-                                          # several heroes
+                                          # power instead (the in-game stat, items included),
+                                          # --melee N the same for light melee damage (heavy
+                                          # keeps the hero ratio, the two combine), both
+                                          # reject --souls/--level since a total already
+                                          # includes boons; --weapon N resolves weapon scaling
+                                          # (Gutshot etc) at a bonus weapon damage percent =
+                                          # item % + weapon shop investment %, boon-free so it
+                                          # DOES combine with --souls/--level (verified in
+                                          # sandbox 2026-07-10: 58 = Weighted Shots 40 + 18
+                                          # for 3,200 souls invested; Kinetic Carbine's custom
+                                          # weapon formula stays unresolved on purpose);
+                                          # --hero for names on several heroes
 uv run deadlock meta [--hero Mirage] [--by rating|day|week|month] [--min-rating Eternus] [--since 2026-06-01] [--until 2026-07-01]
                                           # public hero win/pick rates from deadlock-api.com;
                                           # --by rating = per skill rating (Oracle 3), day/week/month = trends
@@ -241,6 +254,8 @@ Notes:
 - hero level scaling is on `Hero` too: `level_up` (per-boon stat increments), `levels` (soul thresholds per level), `purchase_bonuses` (shop tier bonuses), and helpers `base_health(level)`, `spirit_power(level)`, `level_for_souls(souls)` — snapshot stats tables carry each player's `level`, so these compute expected base health/spirit at any point in a match
 - breakpoint questions ("what's my health at 25k souls") are built in: `Hero.stats_at(souls)` / `boon_stats(level)` return level, health, spirit, bullet damage bonus, light/heavy melee and ability points/unlocks; `deadlock hero <name> --souls N` (or `--level N`) prints it with gun dps, `deadlock ability <name> [--hero X]` prints ability numbers with a section per tier (the game's tier text plus before -> after values from `Ability.tier_descriptions` and the tier math). Melee boons: the per-boon melee increment applies to light, heavy keeps the hero's base heavy/light ratio (mostly 2.32; wiki-confirmed, Mirage +1.58 light / +3.67 heavy per boon)
 - `Hero.cost_bonuses` / `investment_bonus(slot, spent)` is the shop's souls-invested bonus curve (the graph above each category). The steps are deliberately uneven: 4,800 invested is a designed power spike in every category (spirit +19 spirit power vs +4/+7 neighbors, weapon +28%, vitality +18), and spirit spikes again at 28,800 (+25)
+- weapon scaling, sandbox-verified against live damage 2026-07-10: `base_weapon_damage_increase` abilities (Gutshot, Ira Domini, Consecrating Grenade, Witching Hour) consume bonus weapon damage in percent points = item % + weapon investment % from `cost_bonuses`, boons excluded — Gutshot measured 85/115 bare and 126/202 at 58 points (Weighted Shots 40 + 18 for its own 3,200 souls invested), exactly `value + scale × points`. This is what `ability --weapon` resolves. Kinetic Carbine is different: actual damage = 5 + 2.75 × full burst, full burst = 5 bullets (`burst_shot_count` in the raw API weapon_info; the bundled weapon record says `bullets: 1`) × bullet damage INCLUDING boons × (1 + weapon %) — measured 99/223/151/351 across boons × Weighted Shots, boons multiply with items, and the in-game tooltip model (2.80) overshoots actual by ~2%, so the ability card leaves Carbine symbolic on purpose. `bullet_damage` (Hellfire Salvo) and `weapon_damage_scale` (Sleight of Hand, Infernal Brand) are still unmeasured
+- melee scaling, same sandbox session: Bashdown measurements (93/200/143/306) matched the bundled model within ±1.2 — spirit part `35 + 1.1 × spirit`, melee part `0.5 × heavy` with heavy keeping the hero ratio through boons (the `--melee` derivation rule, now in-game-proven). The melee STAT gains half the weapon investment % (Crushing Fists case fits 1 + 22% melee + 27% = 54%/2 exactly, the wiki's "melee scales with weapon damage by 50%"), so the stat-screen melee number `--melee` takes already includes it. On-hit riders are NOT in the stat: Crushing Fists' `bonus_heavy_melee_damage: 25` is a separate ×1.25 on heavy hits, applied after ability scaling — same category as crit, out of scope for the resolver
 - patch drift: the committed history parquets (`deadlock assets --backfill`) version every patch era, so as-of consumers (`item_events` pricing, `hero_scaling`, `ability_upgrades`, the `--as-of` cards) read the tuning live at match time. The bare `Hero`/`Item`/`Ability` helpers without a `when` describe the CURRENT patch only. `deadlock assets --backfill --confirm` OVERWRITES the committed parquets by rescanning every build since `assets.HISTORY_START` (cached, near-free) — review the diff before committing. There is deliberately no date flag on the CLI: a narrowed scan would truncate the earlier eras, `start_date` exists only as a library param for tests
 - no cast events exist ANYWHERE in the metadata: `player.ability_stats` is only the self-counting items/abilities (Trophy Collector trophies, Glass Cannon stacks, Sticky Bomb bonus, Restorative Locket charges, Guided Owl/Assassinate counters — 11 distinct ids over 69 matches, checked 2026-07-07), and `custom_user_stats` is accuracy/bullet figures. Active item presses (Debuff Remover), stuns, and debuff windows live only in replay demos, which nothing here parses — don't promise cast counts
 - `match_mode == 1` is ranked; hero_id maps to names via `heroes.py`

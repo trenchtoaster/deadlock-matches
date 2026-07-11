@@ -36,6 +36,7 @@ def write_cache_entry(
     stats=(),
     damage=(),
     ability_items=(),
+    item_events=(),
     objectives=False,
     gold_sources=(),
     death_log=(),
@@ -91,6 +92,16 @@ def write_cache_entry(
         it = p.items.add()
         it.item_id = item_id
         it.game_time_s = t
+
+    for item_id, t, sold, flags, *imbued in item_events:
+        it = p.items.add()
+        it.item_id = item_id
+        it.game_time_s = t
+        it.sold_time_s = sold
+        it.flags = flags
+
+        if imbued:
+            it.imbued_ability_id = imbued[0]
 
     for victim_slot, killer_slot, t in death_log:
         victim = p if victim_slot == 1 else enemy
@@ -771,6 +782,57 @@ def test_match_abilities_flag_prints_upgrade_order(capsys, tmp_path):
     assert "cumulative AP spend" in out
 
 
+def test_match_items_flag_prints_buy_order(capsys, tmp_path):
+    cache = tmp_path / "cache"
+    cache.mkdir()
+    extra_health = 3633614685
+    extra_regen = 2829638276
+    fortitude = 3585132399
+    duration_extender = 2951612397
+    dust_devil = 1336069669
+    write_cache_entry(
+        cache,
+        match_id=100,
+        stats=[(300, 3000)],
+        item_events=[
+            (999999999, 30, 0, 0),
+            (extra_health, 60, 300, 1),
+            (extra_regen, 100, 500, 0),
+            (fortitude, 300, 0, 0),
+            (duration_extender, 400, 0, 0, dust_devil),
+        ],
+    )
+
+    run_main(tmp_path, "match", "--account", "42", "--items")
+
+    out = capsys.readouterr().out
+
+    assert "Item purchases" in out
+    assert re.search(r"1:00\s+1\s+Extra Health\s+vitality\s+1\s+[\d,]+\s+into Fortitude at 5:00", out)
+    assert re.search(r"1:40\s+2\s+Extra Regen\s+vitality\s+1\s+[\d,]+\s+sold at 8:20", out)
+    assert re.search(r"5:00\s+3\s+Fortitude\s+vitality\s+3", out)
+    assert re.search(r"6:40\s+4\s+Duration Extender\s+spirit\s+2\s+[\d,]+\s+imbues Dust Devil", out)
+    assert "999999999" not in out
+    assert "not sold" in out
+
+
+def test_match_items_upgrade_note_without_a_matching_buy(capsys, tmp_path):
+    cache = tmp_path / "cache"
+    cache.mkdir()
+    write_cache_entry(
+        cache,
+        match_id=100,
+        stats=[(300, 3000)],
+        item_events=[(3077079169, 200, 250, 1)],
+    )
+
+    run_main(tmp_path, "match", "--account", "42", "--items")
+
+    out = capsys.readouterr().out
+
+    assert re.search(r"3:20\s+1\s+High-Velocity Rounds\s+weapon\s+1\s+[\d,]+\s+upgraded at 4:10", out)
+
+
 def test_match_souls_flag_prints_source_and_group_table(capsys, tmp_path):
     cache = tmp_path / "cache"
     cache.mkdir()
@@ -1045,6 +1107,9 @@ def test_match_views_mutually_exclusive(tmp_path):
 
     with pytest.raises(SystemExit):
         build_parser(tmp_path / "config.toml").parse_args(["match", "--souls", "--damage"])
+
+    with pytest.raises(SystemExit):
+        build_parser(tmp_path / "config.toml").parse_args(["match", "--items", "--abilities"])
 
 
 def test_winrate_prints_daily_table(capsys, tmp_path):
@@ -1542,6 +1607,66 @@ def test_ability_command_spirit_with_as_of_shows_old_scaling(capsys, tmp_path):
     )
 
     assert "damage 155 -> 255" in capsys.readouterr().out
+
+
+def test_ability_command_melee_resolves_scaling(capsys, tmp_path):
+    main(["ability", "Bashdown", "--melee", "80"], config=tmp_path / "none.json")
+
+    out = capsys.readouterr().out
+
+    assert "at 80 light melee" in out
+    assert "at level" not in out
+    assert "melee damage                               72  (0.9 x light melee)" in out
+    assert "heavy melee damage 0 -> 92.8" in out
+
+
+def test_ability_command_melee_rejects_souls_and_level(capsys, tmp_path):
+    main(
+        ["ability", "Bashdown", "--melee", "80", "--souls", "25000"],
+        config=tmp_path / "none.json",
+    )
+
+    out = capsys.readouterr().out
+
+    assert "--melee is the total" in out
+    assert "Bashdown  (Billy ability)" not in out
+
+    main(["ability", "Bashdown", "--melee", "80", "--level", "20"], config=tmp_path / "none.json")
+
+    assert "--melee is the total" in capsys.readouterr().out
+
+
+def test_ability_command_spirit_and_melee_combine(capsys, tmp_path):
+    main(
+        ["ability", "Bashdown", "--spirit", "100", "--melee", "80"], config=tmp_path / "none.json"
+    )
+
+    out = capsys.readouterr().out
+
+    assert "at 100 spirit, 80 light melee" in out
+    assert "(1.1 x spirit)" in out
+    assert "(0.9 x light melee)" in out
+
+
+def test_ability_command_weapon_resolves_scaling(capsys, tmp_path):
+    main(["ability", "Gutshot", "--weapon", "58"], config=tmp_path / "none.json")
+
+    out = capsys.readouterr().out
+
+    assert "at 58% weapon damage" in out
+    assert "damage                                  100.6  (0.7 x % weapon damage)" in out
+    assert "bonus damage                             76.4  (0.8 x % weapon damage)" in out
+    assert "damage 100.6 -> 125.6" in out
+
+
+def test_ability_command_weapon_combines_with_souls(capsys, tmp_path):
+    main(["ability", "Gutshot", "--weapon", "58", "--souls", "25000"], config=tmp_path / "none.json")
+
+    out = capsys.readouterr().out
+
+    assert "already includes boons" not in out
+    assert "at level" in out
+    assert "58% weapon damage" in out
 
 
 def test_ability_command_souls_resolves_boons(capsys, tmp_path):
