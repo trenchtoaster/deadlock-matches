@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 import datetime as dt
+import itertools
 import re
+import statistics as st
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
@@ -19,14 +21,12 @@ from deadlock_matches import (
     paths,
     players,
     queries,
-    schemas,
     skill_rating,
     statues,
-    timeline,
 )
 from deadlock_matches.cli.cards import UNITS_PER_METER
-from deadlock_matches.cli.data import MVP_LABELS, TEAMS, final_stats
-from deadlock_matches.config import config_timezone, format_accounts
+from deadlock_matches.cli.data import MVP_LABELS, TEAMS, final_stats, no_pool_hint
+from deadlock_matches.config import config_players, config_timezone, format_accounts
 
 if TYPE_CHECKING:
     import argparse
@@ -92,8 +92,8 @@ SOURCE_ROWS = (
     "troopers",
     "jungle",
     "breakables",
-    "treasure",
-    "gold_denied",
+    "rift_urn",
+    "deny_souls",
     "combat",
     "objectives",
     "catch_up",
@@ -101,19 +101,34 @@ SOURCE_ROWS = (
     "souls",
 )
 
+LOWER_IS_BETTER = ("deaths", "damage_taken")
 
-def sources_report(mine: list[Any], theirs: list[Any]) -> None:
-    """Compare income from each soul source between two sets of games."""
+COUNT_STATS = ("kills", "deaths")
+
+
+def sources_report(
+    mine: pl.LazyFrame,
+    pool: pl.LazyFrame,
+    my_dir: str | Path | None,
+    pool_dir: str | Path | None,
+) -> None:
+    """Compare income from each soul source between your games and the pool."""
     marks = [6, 10, 15, 20, 25]
+    marks_s = [m * 60 for m in marks]
+    frames = pl.collect_all(
+        [_mark_medians(queries.cumulative_at(mine, s, marks_s, my_dir)) for s in SOURCE_ROWS]
+        + [_mark_medians(queries.cumulative_at(pool, s, marks_s, pool_dir)) for s in SOURCE_ROWS]
+    )
+
     header = "".join(f"  {f'{m}m gap':>8}" for m in marks)
-    print(f"\n  {'source':<12}{header}  {'you@20m':>9}  {'top@20m':>9}")
+    print(f"\n  {'source':<12}{header}  {'you@20m':>9}  {'them@20m':>9}")
 
-    for stat in SOURCE_ROWS:
-        rows = timeline.compare(mine, theirs, stat, marks)
-        gaps = "".join(f"  {_cell(r['gap'], sign=True)}" for r in rows)
-        at20 = next(r for r in rows if r["min"] == 20)
+    for i, stat in enumerate(SOURCE_ROWS):
+        you = dict(frames[i].iter_rows())
+        them = dict(frames[i + len(SOURCE_ROWS)].iter_rows())
+        gaps = "".join(f"  {_cell(_gap(you, them, m * 60), sign=True)}" for m in marks)
 
-        print(f"  {stat:<12}{gaps}  {_cell(at20['me'], 9)}  {_cell(at20['them'], 9)}")
+        print(f"  {stat:<12}{gaps}  {_cell(you.get(1200), 9)}  {_cell(them.get(1200), 9)}")
 
     print(
         "\n  souls is net worth. It runs a little over the other rows summed, the game"
@@ -121,105 +136,201 @@ def sources_report(mine: list[Any], theirs: list[Any]) -> None:
     )
 
 
-def _snapshot_field(stat: str) -> str | None:
-    """Resolve a stat to its protobuf snapshot field, accepting the parquet souls_* names."""
-    if stat in schemas.STAT_FIELDS:
-        return stat
+def _mark_medians(values: pl.LazyFrame) -> pl.LazyFrame:
+    """Aggregate a cumulative_at frame to the median value per mark."""
+    return values.group_by("mark_s").agg(pl.col("value").median())
 
-    raw = "gold" + stat.removeprefix("souls")
 
-    if stat.startswith("souls") and raw in schemas.STAT_FIELDS:
-        return raw
+def _gap(you: dict[int, float], them: dict[int, float], mark_s: int) -> float | None:
+    """Difference of the two medians at a mark, None when either side is missing."""
+    if mark_s not in you or mark_s not in them:
+        return None
 
-    return None
+    return you[mark_s] - them[mark_s]
 
 
 def compare_report(args: argparse.Namespace, config: str | Path | None = None) -> None:
-    """Compare a stat minute by minute between the player and top players of the hero."""
-    stat = args.stat
+    """Compare a stat between the player and the tracked players, interval by interval."""
+    if args.stat != "soul_sources" and args.stat not in queries.COMPARE_STATS:
+        print(f"Unknown stat: {args.stat}")
+        print("Stats: " + ", ".join(queries.COMPARE_STATS) + ", soul_sources")
+        return
 
-    if stat not in timeline.STATS and stat != "soul_sources":
-        stat = _snapshot_field(stat)
-
-        if stat is None:
-            print(f"Unknown stat: {args.stat}")
-            print(f"Named stats: {', '.join(timeline.STATS)}, soul_sources")
-            print(
-                "Snapshot fields: "
-                + ", ".join(sorted(schemas.souls(f) for f in schemas.STAT_FIELDS))
-            )
-            return
+    if args.interval <= 0:
+        print("--interval must be at least 1 minute")
+        return
 
     hero_id = heroes.hero_id_by_name(args.hero)
     if hero_id is None:
         print(f"Unknown hero: {args.hero}")
         return
 
-    mine = queries.snapshot_players(args.hero, args.parquet, args.account)
+    since = dt.date.fromisoformat(args.since) if args.since else None
+    mine = queries.hero_games(args.hero, args.parquet, args.account, since=since).collect()
     ids = format_accounts(args.account, config)
+    window = f" since {args.since}" if args.since else ""
 
-    if not mine:
-        print(f"No games for accounts {ids} on {args.hero}")
+    if mine.is_empty():
+        print(f"No ranked games for accounts {ids} on {args.hero}{window}")
         return
 
-    top = players.top_players(hero_id, limit=args.players)
-    print(f"You ({ids}, {len(mine)} games) vs top {args.hero} players: {args.stat}")
+    members = players.pool_members(args.hero, config_path=config)
 
-    print(f"\n  {'Player':<18} {'Rank':>5}  {'Region':<9} {'Games':>5}")
-
-    theirs = []
-    for m in top:
-        blocks = players.player_timelines(m["account_id"], hero_id, n=args.games)
-        theirs += blocks
-        print(f"  {m['name']:<18} {m['rank']:>5}  {m['region']:<9} {len(blocks):>5}")
-
-    if not theirs:
-        print("No games available from top players")
+    if not members:
+        print(no_pool_hint(args.hero, tracked_in_config=False))
         return
+
+    if not any(m["games"] for m in members):
+        print(no_pool_hint(args.hero, tracked_in_config=True))
+        return
+
+    pool = players.pool_games(args.hero, config_path=config).collect()
+
+    print(
+        f"You ({ids}, {len(mine)} games{window}) vs "
+        f"{len(members)} tracked {args.hero} players ({len(pool)} games): {args.stat}"
+    )
 
     if args.stat == "soul_sources":
-        sources_report(mine, theirs)
+        print(f"\n  {'Player':<18} {'Games':>5} {'Rank':>5}  Last download")
+
+        for m in members:
+            rank = "-" if m["rank"] is None else str(m["rank"])
+            when = f"{m['downloaded_at']:%Y-%m-%d}" if m["downloaded_at"] else "never"
+            print(f"  {m['name']:<18} {m['games']:>5} {rank:>5}  {when}")
+
+        sources_report(mine.lazy(), pool.lazy(), args.parquet, players.PARQUET_DIR)
         return
 
-    marks = [3, 6, 9, 12, 15, 20, 25, 30, 35, 40]
-    rows = timeline.compare(mine, theirs, stat, marks)
-    my_rates = timeline.interval_rates(rows, "me")
-    top_rates = timeline.interval_rates(rows, "them")
+    interval_s = args.interval * 60
+    my_rates, pool_rates, my_medians, pool_medians = pl.collect_all(
+        [
+            _per_game(mine.lazy(), args.stat, args.parquet),
+            _per_game(pool.lazy(), args.stat, players.PARQUET_DIR),
+            _interval_medians(
+                queries.compare_intervals(mine.lazy(), args.stat, interval_s, args.parquet)
+            ),
+            _interval_medians(
+                queries.compare_intervals(pool.lazy(), args.stat, interval_s, players.PARQUET_DIR)
+            ),
+        ]
+    )
 
-    print("\n  Min       You (n)        Top (n)       Gap   You/min  Top/min")
+    unit = "game" if args.stat in COUNT_STATS else "min"
+    print(
+        f"\n  {'Player':<18} {'Games':>5} {'Rank':>5}  {'Last download':>13}"
+        f"  {f'Avg/{unit}':>8} {f'Med/{unit}':>8}"
+    )
+    _summary_line("you", len(mine), "-", "-", my_rates.get_column("rate").to_list())
 
-    for r, ry, rt in zip(rows, my_rates, top_rates, strict=True):
-        print(
-            f"  {r['min']:>3}  {_cell(r['me'])} ({r['me_n']:>2})  {_cell(r['them'])} ({r['them_n']:>2})"
-            f"  {_cell(r['gap'], sign=True)}  {_cell(ry)}  {_cell(rt)}"
+    for m in members:
+        rank = "-" if m["rank"] is None else str(m["rank"])
+        when = f"{m['downloaded_at']:%Y-%m-%d}" if m["downloaded_at"] else "never"
+        rates = pool_rates.filter(pl.col("account_id") == m["account_id"])
+
+        _summary_line(m["name"], m["games"], rank, when, rates.get_column("rate").to_list())
+
+    _interval_table(args, my_medians, pool_medians, my_rates, pool_rates)
+
+
+def _interval_medians(gains: pl.LazyFrame) -> pl.LazyFrame:
+    """Aggregate a compare_intervals frame to the median gain and game count per interval."""
+    return gains.group_by("interval").agg(pl.col("gain").median().alias("gain"), pl.len())
+
+
+def _per_game(games: pl.LazyFrame, stat: str, parquet_dir: str | Path | None) -> pl.LazyFrame:
+    """Pick the per game total for count stats and the per minute rate otherwise."""
+    if stat in COUNT_STATS:
+        return queries.game_totals(games, stat, parquet_dir).select(
+            "match_id", "account_id", pl.col("total").alias("rate")
         )
 
-    deficits = [
-        (rt - ry, prev, r["min"], ry, rt)
-        for prev, r, ry, rt in zip([0] + marks, rows, my_rates, top_rates, strict=False)
-        if ry is not None and rt is not None and r["me_n"] >= 3 and r["them_n"] >= 3
-    ]
-    if deficits:
-        worst = max(deficits)
-        d, start, end, ry, rt = worst
+    return queries.game_rates(games, stat, parquet_dir)
 
-        if d > 0:
-            print(
-                f"\n  Biggest {args.stat} rate deficit: {start}-{end}m, "
-                f"you {_cell(ry, 1)}/min vs top players {_cell(rt, 1)}/min"
-            )
-        else:
-            print(f"\n  No {args.stat} rate deficit at any checkpoint, you keep pace or better")
 
-    if args.stat == "farm":
-        at20 = timeline.compare(mine, theirs, "combat", [20])[0]
+def _interval_table(
+    args: argparse.Namespace,
+    my_medians: pl.DataFrame,
+    pool_medians: pl.DataFrame,
+    my_rates: pl.DataFrame,
+    pool_rates: pl.DataFrame,
+) -> None:
+    """Print the per interval medians of both sides with the running difference."""
+    you = {r["interval"]: (r["gain"], r["len"]) for r in my_medians.iter_rows(named=True)}
+    them = {r["interval"]: (r["gain"], r["len"]) for r in pool_medians.iter_rows(named=True)}
+    per = "" if args.stat in COUNT_STATS else "/min"
+    scale = 1 if args.stat in COUNT_STATS else args.interval
 
-        if at20["me"] is not None and at20["them"] is not None:
-            print(
-                f"\n  Kill and assist souls at 20m (not counted above): "
-                f"you {at20['me']:,.0f} vs top players {at20['them']:,.0f} "
-                f"({at20['gap']:+,.0f}), --stat combat for the full timeline"
-            )
+    print(
+        f"\n  {'Min':<8} {f'You{per}':>8} {f'Them{per}':>9} {f'Gap{per}':>9}"
+        f" {'Cumulative gap':>14} {'Games':>8}"
+    )
+
+    behind = 0.0
+    shown_end = 0
+    worst: tuple[float, int, float, float] | None = None
+    cut_side = None
+
+    for n in itertools.count():
+        if n not in you and n not in them:
+            break
+
+        (gain_y, n_y) = you.get(n, (0.0, 0))
+        (gain_t, n_t) = them.get(n, (0.0, 0))
+
+        if n_y < 3 or n_t < 3:
+            cut_side = "your games" if n_y < 3 else "tracked games"
+            break
+
+        rate_y = gain_y / scale
+        rate_t = gain_t / scale
+        gap = rate_y - rate_t
+        behind += gap * scale
+        shown_end = (n + 1) * args.interval
+        span = f"{n * args.interval}-{shown_end}"
+        deficit = (rate_y - rate_t) if args.stat in LOWER_IS_BETTER else (rate_t - rate_y)
+
+        if worst is None or deficit > worst[0]:
+            worst = (deficit, n, rate_y, rate_t)
+
+        games = f"{n_y}/{n_t}"
+        print(
+            f"  {span:<8} {_cell(rate_y)} {_cell(rate_t, 9)} {_cell(gap, 9, sign=True)}"
+            f" {_cell(behind, 14, sign=True)} {games:>8}"
+        )
+
+    total_y = my_rates.get_column("rate").to_list()
+    total_t = pool_rates.get_column("rate").to_list()
+
+    if total_y and total_t:
+        med_y = st.median(total_y)
+        med_t = st.median(total_t)
+        print(
+            f"  {'Total':<8} {_cell(med_y)} {_cell(med_t, 9)} {_cell(med_y - med_t, 9, sign=True)}"
+        )
+
+    print("\n  This table shows the median values for each interval")
+
+    if cut_side is not None:
+        print(f"  Games past {shown_end}m left out, too few {cut_side} reach them")
+
+    if worst is not None and worst[0] > 0:
+        deficit, n, rate_y, rate_t = worst
+        span = f"{n * args.interval}-{(n + 1) * args.interval}m"
+        print(
+            f"  Biggest {args.stat} gap: {span}, "
+            f"you {_cell(rate_y, 1)}{per} vs tracked players {_cell(rate_t, 1)}{per}"
+        )
+    elif worst is not None:
+        print(f"  No {args.stat} gap at any interval, you keep pace or better")
+
+
+def _summary_line(name: str, games: int, rank: str, when: str, rates: list[float]) -> None:
+    """Print one player row of the compare summary table."""
+    avg = _cell(st.mean(rates)) if rates else _cell(None)
+    med = _cell(st.median(rates)) if rates else _cell(None)
+
+    print(f"  {name:<18} {games:>5} {rank:>5}  {when:>13}  {avg} {med}")
 
 
 def _span(row: dict[str, Any]) -> str:

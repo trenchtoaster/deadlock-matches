@@ -11,6 +11,7 @@ import json
 import re
 import shutil
 from dataclasses import dataclass, field
+from enum import IntEnum
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
@@ -26,7 +27,6 @@ from deadlock_matches import (
     paths,
     schemas,
     statues,
-    timeline,
 )
 
 if TYPE_CHECKING:
@@ -36,20 +36,39 @@ if TYPE_CHECKING:
 
 PARQUET_DIR = paths.data_dir() / "deadlock-matches/parquet"
 
+
+class GoldSource(IntEnum):
+    """Income source IDs in snapshot gold_sources rows (protobuf EGoldSource)."""
+
+    PLAYERS = 1
+    LANE_CREEPS = 2
+    NEUTRALS = 3
+    BOSSES = 4
+    TREASURE = 5
+    ASSISTS = 6
+    DENIES = 7
+    TEAM_BONUS = 8
+    ABILITY_ASSASSINATE = 9
+    ITEM_TROPHY_COLLECTOR = 10
+    ITEM_CULTIST_SACRIFICE = 11
+    BREAKABLE = 12
+    ITEM_GOOSE_EGG = 13
+
+
 SOURCE_NAMES = {
-    timeline.GoldSource.PLAYERS: "players",
-    timeline.GoldSource.LANE_CREEPS: "troopers",
-    timeline.GoldSource.NEUTRALS: "jungle",
-    timeline.GoldSource.BOSSES: "bosses",
-    timeline.GoldSource.TREASURE: "treasure",
-    timeline.GoldSource.ASSISTS: "assists",
-    timeline.GoldSource.DENIES: "denies",
-    timeline.GoldSource.TEAM_BONUS: "team_bonus",
-    timeline.GoldSource.ABILITY_ASSASSINATE: "assassinate",
-    timeline.GoldSource.ITEM_TROPHY_COLLECTOR: "trophy_collector",
-    timeline.GoldSource.ITEM_CULTIST_SACRIFICE: "cultist_sacrifice",
-    timeline.GoldSource.BREAKABLE: "breakables",
-    timeline.GoldSource.ITEM_GOOSE_EGG: "goose_egg",
+    GoldSource.PLAYERS: "players",
+    GoldSource.LANE_CREEPS: "troopers",
+    GoldSource.NEUTRALS: "jungle",
+    GoldSource.BOSSES: "bosses",
+    GoldSource.TREASURE: "treasure",
+    GoldSource.ASSISTS: "assists",
+    GoldSource.DENIES: "denies",
+    GoldSource.TEAM_BONUS: "team_bonus",
+    GoldSource.ABILITY_ASSASSINATE: "assassinate",
+    GoldSource.ITEM_TROPHY_COLLECTOR: "trophy_collector",
+    GoldSource.ITEM_CULTIST_SACRIFICE: "cultist_sacrifice",
+    GoldSource.BREAKABLE: "breakables",
+    GoldSource.ITEM_GOOSE_EGG: "goose_egg",
 }
 
 LANE_NAMES = {1: "yellow", 4: "blue", 6: "green"}

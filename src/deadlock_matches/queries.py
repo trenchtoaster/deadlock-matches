@@ -1258,15 +1258,16 @@ def death_context(
     )
 
 
-def snapshot_players(
+def hero_games(
     hero: str,
     parquet_dir: str | Path | None = None,
     accounts: Sequence[int] | None = None,
-) -> list[dict]:
-    """Read games on one hero from the parquet stores as timeline player blocks.
+    since: dt.date | None = None,
+) -> pl.LazyFrame:
+    """List your ranked games on one hero as match and account pairs.
 
-    Each entry is {"stats": [snapshot dicts]} keyed by the protobuf field
-    names, with gold_sources rebuilt from the soul_sources table.
+    - only ranked games count, matching the downloaded pool
+    - since keeps games from that local day onward
     """
     hero_id = heroes.hero_id_by_name(hero)
 
@@ -1274,36 +1275,327 @@ def snapshot_players(
         msg = f"Unknown hero {hero!r}"
         raise ValueError(msg)
 
-    games = (
-        my_games(parquet_dir, accounts)
-        .filter(pl.col("hero_id") == hero_id)
-        .select("match_id", "account_id")
+    games = my_games(parquet_dir, accounts).filter(
+        pl.col("hero_id") == hero_id, pl.col("match_mode") == 1
     )
-    snaps = scan("stats", parquet_dir).join(games, on=["match_id", "account_id"]).collect()
-    sources = scan("soul_sources", parquet_dir).join(games, on=["match_id", "account_id"]).collect()
 
-    raw_names = {schemas.souls(f): f for f in schemas.STAT_FIELDS}
-    by_snap: dict[tuple, dict] = {}
+    if since is not None:
+        games = games.filter(pl.col("day") >= since)
 
-    for row in snaps.iter_rows(named=True):
-        key = (row["match_id"], row["account_id"], row["time_stamp_s"])
-        snap = {raw_names[c]: v for c, v in row.items() if c in raw_names}
-        snap["gold_sources"] = []
-        by_snap[key] = snap
+    return games.select("match_id", "account_id").unique()
 
-    for row in sources.iter_rows(named=True):
-        key = (row["match_id"], row["account_id"], row["time_stamp_s"])
-        snap = by_snap.setdefault(key, {"time_stamp_s": row["time_stamp_s"], "gold_sources": []})
-        snap["gold_sources"].append(
-            {"source": row["source"], "gold": row["souls"], "gold_orbs": row["souls_orbs"]}
+
+SOUL_COMPOSITES = {
+    "farm": ("troopers", "jungle", "breakables", "treasure", "denies"),
+    "troopers": ("troopers",),
+    "jungle": ("jungle",),
+    "breakables": ("breakables",),
+    "rift_urn": ("treasure",),
+    "deny_souls": ("denies",),
+    "combat": ("players", "assists"),
+    "objectives": ("bosses",),
+    "catch_up": ("team_bonus",),
+    "other": ("trophy_collector", "cultist_sacrifice", "assassinate", "goose_egg"),
+}
+
+COMPARE_STATS = (
+    "souls",
+    "farm",
+    "troopers",
+    "jungle",
+    "breakables",
+    "combat",
+    "objectives",
+    "catch_up",
+    "other",
+    "kills",
+    "deaths",
+    "assists",
+    "damage",
+    "damage_taken",
+    "obj_damage",
+    "healing",
+    "heal_prevented",
+    "creeps",
+    "neutrals",
+    "denies",
+)
+
+_KEYS = ["match_id", "account_id"]
+
+
+def _bucket(column: str, interval_s: int) -> pl.Expr:
+    """Assign a time column to its interval number, matching match_intervals."""
+    return ((pl.col(column) - 1) // interval_s).clip(0).cast(pl.Int64).alias("interval")
+
+
+def _interval_grid(
+    games: pl.LazyFrame, interval_s: int, parquet_dir: str | Path | None
+) -> pl.LazyFrame:
+    """Lay out one row per full interval per game."""
+    return (
+        games.select(_KEYS)
+        .unique()
+        .join(scan("matches", parquet_dir).select("match_id", "duration_s"), on="match_id")
+        .select(
+            *_KEYS,
+            pl.int_ranges(0, pl.col("duration_s") // interval_s).alias("interval"),
+        )
+        .explode("interval", empty_as_null=False)
+    )
+
+
+def _column_gains(
+    games: pl.LazyFrame, column: str, interval_s: int, parquet_dir: str | Path | None
+) -> pl.LazyFrame:
+    """Diff one cumulative stats column into per interval gains per game."""
+    cumulative = (
+        scan("stats", parquet_dir)
+        .join(games.select(_KEYS).unique(), on=_KEYS)
+        .select(*_KEYS, _bucket("time_stamp_s", interval_s), pl.col(column).alias("value"))
+        .group_by(*_KEYS, "interval")
+        .agg(pl.col("value").max())
+    )
+
+    return (
+        _interval_grid(games, interval_s, parquet_dir)
+        .join(cumulative, on=[*_KEYS, "interval"], how="left")
+        .sort(*_KEYS, "interval")
+        .with_columns(pl.col("value").forward_fill().over(_KEYS).fill_null(0))
+        .with_columns(
+            (pl.col("value") - pl.col("value").shift(1).over(_KEYS).fill_null(0)).alias("gain")
+        )
+        .select(*_KEYS, "interval", "gain")
+    )
+
+
+def _source_gains(
+    games: pl.LazyFrame,
+    sources: Sequence[str],
+    interval_s: int,
+    parquet_dir: str | Path | None,
+) -> pl.LazyFrame:
+    """Diff a set of soul sources into per interval gains per game.
+
+    Each source samples on its own clock, so every source forward-fills
+    separately before the gains are summed.
+    """
+    per_source = (
+        scan("soul_sources", parquet_dir)
+        .join(games.select(_KEYS).unique(), on=_KEYS)
+        .filter(pl.col("source_name").is_in(list(sources)))
+        .select(
+            *_KEYS,
+            "source_name",
+            _bucket("time_stamp_s", interval_s),
+            (pl.col("souls") + pl.col("souls_orbs")).alias("value"),
+        )
+        .group_by(*_KEYS, "source_name", "interval")
+        .agg(pl.col("value").max())
+    )
+
+    return (
+        _interval_grid(games, interval_s, parquet_dir)
+        .join(pl.LazyFrame({"source_name": list(sources)}), how="cross")
+        .join(per_source, on=[*_KEYS, "source_name", "interval"], how="left")
+        .sort(*_KEYS, "source_name", "interval")
+        .with_columns(pl.col("value").forward_fill().over([*_KEYS, "source_name"]).fill_null(0))
+        .with_columns(
+            (
+                pl.col("value")
+                - pl.col("value").shift(1).over([*_KEYS, "source_name"]).fill_null(0)
+            ).alias("gain")
+        )
+        .group_by(*_KEYS, "interval")
+        .agg(pl.col("gain").sum())
+    )
+
+
+def _event_gains(
+    games: pl.LazyFrame, interval_s: int, parquet_dir: str | Path | None, *, kills: bool
+) -> pl.LazyFrame:
+    """Count deaths table rows per interval per game, as victim or as killer."""
+    deaths = scan("deaths", parquet_dir)
+
+    if kills:
+        deaths = (
+            deaths.drop("account_id")
+            .drop_nulls("killer_account_id")
+            .rename({"killer_account_id": "account_id"})
         )
 
-    blocks: dict[tuple, list[dict]] = {}
+    events = (
+        deaths.join(games.select(_KEYS).unique(), on=_KEYS)
+        .select(*_KEYS, _bucket("game_time_s", interval_s))
+        .group_by(*_KEYS, "interval")
+        .agg(pl.len().cast(pl.Int64).alias("gain"))
+    )
 
-    for (match_id, account_id, _), snap in sorted(by_snap.items()):
-        blocks.setdefault((match_id, account_id), []).append(snap)
+    return (
+        _interval_grid(games, interval_s, parquet_dir)
+        .join(events, on=[*_KEYS, "interval"], how="left")
+        .with_columns(pl.col("gain").fill_null(0))
+        .select(*_KEYS, "interval", "gain")
+    )
 
-    return [{"stats": snaps} for snaps in blocks.values()]
+
+def compare_intervals(
+    games: pl.LazyFrame,
+    stat: str,
+    interval_s: int = 300,
+    parquet_dir: str | Path | None = None,
+) -> pl.LazyFrame:
+    """Split every given game into per interval gains of one compare stat.
+
+    - full intervals only, so a game contributes exactly while it lasts
+    - same bucket rule as match_intervals: a gain lands in the interval
+      holding the sample that recorded it
+    - kills and deaths count deaths table rows, snapshot counts drift
+    - soul composites (farm, combat, ...) sum their sources, each source
+      forward-filled on its own clock
+    """
+    if stat in ("kills", "deaths"):
+        return _event_gains(games, interval_s, parquet_dir, kills=stat == "kills")
+
+    if stat in INTERVAL_STATS:
+        return _column_gains(games, INTERVAL_STATS[stat], interval_s, parquet_dir)
+
+    if stat in SOUL_COMPOSITES:
+        return _source_gains(games, SOUL_COMPOSITES[stat], interval_s, parquet_dir)
+
+    known = ", ".join(COMPARE_STATS)
+    msg = f"Unknown compare stat {stat!r}, one of: {known}"
+    raise ValueError(msg)
+
+
+def game_totals(
+    games: pl.LazyFrame, stat: str, parquet_dir: str | Path | None = None
+) -> pl.LazyFrame:
+    """Total one compare stat over each whole game, one row per game."""
+    with_duration = (
+        games.select(_KEYS)
+        .unique()
+        .join(scan("matches", parquet_dir).select("match_id", "duration_s"), on="match_id")
+    )
+
+    if stat in ("kills", "deaths"):
+        deaths = scan("deaths", parquet_dir)
+
+        if stat == "kills":
+            deaths = (
+                deaths.drop("account_id")
+                .drop_nulls("killer_account_id")
+                .rename({"killer_account_id": "account_id"})
+            )
+
+        totals = (
+            deaths.join(games.select(_KEYS).unique(), on=_KEYS)
+            .group_by(_KEYS)
+            .agg(pl.len().cast(pl.Int64).alias("total"))
+        )
+
+    elif stat in INTERVAL_STATS:
+        totals = (
+            scan("stats", parquet_dir)
+            .join(games.select(_KEYS).unique(), on=_KEYS)
+            .group_by(_KEYS)
+            .agg(pl.col(INTERVAL_STATS[stat]).max().alias("total"))
+        )
+
+    elif stat in SOUL_COMPOSITES:
+        totals = (
+            scan("soul_sources", parquet_dir)
+            .join(games.select(_KEYS).unique(), on=_KEYS)
+            .filter(pl.col("source_name").is_in(list(SOUL_COMPOSITES[stat])))
+            .group_by(*_KEYS, "source_name")
+            .agg((pl.col("souls") + pl.col("souls_orbs")).max().alias("total"))
+            .group_by(_KEYS)
+            .agg(pl.col("total").sum())
+        )
+
+    else:
+        known = ", ".join(COMPARE_STATS)
+        msg = f"Unknown compare stat {stat!r}, one of: {known}"
+        raise ValueError(msg)
+
+    return (
+        with_duration.join(totals, on=_KEYS, how="left")
+        .with_columns(pl.col("total").fill_null(0))
+        .filter(pl.col("duration_s") > 0)
+        .select(*_KEYS, "total", "duration_s")
+    )
+
+
+def game_rates(
+    games: pl.LazyFrame, stat: str, parquet_dir: str | Path | None = None
+) -> pl.LazyFrame:
+    """Compute the whole game rate per minute of one compare stat, one row per game."""
+    return game_totals(games, stat, parquet_dir).select(
+        *_KEYS, (pl.col("total") * 60 / pl.col("duration_s")).alias("rate")
+    )
+
+
+def cumulative_at(
+    games: pl.LazyFrame,
+    stat: str,
+    marks_s: Sequence[int],
+    parquet_dir: str | Path | None = None,
+) -> pl.LazyFrame:
+    """Read the cumulative value of one compare stat at each mark, per game.
+
+    - the value is the last recorded sample at or before the mark
+    - only games that reach a mark contribute rows for it
+    """
+    marks = pl.LazyFrame({"mark_s": sorted(set(marks_s))}, schema={"mark_s": pl.Int64})
+    reached = (
+        games.select(_KEYS)
+        .unique()
+        .join(scan("matches", parquet_dir).select("match_id", "duration_s"), on="match_id")
+        .join(marks, how="cross")
+        .filter(pl.col("duration_s") >= pl.col("mark_s"))
+        .select(*_KEYS, "mark_s")
+    )
+
+    if stat in INTERVAL_STATS:
+        values = (
+            scan("stats", parquet_dir)
+            .join(games.select(_KEYS).unique(), on=_KEYS)
+            .select(*_KEYS, "time_stamp_s", pl.col(INTERVAL_STATS[stat]).alias("value"))
+            .join(marks, how="cross")
+            .filter(pl.col("time_stamp_s") <= pl.col("mark_s"))
+            .group_by(*_KEYS, "mark_s")
+            .agg(pl.col("value").max())
+        )
+
+    elif stat in SOUL_COMPOSITES:
+        values = (
+            scan("soul_sources", parquet_dir)
+            .join(games.select(_KEYS).unique(), on=_KEYS)
+            .filter(pl.col("source_name").is_in(list(SOUL_COMPOSITES[stat])))
+            .select(
+                *_KEYS,
+                "source_name",
+                "time_stamp_s",
+                (pl.col("souls") + pl.col("souls_orbs")).alias("value"),
+            )
+            .join(marks, how="cross")
+            .filter(pl.col("time_stamp_s") <= pl.col("mark_s"))
+            .group_by(*_KEYS, "source_name", "mark_s")
+            .agg(pl.col("value").max())
+            .group_by(*_KEYS, "mark_s")
+            .agg(pl.col("value").sum())
+        )
+
+    else:
+        known = ", ".join(k for k in COMPARE_STATS if k not in ("kills", "deaths"))
+        msg = f"Unknown cumulative stat {stat!r}, one of: {known}"
+        raise ValueError(msg)
+
+    return (
+        reached.join(values, on=[*_KEYS, "mark_s"], how="left")
+        .with_columns(pl.col("value").fill_null(0))
+        .select(*_KEYS, "mark_s", "value")
+    )
 
 
 INTERVAL_STATS = {

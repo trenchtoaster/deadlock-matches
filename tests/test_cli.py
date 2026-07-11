@@ -17,7 +17,6 @@ from deadlock_matches import (
     items,
     players,
     schemas,
-    timeline,
 )
 from deadlock_matches.cli import cards, data, performance
 from deadlock_matches.cli import items as cli_items
@@ -58,6 +57,7 @@ def write_cache_entry(
     info.duration_s = 1800
     info.winning_team = pb.k_ECitadelLobbyTeam_Team1 if won else pb.k_ECitadelLobbyTeam_Team0
     info.not_scored = not_scored
+    info.match_mode = pb.k_ECitadelMatchMode_Unranked
 
     if badges is not None:
         info.average_badge_team0, info.average_badge_team1 = badges
@@ -726,18 +726,13 @@ def test_compare_unknown_stat_lists_options(capsys, tmp_path):
     out = capsys.readouterr().out
 
     assert "Unknown stat: nonsense" in out
+    assert "souls" in out
     assert "farm" in out
-    assert "creep_kills" in out
-    assert "souls_player" in out
+    assert "denies" in out
+    assert "soul_sources" in out
+    assert "souls_player" not in out
+    assert "ability_points" not in out
     assert "gold_player" not in out
-
-
-def test_snapshot_field_accepts_souls_names():
-    assert performance._snapshot_field("creep_kills") == "creep_kills"
-    assert performance._snapshot_field("souls_player") == "gold_player"
-    assert performance._snapshot_field("souls_denied") == "gold_denied"
-    assert performance._snapshot_field("net_worth") == "net_worth"
-    assert performance._snapshot_field("bogus") is None
 
 
 def test_compare_without_account_prints_hint(capsys, tmp_path):
@@ -749,6 +744,140 @@ def test_compare_without_account_prints_hint(capsys, tmp_path):
     assert "--account" in out
 
 
+def _pool_game(match_id):
+    info = pb.CMsgMatchMetaDataContents().match_info
+    info.match_id = match_id
+    info.start_time = 1783000000
+    info.duration_s = 1800
+    info.winning_team = pb.k_ECitadelLobbyTeam_Team1
+    info.match_mode = pb.k_ECitadelMatchMode_Unranked
+
+    tp = info.players.add()
+    tp.account_id = 11
+    tp.hero_id = 52
+    tp.team = pb.k_ECitadelLobbyTeam_Team1
+    tp.player_slot = 1
+
+    for t, worth in [(180, 3000), (360, 6000)]:
+        s = tp.stats.add()
+        s.time_stamp_s = t
+        s.net_worth = worth
+
+    return info
+
+
+def test_compare_command_reads_the_downloaded_pool(tmp_path, monkeypatch, capsys):
+    cache = tmp_path / "cache"
+    cache.mkdir()
+
+    for match_id in (100, 101, 102):
+        write_cache_entry(cache, match_id=match_id, stats=[(180, 1000), (360, 2000)])
+
+    monkeypatch.setattr(players, "match_info", lambda mid, archive_dir=None: _pool_game(mid))
+    store = tmp_path / "players-pq"
+    ledger = [
+        {
+            "match_id": match_id,
+            "account_id": 11,
+            "player": "pro",
+            "hero_id": 52,
+            "rank": 2,
+            "region": "Asia",
+            "downloaded_at": dt.datetime(2026, 7, 1, tzinfo=dt.UTC),
+        }
+        for match_id in (900, 901, 902)
+    ]
+    players.write_player_tables(ledger, out_dir=store)
+    monkeypatch.setattr(players, "PARQUET_DIR", store)
+
+    run_main(
+        tmp_path,
+        "compare",
+        "--hero",
+        "Mirage",
+        extra="[players.Mirage]\npro = 11\n",
+    )
+
+    out = capsys.readouterr().out
+
+    assert "You (you, 3 games) vs 1 tracked Mirage players (3 games): souls" in out
+    assert re.search(r"you\s+3\s+-\s+-\s+67\s+67", out)
+    assert re.search(r"pro\s+3\s+2\s+2026-07-01\s+200\s+200", out)
+    assert re.search(r"0-5\s+200\s+600\s+-400\s+-2,000\s+3/3", out)
+    assert re.search(r"5-10\s+200\s+600\s+-400\s+-4,000\s+3/3", out)
+    assert re.search(r"10-15\s+0\s+0\s+\+0\s+-4,000\s+3/3", out)
+    assert re.search(r"Total\s+67\s+200\s+-133", out)
+    assert "Biggest souls gap: 0-5m, you 200/min vs tracked players 600/min" in out
+
+
+def test_compare_command_shows_deaths_as_counts(tmp_path, monkeypatch, capsys):
+    cache = tmp_path / "cache"
+    cache.mkdir()
+
+    for match_id in (100, 101, 102):
+        write_cache_entry(cache, match_id=match_id, stats=[(180, 1000), (360, 2000)])
+
+    monkeypatch.setattr(players, "match_info", lambda mid, archive_dir=None: _pool_game(mid))
+    store = tmp_path / "players-pq"
+    ledger = [
+        {
+            "match_id": match_id,
+            "account_id": 11,
+            "player": "pro",
+            "hero_id": 52,
+            "rank": 2,
+            "region": "Asia",
+            "downloaded_at": dt.datetime(2026, 7, 1, tzinfo=dt.UTC),
+        }
+        for match_id in (900, 901, 902)
+    ]
+    players.write_player_tables(ledger, out_dir=store)
+    monkeypatch.setattr(players, "PARQUET_DIR", store)
+
+    run_main(
+        tmp_path,
+        "compare",
+        "--hero",
+        "Mirage",
+        "--stat",
+        "deaths",
+        extra="[players.Mirage]\npro = 11\n",
+    )
+
+    out = capsys.readouterr().out
+
+    assert "Avg/game" in out
+    assert "Med/game" in out
+    assert "/min" not in out
+    assert re.search(r"Min\s+You\s+Them\s+Gap\s+Cumulative gap\s+Games", out)
+
+
+def test_compare_command_without_tracked_players_prints_hint(tmp_path, monkeypatch, capsys):
+    monkeypatch.setattr(players, "PARQUET_DIR", tmp_path / "players-pq")
+    cache = tmp_path / "cache"
+    cache.mkdir()
+    write_cache_entry(cache, match_id=100, stats=[(180, 1000)])
+
+    run_main(tmp_path, "compare", "--hero", "Mirage")
+
+    out = capsys.readouterr().out
+
+    assert "No players tracked for Mirage" in out
+    assert "deadlock leaderboard" in out
+
+
+def test_compare_command_without_downloads_prints_hint(tmp_path, monkeypatch, capsys):
+    monkeypatch.setattr(players, "PARQUET_DIR", tmp_path / "players-pq")
+    cache = tmp_path / "cache"
+    cache.mkdir()
+    write_cache_entry(cache, match_id=100, stats=[(180, 1000)])
+
+    run_main(tmp_path, "compare", "--hero", "Mirage", extra="[players.Mirage]\npro = 11\n")
+
+    out = capsys.readouterr().out
+
+    assert "No downloaded games from the tracked Mirage players yet" in out
+    assert 'deadlock download --hero "Mirage"' in out
 
 
 def test_help_sections_cover_every_command(tmp_path):
@@ -1360,7 +1489,7 @@ def test_match_scoreboard_shows_buff_totals(capsys, tmp_path):
 def test_match_souls_flag_prints_source_and_group_table(capsys, tmp_path):
     cache = tmp_path / "cache"
     cache.mkdir()
-    g = timeline.GoldSource
+    g = export.GoldSource
     write_cache_entry(
         cache,
         match_id=100,

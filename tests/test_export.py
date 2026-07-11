@@ -1,5 +1,6 @@
 import bz2
 import datetime as dt
+import re
 
 import polars as pl
 import pytest
@@ -1102,3 +1103,17 @@ def test_migrate_to_partitions_preserves_all_rows_without_decoding(tmp_path):
         assert not (out / f"{name}.parquet").exists()
         assert (out / name).is_dir()
         assert queries.scan(name, out).collect().height == before[name]
+
+
+def test_gold_source_matches_protobuf_enum():
+    descriptor = pb.CMsgMatchMetaDataContents.DESCRIPTOR
+
+    assert descriptor is not None
+
+    enum = descriptor.enum_types_by_name["EGoldSource"]
+    expected = {
+        re.sub(r"(?<!^)(?=[A-Z])", "_", v.name.removeprefix("k_e")).upper(): v.number
+        for v in enum.values
+    }
+
+    assert {m.name: m.value for m in export.GoldSource} == expected

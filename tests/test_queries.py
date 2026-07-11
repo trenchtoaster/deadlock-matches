@@ -4,7 +4,7 @@ import zoneinfo
 import polars as pl
 import pytest
 
-from deadlock_matches import export, heroes, history, queries, schemas, timeline
+from deadlock_matches import export, heroes, history, queries, schemas
 from deadlock_matches.extract import pb
 
 START = 1783000000
@@ -1319,17 +1319,131 @@ def test_ability_upgrades_uses_era_correct_soul_thresholds(tmp_path, monkeypatch
     assert pts["required_souls"].to_list() == [500, 800]
 
 
-def test_snapshot_players(movement_pq):
-    blocks = queries.snapshot_players("Mirage", movement_pq, accounts=[42])
+def test_hero_games_filters_hero_and_queue(tmp_path):
+    queued = build_movement_match(match_id=100)
+    lobby = build_movement_match(match_id=101)
+    lobby.match_mode = pb.k_ECitadelMatchMode_PrivateLobby
 
-    assert len(blocks) == 1
-    assert timeline.snapshots(blocks[0], "souls")[-1] == (600, 6000)
-    assert timeline.snapshots(blocks[0], "farm")[-1] == (600, 700)
+    out = tmp_path / "pq"
+    out.mkdir()
+
+    for name, df in export.build_tables([queued, lobby]).items():
+        df.write_parquet(out / f"{name}.parquet")
+
+    games = queries.hero_games("Mirage", out, accounts=[42]).collect()
+
+    assert games["match_id"].to_list() == [100]
 
 
-def test_snapshot_players_unknown_hero(movement_pq):
+def test_hero_games_since_window(movement_pq):
+    day_after = (dt.datetime.fromtimestamp(START, dt.UTC) + dt.timedelta(days=2)).date()
+    late = queries.hero_games("Mirage", movement_pq, accounts=[42], since=day_after).collect()
+    early = queries.hero_games(
+        "Mirage", movement_pq, accounts=[42], since=dt.date(2020, 1, 1)
+    ).collect()
+
+    assert late.is_empty()
+    assert early["match_id"].to_list() == [100]
+
+
+def test_hero_games_unknown_hero(movement_pq):
     with pytest.raises(ValueError, match="Unknown hero"):
-        queries.snapshot_players("Nobody", movement_pq, accounts=[42])
+        queries.hero_games("Nobody", movement_pq, accounts=[42])
+
+
+def test_compare_intervals_column_gains(movement_pq):
+    games = pl.LazyFrame({"match_id": [100], "account_id": [42]})
+    gains = queries.compare_intervals(games, "souls", 300, movement_pq).collect().sort("interval")
+
+    assert gains["interval"].to_list() == [0, 1, 2, 3, 4, 5]
+    assert gains["gain"].to_list() == [1800, 4200, 0, 0, 0, 0]
+
+
+def test_compare_intervals_source_composite(movement_pq):
+    games = pl.LazyFrame({"match_id": [100], "account_id": [42]})
+    gains = queries.compare_intervals(games, "farm", 300, movement_pq).collect().sort("interval")
+
+    assert gains["gain"].to_list() == [0, 700, 0, 0, 0, 0]
+
+
+def test_compare_intervals_counts_kills_and_deaths_from_the_deaths_table(movement_pq):
+    victim = pl.LazyFrame({"match_id": [100], "account_id": [42]})
+    killer = pl.LazyFrame({"match_id": [100], "account_id": [43]})
+
+    deaths = queries.compare_intervals(victim, "deaths", 300, movement_pq).collect()
+    kills = queries.compare_intervals(killer, "kills", 300, movement_pq).collect()
+
+    assert deaths.sort("interval")["gain"].to_list() == [1, 0, 0, 0, 0, 0]
+    assert kills.sort("interval")["gain"].to_list() == [1, 0, 0, 0, 0, 0]
+
+
+def test_compare_intervals_unknown_stat(movement_pq):
+    games = pl.LazyFrame({"match_id": [100], "account_id": [42]})
+
+    with pytest.raises(ValueError, match="Unknown compare stat"):
+        queries.compare_intervals(games, "ability_points", 300, movement_pq)
+
+
+def test_game_rates_whole_match(movement_pq):
+    games = pl.LazyFrame({"match_id": [100], "account_id": [42]})
+    souls = queries.game_rates(games, "souls", movement_pq).collect()
+    farm = queries.game_rates(games, "farm", movement_pq).collect()
+
+    killer = pl.LazyFrame({"match_id": [100], "account_id": [43]})
+    kills = queries.game_rates(killer, "kills", movement_pq).collect()
+
+    assert souls["rate"].to_list() == [6000 * 60 / 1800]
+    assert farm["rate"].to_list() == [700 * 60 / 1800]
+    assert kills["rate"].to_list() == [1 * 60 / 1800]
+
+
+def test_game_totals_whole_match(movement_pq):
+    games = pl.LazyFrame({"match_id": [100], "account_id": [42]})
+    souls = queries.game_totals(games, "souls", movement_pq).collect()
+
+    killer = pl.LazyFrame({"match_id": [100], "account_id": [43]})
+    kills = queries.game_totals(killer, "kills", movement_pq).collect()
+
+    assert souls["total"].to_list() == [6000]
+    assert souls["duration_s"].to_list() == [1800]
+    assert kills["total"].to_list() == [1]
+
+
+def test_compare_stats_sum_the_rift_urn_source(tmp_path):
+    info = build_match(match_id=300)
+    g = info.players[0].stats[-1].gold_sources.add()
+    g.source = 5
+    g.gold = 450
+
+    out = tmp_path / "pq"
+    out.mkdir()
+
+    for name, df in export.build_tables([info]).items():
+        df.write_parquet(out / f"{name}.parquet")
+
+    games = pl.LazyFrame({"match_id": [300], "account_id": [42]})
+    rift_urn = queries.compare_intervals(games, "rift_urn", 300, out).collect()
+
+    assert rift_urn["gain"].sum() == 450
+
+    with pytest.raises(ValueError, match="Unknown compare stat"):
+        queries.compare_intervals(games, "treasure", 300, out)
+
+
+def test_cumulative_at_reads_last_sample_before_the_mark(movement_pq):
+    games = pl.LazyFrame({"match_id": [100], "account_id": [42]})
+    souls = queries.cumulative_at(games, "souls", [360, 900], movement_pq).collect()
+    farm = queries.cumulative_at(games, "farm", [360, 900], movement_pq).collect()
+
+    assert dict(souls.select("mark_s", "value").iter_rows()) == {360: 1800, 900: 6000}
+    assert dict(farm.select("mark_s", "value").iter_rows()) == {360: 0, 900: 700}
+
+
+def test_cumulative_at_skips_marks_past_match_end(movement_pq):
+    games = pl.LazyFrame({"match_id": [100], "account_id": [42]})
+    souls = queries.cumulative_at(games, "souls", [900, 7200], movement_pq).collect()
+
+    assert souls["mark_s"].to_list() == [900]
 
 
 def test_match_intervals_gains_per_interval(interval_pq):

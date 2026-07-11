@@ -151,27 +151,6 @@ def recent_hero_matches(account_id: int, hero_id: int, n: int = 10) -> list[dict
     return ms[:n]
 
 
-def match_metadata(match_id: int) -> dict[str, Any]:
-    """Full match_info for a match ID."""
-    return api.get_json(f"v1/matches/{match_id}/metadata", permanent=True)["match_info"]
-
-
-def player_timelines(account_id: int, hero_id: int, n: int = 10) -> list[dict[str, Any]]:
-    """Collect the player blocks for the account itself (stats snapshots included) from recent ranked games."""
-    out = []
-    for m in recent_hero_matches(account_id, hero_id, n):
-        try:
-            info = match_metadata(m["match_id"])
-        except Exception:
-            continue
-
-        me = next((p for p in info["players"] if p["account_id"] == account_id), None)
-        if me:
-            out.append(me)
-
-    return out
-
-
 def item_frequency(builds: list[dict[str, Any]], *, include_sold: bool = False) -> dict[str, Any]:
     """Item frequency, median buy time, and slot/tier across a set of builds.
 

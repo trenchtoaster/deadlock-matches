@@ -9,7 +9,7 @@ from typing import TYPE_CHECKING
 
 import polars as pl
 
-from deadlock_matches import export, extract, paths, players, queries, schemas, timeline
+from deadlock_matches import export, extract, paths, players, queries, schemas
 from deadlock_matches.cli import cards, data, items, meta, performance
 from deadlock_matches.config import (
     config_account_names,
@@ -211,16 +211,19 @@ def build_parser(config: str | Path | None = None) -> argparse.ArgumentParser:
     )
     c.add_argument(
         "--stat",
-        default="farm",
-        help=f"{', '.join(timeline.STATS)}, "
-        "soul_sources (gap table by income source), or any snapshot field (creep_kills, denies, ...)",
+        default="souls",
+        help=f"{', '.join(queries.COMPARE_STATS)}, "
+        "or soul_sources (every income source as one gap table)",
     )
-    c.add_argument("--players", type=int, default=6, help="top players to compare against")
-    c.add_argument("--games", type=int, default=10, help="recent ranked games per player")
+    c.add_argument("--interval", type=int, default=5, help="interval length in minutes")
+    c.add_argument(
+        "--since",
+        default=None,
+        help="only your games on or after this date (YYYY-MM-DD), like 2026-06-30, "
+        "to keep the comparison inside one patch window",
+    )
 
-    mt = sub.add_parser(
-        "match", help="one match: the final scoreboard, then your intervals of souls and damage"
-    )
+    mt = command("match")
     mt.add_argument(
         "match_id",
         nargs="?",
