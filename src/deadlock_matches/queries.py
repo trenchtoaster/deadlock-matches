@@ -1790,6 +1790,108 @@ def damage_intervals(
     )
 
 
+def enemy_damage_intervals(
+    match_id: int,
+    account_id: int,
+    interval_s: int = 300,
+    parquet_dir: str | Path | None = None,
+    *,
+    dealt: bool = False,
+) -> pl.DataFrame:
+    """Split the damage exchanged with each enemy hero into gains per interval.
+
+    - the damage every enemy dealt to this player, or with dealt=True the
+      damage this player dealt to each enemy
+    - detail rows between hero dealers and hero targets only
+    - samples in damage_targets are sparse (about every three minutes), so each
+      source forward fills on its own clock before the per enemy sum
+    - one row per enemy per interval, enemies ordered by match total
+    """
+    duration = (
+        scan("matches", parquet_dir)
+        .filter(pl.col("match_id") == match_id)
+        .select("duration_s")
+        .collect()
+    )
+
+    if duration.is_empty():
+        msg = f"match {match_id} not in the tables"
+        raise ValueError(msg)
+
+    mine = "dealer_account_id" if dealt else "target_account_id"
+    other = "target_account_id" if dealt else "dealer_account_id"
+    samples = (
+        scan("damage_targets", parquet_dir)
+        .filter(
+            pl.col("match_id") == match_id,
+            pl.col(mine) == account_id,
+            pl.col(other).is_not_null(),
+            pl.col("stat") == "damage",
+            pl.col("category") != "total",
+        )
+        .select(pl.col(other).alias("enemy_account_id"), "source_class", "time_stamp_s", "damage")
+        .collect()
+    )
+
+    if samples.is_empty():
+        direction = "dealt to" if dealt else "taken from"
+        msg = f"account {account_id} has no damage {direction} heroes in match {match_id}"
+        raise ValueError(msg)
+
+    duration_s = int(duration.item())
+    bucket = ((pl.col("time_stamp_s") - 1) // interval_s).clip(0).cast(pl.Int64).alias("interval")
+    keys = ["enemy_account_id", "source_class"]
+    cumulative = (
+        samples.with_columns(bucket).group_by(*keys, "interval").agg(pl.col("damage").max())
+    )
+
+    n = cumulative.select(pl.col("interval").max()).item() + 1
+    grid = (
+        samples.select(keys)
+        .unique()
+        .join(pl.DataFrame({"interval": range(n)}, schema={"interval": pl.Int64}), how="cross")
+    )
+
+    gains = (
+        grid.join(cumulative, on=[*keys, "interval"], how="left")
+        .sort(*keys, "interval")
+        .with_columns(pl.col("damage").fill_null(strategy="forward").fill_null(0).over(keys))
+        .with_columns(pl.col("damage") - pl.col("damage").shift(1).fill_null(0).over(keys))
+        .group_by("enemy_account_id", "interval")
+        .agg(pl.col("damage").sum())
+        .with_columns(pl.col("damage").sum().over("enemy_account_id").alias("total"))
+    )
+
+    in_match = (
+        scan("players", parquet_dir)
+        .filter(pl.col("match_id") == match_id)
+        .select(pl.col("account_id").alias("enemy_account_id"), pl.col("hero").alias("enemy"))
+        .collect()
+    )
+
+    return (
+        gains.join(in_match, on="enemy_account_id", how="left")
+        .with_columns(
+            (pl.col("interval") * interval_s).alias("start_s"),
+            ((pl.col("interval") + 1) * interval_s).clip(upper_bound=duration_s).alias("end_s"),
+        )
+        .sort(["total", "enemy", "interval"], descending=[True, False, False])
+        .select("enemy", "enemy_account_id", "start_s", "end_s", "damage", "total")
+    )
+
+
+LANING_STATS = {
+    "net_worth": "souls",
+    "player_damage": "damage",
+    "player_damage_taken": "damage_taken",
+    "player_healing": "healing",
+    "heal_prevented": "heal_prevented",
+    "creep_kills": "creeps",
+    "neutral_kills": "neutrals",
+    "denies": "denies",
+}
+
+
 def soul_intervals(
     match_id: int,
     account_id: int,

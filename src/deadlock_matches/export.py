@@ -285,8 +285,8 @@ def build_tables(
     """Build the parquet tables from MatchInfo messages.
 
     - builds matches, players, stats, soul_sources, item_events, accolades,
-      buffs, stacks, custom_stats, damage, damage_sources, mid_boss,
-      objectives, and deaths
+      buffs, stacks, custom_stats, damage, damage_sources, damage_targets,
+      mid_boss, objectives, and deaths
     - item cost/tier/slot resolve against the committed item history era live at
       match time, so rebuilds price each match on its own patch
     - proc vs stat attribution is derived at read time from damage, see queries.item_attribution
@@ -310,6 +310,7 @@ def build_tables(
     custom_rows: list[dict] = []
     damage: list[dict] = []
     damage_sources: list[dict] = []
+    damage_targets: list[dict] = []
     mid_boss: list[dict] = []
     objectives: list[dict] = []
     tracks: list[pl.DataFrame] = []
@@ -520,6 +521,7 @@ def build_tables(
         details = info.damage_matrix.source_details
         sample_times = list(info.damage_matrix.sample_time_s)
         cumulative: dict[tuple[int, int, bool], dict[int, int]] = {}
+        per_target: dict[tuple[int, int, int], dict[int, int]] = {}
 
         for d in info.damage_matrix.damage_dealers:
             for src in d.damage_sources:
@@ -550,9 +552,17 @@ def build_tables(
                     vs_heroes = slot_to_account.get(t.target_player_slot) is not None
                     values = t.damage[-len(sample_times) :]
                     acc = cumulative.setdefault((d.dealer_player_slot, i, vs_heroes), {})
+                    tacc = (
+                        per_target.setdefault((d.dealer_player_slot, i, t.target_player_slot), {})
+                        if vs_heroes
+                        else None
+                    )
 
                     for ts, v in zip(sample_times[-len(values) :], values, strict=True):
                         acc[ts] = acc.get(ts, 0) + v
+
+                        if tacc is not None:
+                            tacc[ts] = tacc.get(ts, 0) + v
 
         for (slot, i, vs_heroes), acc in cumulative.items():
             source = details.source_name[i]
@@ -573,6 +583,25 @@ def build_tables(
                 for ts, v in sorted(acc.items())
             )
 
+        for (slot, i, target_slot), acc in per_target.items():
+            source = details.source_name[i]
+
+            damage_targets.extend(
+                {
+                    "match_id": info.match_id,
+                    "dealer_account_id": slot_to_account.get(slot),
+                    "target_account_id": slot_to_account.get(target_slot),
+                    "source_name": abilities.label(source),
+                    "source_class": source,
+                    "category": _damage_category(source),
+                    "delivery": _delivery(source, by_class),
+                    "stat": STAT_NAMES.get(details.stat_type[i], str(details.stat_type[i])),
+                    "time_stamp_s": ts,
+                    "damage": v,
+                }
+                for ts, v in sorted(acc.items())
+            )
+
     tables = {
         "matches": schemas.conform("matches", matches),
         "players": schemas.conform("players", players),
@@ -585,6 +614,7 @@ def build_tables(
         "custom_stats": schemas.conform("custom_stats", custom_rows),
         "damage": schemas.conform("damage", damage),
         "damage_sources": schemas.conform("damage_sources", damage_sources),
+        "damage_targets": schemas.conform("damage_targets", damage_targets),
         "mid_boss": schemas.conform("mid_boss", mid_boss),
         "objectives": schemas.conform("objectives", objectives),
         "deaths": schemas.conform("deaths", deaths),

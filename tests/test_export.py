@@ -200,6 +200,7 @@ def test_tables_have_expected_rows():
     assert len(tables["item_events"]) == 2
     assert len(tables["damage"]) == 1
     assert len(tables["damage_sources"]) == 2
+    assert len(tables["damage_targets"]) == 2
     assert len(tables["mid_boss"]) == 2
     assert len(tables["objectives"]) == 2
     assert len(tables["movement"]) == 3
@@ -241,6 +242,44 @@ def test_damage_sources_right_aligns_short_arrays():
     hero_rows = ds.filter(pl.col("vs_heroes"))
 
     assert hero_rows["damage"].to_list() == [100, 879]
+
+
+def test_damage_targets_keeps_per_enemy_samples():
+    tables = export.build_tables([build_match()])
+    dt_rows = tables["damage_targets"]
+
+    assert dt_rows["time_stamp_s"].to_list() == [600, 1200]
+    assert dt_rows["damage"].to_list() == [100, 809]
+    assert dt_rows["dealer_account_id"].to_list() == [42, 42]
+    assert dt_rows["target_account_id"].to_list() == [43, 43]
+    assert dt_rows["damage"][-1] == tables["damage"]["damage"][0]
+
+
+def test_damage_targets_sums_split_arrays_per_target():
+    info = build_match()
+    src = info.damage_matrix.damage_dealers[0].damage_sources[0]
+
+    late = src.damage_to_players.add()
+    late.target_player_slot = 6
+    late.damage.extend([70])
+
+    dt_rows = export.build_tables([info])["damage_targets"]
+
+    assert dt_rows["damage"].to_list() == [100, 879]
+
+
+def test_damage_targets_excludes_non_player_targets():
+    info = build_match()
+    src = info.damage_matrix.damage_dealers[0].damage_sources[0]
+
+    creep = src.damage_to_players.add()
+    creep.target_player_slot = 30
+    creep.damage.extend([500, 600])
+
+    dt_rows = export.build_tables([info])["damage_targets"]
+
+    assert dt_rows["damage"].to_list() == [100, 809]
+    assert dt_rows["target_account_id"].null_count() == 0
 
 
 def test_damage_sources_splits_creep_from_hero_damage():

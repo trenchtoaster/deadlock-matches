@@ -1601,6 +1601,42 @@ def test_damage_intervals_no_rows_for_account(interval_pq):
         queries.damage_intervals(500, 99, parquet_dir=interval_pq)
 
 
+def test_enemy_damage_intervals_taken(interval_pq):
+    df = queries.enemy_damage_intervals(500, 43, interval_s=600, parquet_dir=interval_pq)
+
+    assert df["enemy"].to_list() == ["Mirage", "Mirage"]
+    assert df["enemy_account_id"].to_list() == [42, 42]
+    assert df["damage"].to_list() == [90, 150]
+    assert df["start_s"].to_list() == [0, 600]
+    assert df["end_s"].to_list() == [600, 1190]
+    assert df["total"].to_list() == [240, 240]
+
+
+def test_enemy_damage_intervals_dealt(interval_pq):
+    df = queries.enemy_damage_intervals(
+        500, 42, interval_s=600, parquet_dir=interval_pq, dealt=True
+    )
+
+    assert df["enemy_account_id"].to_list() == [43, 43]
+    assert df["damage"].to_list() == [90, 150]
+    assert df["total"].to_list() == [240, 240]
+
+
+def test_enemy_damage_intervals_no_rows(interval_pq):
+    with pytest.raises(ValueError, match="no damage taken from heroes"):
+        queries.enemy_damage_intervals(500, 99, parquet_dir=interval_pq)
+
+    with pytest.raises(ValueError, match="no damage dealt to heroes"):
+        queries.enemy_damage_intervals(500, 99, parquet_dir=interval_pq, dealt=True)
+
+
+@pytest.fixture
+def laning_pq(tmp_path):
+    for name, df in export.build_tables([build_laning_match()], exclude=("movement",)).items():
+        df.write_parquet(tmp_path / f"{name}.parquet")
+
+    return tmp_path
+
 def test_source_intervals_matches_damage_intervals(interval_pq):
     games = pl.DataFrame({"match_id": [500], "account_id": [42]})
     many = queries.source_intervals(games, interval_s=600, parquet_dir=interval_pq).collect()

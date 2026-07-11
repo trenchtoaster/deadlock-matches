@@ -370,6 +370,36 @@ class DamageSources(Table):
     damage = Column(pl.Int64, "Cumulative value at this sample for this row's group of targets")
 
 
+class DamageTargets(Table):
+    """Cumulative damage per dealer, source, and hero target over time."""
+
+    match_id = MATCH_ID
+    dealer_account_id = Column(pl.Int64, "Who dealt it, null for non-player slots")
+    target_account_id = Column(pl.Int64, "Who received it, hero targets only")
+    source_name = Column(
+        pl.String, "Current display name (Dust Devil, 'Promises Kept (crit)' for headshots)"
+    )
+    source_class = Column(
+        pl.String, "Engine class_name, stable across patches unlike display names"
+    )
+    category = Column(
+        pl.String,
+        "Row type, 'total' = the summary rows on the match screen (Bullet, Ability, ...), which just add up the gun/ability/item detail rows",
+    )
+    delivery = Column(
+        pl.String,
+        "How a detail row was delivered: gun, gun_proc (items that proc on hit, like Mystic Shot), ability, spirit_proc. Null on total rows",
+    )
+    stat = Column(
+        pl.String, "Which figure this row carries: damage/healing/mitigated/... (EStatType)"
+    )
+    time_stamp_s = Column(
+        pl.Int64,
+        "Sample game time in seconds, damage is cumulative; samples are sparse (about every three minutes plus match end)",
+    )
+    damage = Column(pl.Int64, "Cumulative value at this sample for this dealer and target")
+
+
 class MidBoss(Table):
     """One row per midboss (Rejuvenator) kill."""
 
@@ -657,6 +687,7 @@ TABLES: dict[str, dict[str, Column]] = {
     "custom_stats": CustomStats.spec(),
     "damage": Damage.spec(),
     "damage_sources": DamageSources.spec(),
+    "damage_targets": DamageTargets.spec(),
     "mid_boss": MidBoss.spec(),
     "objectives": Objectives.spec(),
     "movement": Movement.spec(),
@@ -714,6 +745,14 @@ IDENTITY: dict[str, tuple[str, ...]] = {
         "source_class",
         "stat",
         "vs_heroes",
+        "time_stamp_s",
+    ),
+    "damage_targets": (
+        "match_id",
+        "dealer_account_id",
+        "target_account_id",
+        "source_class",
+        "stat",
         "time_stamp_s",
     ),
     "mid_boss": ("match_id", "destroyed_time_s"),

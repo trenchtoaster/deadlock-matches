@@ -461,8 +461,59 @@ def _killer_meters(d: dict[str, Any]) -> float | None:
     return units / UNITS_PER_METER
 
 
+
+
+def _enemy_damage_table(
+    row: dict[str, Any],
+    args: argparse.Namespace,
+    *,
+    dealt: bool,
+    min_width: int | None = None,
+) -> None:
+    """Print the per enemy interval table of damage taken or dealt.
+
+    - min_width matches the name column to a source table printed above it, so
+      the interval columns of the two tables line up
+    """
+    if not queries.table_exists("damage_targets", args.parquet):
+        print("No damage_targets table yet, run `deadlock sync`")
+        return
+
+    try:
+        df = queries.enemy_damage_intervals(
+            row["match_id"], row["account_id"], args.interval * 60, args.parquet, dealt=dealt
+        )
+    except ValueError as e:
+        print(e)
+        return
+
+    title = "Damage dealt to enemy" if dealt else "Damage taken by enemy"
+    spans = df.select("start_s", "end_s").unique().sort("start_s")
+    width = max(max(len(n) for n in df["enemy"]), 14, (min_width or 0) - 2) + 2
+    header = "".join(f"{_span(r):>9}" for r in spans.iter_rows(named=True))
+    total = int(df["damage"].sum())
+
+    print(f"{title}, {args.interval}-minute intervals")
+    print(f"\n  {'Enemy':<{width}}{header}{'Total':>9}{'%':>7}")
+
+    for (enemy,), g in df.group_by(["enemy"], maintain_order=True):
+        cells = "".join(f"{v:>9,}" for v in g.sort("start_s")["damage"])
+        enemy_total = int(g.item(0, "total"))
+        percent = f"{100 * enemy_total / total:.0f}%" if total else "-"
+
+        print(f"  {enemy:<{width}}{cells}{enemy_total:>9,}{percent:>7}")
+
+    sums = df.group_by("start_s").agg(pl.col("damage").sum()).sort("start_s")
+    cells = "".join(f"{v:>9,}" for v in sums["damage"])
+
+    print(f"  {'Total':<{width}}{cells}{total:>9,}")
+    print()
+
+
 def death_log_report(row: dict[str, Any], args: argparse.Namespace, *, kills: bool) -> None:
     """Print each death in the match for one player, from the victim or the killer side."""
+    _enemy_damage_table(row, args, dealt=kills)
+
     if not queries.table_exists("deaths", args.parquet):
         print("No deaths table yet, run `deadlock sync --full`")
         return
@@ -1857,7 +1908,8 @@ def damage_source_table(row: dict[str, Any], args: argparse.Namespace) -> None:
             row, args, "heal_prevented", "Healing prevented", groups=False, required=not shown
         )
     else:
-        _source_intervals(row, args, "damage", "Damage to heroes by source")
+        width = _source_intervals(row, args, "damage", "Damage to heroes by source")
+        _enemy_damage_table(row, args, dealt=True, min_width=width)
 
 
 def _source_intervals(
@@ -1868,11 +1920,12 @@ def _source_intervals(
     *,
     groups: bool = True,
     required: bool = True,
-) -> bool:
+) -> int | None:
     """Print the per source interval table for one stat.
 
     - groups adds the Gun/Abilities/Items block under the total
     - a stat with no rows prints the error only when required
+    - returns the name column width so a table under it can line up
     """
     try:
         df = queries.damage_intervals(
@@ -1882,7 +1935,7 @@ def _source_intervals(
         if required:
             print(e)
 
-        return False
+        return None
 
     spans = df.select("start_s", "end_s").unique().sort("start_s")
     width = max(max(len(s) for s in df["source_name"]), 14) + 2
@@ -1906,7 +1959,7 @@ def _source_intervals(
     print()
 
     if not groups:
-        return True
+        return width
 
     grouped = (
         df.with_columns(pl.col("delivery").replace(DELIVERY_LABELS).alias("group"))
