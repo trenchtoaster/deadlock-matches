@@ -36,7 +36,7 @@ if TYPE_CHECKING:
 def _cell(value: float | None, width: int = 8, *, sign: bool = False) -> str:
     """Format a number to a fixed width for table cells.
 
-    - missing values print as '-'
+    - missing values print as "-"
     - small fractions keep two decimals
     """
     if value is None:

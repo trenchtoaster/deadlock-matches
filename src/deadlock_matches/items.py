@@ -65,7 +65,7 @@ def item_map(path: Path = ITEMS_JSON) -> dict[int, Item]:
 
 
 def item_name(item_id: int, path: Path = ITEMS_JSON) -> str:
-    """Item display name, falling back to 'id<N>' for unknown IDs."""
+    """Item display name, falling back to "id<N>" for unknown IDs."""
     item = item_map(path).get(item_id)
 
     return item.name if item else f"id{item_id}"

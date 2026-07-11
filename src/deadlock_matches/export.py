@@ -765,7 +765,7 @@ def _new_archive_paths(archive_dir: Path, exported: set[int]) -> list[Path]:
 def write_partitioned(name: str, df: pl.DataFrame, month: str, out_dir: Path) -> int:
     """Merge one month of rows into out_dir/<name>/<month>.parquet and return the rows merged in.
 
-    - reads the existing month file, drops the batch's match_ids, concats the new rows
+    - reads the existing month file, drops the match_ids in the batch, concats the new rows
     - a schema drift in the batch or the existing file raises before anything is touched
     - writes a temp file and renames it, so a crash mid-write leaves the old file intact
     - match_id is the identity, so re-running the same batch leaves the content unchanged
@@ -807,7 +807,7 @@ def _flush_month(
     exclude: Collection[str],
     counts: dict[str, int],
 ) -> None:
-    """Build one month's matches and merge each table into its month partition."""
+    """Build one month of matches and merge each table into its month partition."""
     for name, df in build_tables(batch, exclude).items():
         written = write_partitioned(name, df, month, out_dir)
         counts[name] = counts.get(name, 0) + written
@@ -844,7 +844,7 @@ def export_infos(
 
 
 def clear_partition(name: str, out_dir: Path) -> None:
-    """Remove a table's month directory and any legacy single file before a full rebuild."""
+    """Remove the month directory of a table and any legacy single file before a full rebuild."""
     directory = out_dir / name
 
     if directory.is_dir():
@@ -872,7 +872,7 @@ def migrate_to_partitions(out_dir: Path, exclude: Collection[str] = ()) -> None:
 
     - reads the rows already on disk and writes them into the month partitions so nothing is lost
     - old columns we no longer support are dropped to match the current schema
-    - each row's month comes from its match's start time in the matches table
+    - the month for each row comes from the match start time in the matches table
     - the legacy single file is removed once its rows are written to the month partitions
     """
     matches_file = out_dir / "matches.parquet"
@@ -903,7 +903,7 @@ def migrate_to_partitions(out_dir: Path, exclude: Collection[str] = ()) -> None:
 
 
 def _write_asset_tables(out_dir: Path, counts: dict[str, int]) -> None:
-    """Flatten the committed asset history into out_dir/assets and record each table's row count."""
+    """Flatten the committed asset history into out_dir/assets and record row counts per table."""
     asset_dir = out_dir / "assets"
     asset_dir.mkdir(parents=True, exist_ok=True)
 

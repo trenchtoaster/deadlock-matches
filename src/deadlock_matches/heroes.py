@@ -185,7 +185,7 @@ def hero_map(path: Path = HEROES_JSON) -> dict[int, Hero]:
 
 
 def hero_name(hero_id: int, path: Path = HEROES_JSON) -> str:
-    """Name for a hero ID, or 'id<N>' when the ID is unknown."""
+    """Name for a hero ID, or "id<N>" when the ID is unknown."""
     hero = hero_map(path).get(hero_id)
 
     return hero.name if hero else f"id{hero_id}"

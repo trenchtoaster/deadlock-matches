@@ -132,7 +132,7 @@ timezone = "{_detect_timezone()}"
 def _detect_timezone() -> str:
     """Guess the local zone from the OS, stdlib only.
 
-    - TZ env var, then the /etc/localtime symlink, then Debian's /etc/timezone,
+    - TZ env var, then the /etc/localtime symlink, then the Debian /etc/timezone file,
       each validated against the zoneinfo database
     - falls back to the current fixed UTC offset ("+08:00"), which polars accepts, and
       only DST zones on Windows lose anything by that
@@ -168,7 +168,7 @@ def _detect_timezone() -> str:
 def config_timezone(path: str | Path | None = None) -> str:
     """Timezone for grouping matches by local day.
 
-    Uses config.toml's timezone if set. The starter config pins the detected
+    Uses the timezone from config.toml if set. The starter config pins the detected
     zone at creation, so this only falls back to detection for hand-written
     configs that left it out.
     """

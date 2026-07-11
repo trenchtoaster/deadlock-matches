@@ -43,9 +43,9 @@ def damage_from_source(
 ) -> float:
     """Total damage one player dealt through a single source (engine class_name).
 
-    Sums each target's final cumulative value, hero targets only, matching the
+    Sums the final cumulative value per target, hero targets only, matching the
     damage screen in game. Comes back 0.0 when the source was never used. account_id
-    is the dealer's account ID.
+    is the dealer.
     """
     dealer = _damage_dealer(info, account_id)
     if dealer is None:

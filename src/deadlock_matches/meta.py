@@ -27,7 +27,7 @@ RANKS = {
 
 
 def min_badge(rank: str) -> int | None:
-    """Minimum average badge value for a rank name, None for 'all'."""
+    """Minimum average badge value for a rank name, None for "all"."""
     if rank.lower() == "all":
         return None
 
@@ -98,7 +98,7 @@ def hero_meta(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
     """Win rate, pick rate, and matches per hero from hero-stats rows.
 
     Pick rate approximates the share of matches the hero appears in, from
-    the hero's cut of the 12 hero slots per match.
+    how many of the 12 hero slots per match it filled.
     """
     total = sum(r["matches"] for r in rows)
     out = [
@@ -120,8 +120,8 @@ def bucket_meta(rows: list[dict[str, Any]], hero_id: int | None = None) -> list[
     """Matches per bucket from bucketed hero-stats rows (badge levels or time periods).
 
     - without hero_id each row is the whole pool: matches counts whole matches
-      and share is the bucket's cut of all matches
-    - with hero_id: the hero's matches, win rate, and pick rate inside each bucket
+      and share is the cut of all matches in the bucket
+    - with hero_id: the matches, win rate, and pick rate of that hero inside each bucket
     """
     pool: dict[int, dict[str, int]] = {}
 
@@ -259,8 +259,8 @@ def synergies(
     """Items often bought together with one item, ranked by the win rate change.
 
     The API returns each pair once per purchase order, so both orderings are
-    merged before anything else. vs_solo is the pair win rate minus the item's
-    solo win rate. Pairs below min_matches are dropped because small samples
+    merged before anything else. vs_solo is the pair win rate minus the solo
+    win rate of the item. Pairs below min_matches are dropped because small samples
     produce meaningless swings.
     """
     im = items.item_map()

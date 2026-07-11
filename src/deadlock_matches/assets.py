@@ -82,7 +82,7 @@ def _enum_key(name: str) -> str:
 
 
 def _number(val: Any) -> Any:
-    """Parse numbers the API sends as strings, leaving unit strings ('1m') alone."""
+    """Parse numbers the API sends as strings, leaving unit strings ("1m") alone."""
     try:
         f = float(val)
     except (TypeError, ValueError):
@@ -92,7 +92,7 @@ def _number(val: Any) -> Any:
 
 
 def _measure(val: Any) -> Any:
-    """Convert unit strings to numbers ('20m', '0.2s')."""
+    """Convert unit strings to numbers ("20m", "0.2s")."""
     if isinstance(val, str) and val.endswith(("m", "s")):
         try:
             f = float(val[:-1])
@@ -393,7 +393,7 @@ def _load_build(
 
 
 def _digest(records: dict[str, Any]) -> str:
-    """Return a stable hash of one build's projected records."""
+    """Return a stable hash of the projected records of one build."""
     return hashlib.sha256(json.dumps(records, sort_keys=True).encode()).hexdigest()
 
 

@@ -153,7 +153,7 @@ def iter_meta_files(cache_dir: str | Path = DEFAULT_CACHE) -> Iterator[Path]:
 
 
 def archive(cache_dir: str | Path = DEFAULT_CACHE, archive_dir: str | Path = ARCHIVE_DIR) -> int:
-    """Copy match entries out of the live cache so Steam eviction can't lose them."""
+    """Copy match entries out of the live cache so Steam eviction cannot lose them."""
     archive_dir = Path(archive_dir)
     archive_dir.mkdir(parents=True, exist_ok=True)
 
@@ -178,7 +178,7 @@ def archived_match_ids(archive_dir: str | Path = ARCHIVE_DIR) -> set[int]:
 
 
 def match_path(archive_dir: str | Path, match_id: int) -> Path | None:
-    """Return the archived .bin path for a match id, None when not archived."""
+    """Return the archived .bin path for a match id."""
     return next(Path(archive_dir).glob(f"{match_id}_*.bin"), None)
 
 

@@ -64,7 +64,7 @@ def _asof_era_join(
     by: str | Sequence[str],
     on: str = "start_time",
 ) -> pl.LazyFrame:
-    """Join right onto left by the era live at each left row's time.
+    """Join right onto left by the era live at the time of each left row.
 
     - right carries an era_from datetime column and the join key(s) in by
     - backward as-of on era_from <= left[on], grouped by the key(s)
@@ -185,8 +185,8 @@ def my_games(
 def _item_windows(predicate: pl.Expr, parquet_dir: str | Path | None) -> pl.LazyFrame:
     """Build one row per buy of one item with its ownership window.
 
-    A sold buy's window ends at the sell time, a kept buy's at the end of the
-    match.
+    The window for a sold buy ends at the sell time, for a kept buy at the
+    end of the match.
     """
     return (
         scan("item_events", parquet_dir)
@@ -333,11 +333,11 @@ def item_games(
     the built ones. owned_s sums the ownership windows, ending at the sell
     time when a buy was sold. hero filters to games on that hero. since keeps
     only days on or after that date (YYYY-MM-DD, like 2026-07-01).
-    buy_n is the item's first named purchase order. tier_buy_n is its order
+    buy_n is the purchase order of the first named buy. tier_buy_n is its order
     among items of the same tier. first_tier_item is what the player bought
     first in that tier, and is_first_tier_item marks games where it was this item.
     dealt_after_buy is the hero damage the player dealt while owning the item,
-    the denominator for the item's percent of hero damage.
+    the denominator for the item percent of hero damage.
     """
     it = items.item_by_name(item)
 
@@ -914,7 +914,7 @@ def hero_damage(
 
     - drops `total` rows, which duplicate the gun/ability/item detail rows
     - drops non-player targets, so farm damage never inflates a source
-    - adds the dealer's `hero` and `start_local`/`day` columns, so filtering
+    - adds `hero` and `start_local`/`day` columns for the dealer, so filtering
       by hero, account, or day needs no extra joins
 
     stat picks which figure to keep: damage, healing, mitigated, ...
@@ -1658,7 +1658,7 @@ def match_intervals(
 ) -> pl.DataFrame:
     """Split the match for one player into intervals of stat gains.
 
-    - snapshots are cumulative, so an interval's gain is its last snapshot
+    - snapshots are cumulative, so the gain in an interval is its last snapshot
       minus the last snapshot of the interval before it
     - intervals without a snapshot inherit the previous values and show zero gains
     - coverage ends at the last snapshot, and the last interval ends at the
@@ -2179,7 +2179,8 @@ def source_intervals(
 
     - the many-game version of damage_intervals, same semantics per player:
       detail rows on hero targets only, a gain lands in the interval holding
-      the sample that recorded it, forward fill carries a source's cumulative
+      the sample that recorded it, forward fill carries the cumulative value
+      of a source
       across intervals without a sample
     - games needs match_id and account_id columns, anything else is ignored,
       and player games without matching rows just contribute nothing
@@ -2242,9 +2243,9 @@ def team_intervals(
 ) -> pl.DataFrame:
     """Split a match into intervals of souls gained per team, with the running lead.
 
-    - each player's cumulative net worth carries forward through intervals
-      without a snapshot, so one player's gap never dents the team total
-    - lead is the team 0 total minus the team 1 total at the interval's end
+    - the cumulative net worth of each player carries forward through intervals
+      without a snapshot, so a gap for one player never dents the team total
+    - lead is the team 0 total minus the team 1 total at the interval end
     """
     duration = (
         scan("matches", parquet_dir)
@@ -2516,7 +2517,7 @@ def _hero_era_starts() -> list[dt.datetime]:
 
 
 def _with_hero_era(left: pl.LazyFrame, on: str = "start_time") -> pl.LazyFrame:
-    """Attach the hero balance era live at each row's time as an era_from column."""
+    """Attach the hero balance era live at the time of each row as an era_from column."""
     starts = _hero_era_starts()
     first = min(starts)
     era_frame = (

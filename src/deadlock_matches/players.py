@@ -194,7 +194,7 @@ def tracked_player_games(
     parquet_dir: str | Path | None = None,
     tz: str | None = None,
 ) -> pl.LazyFrame:
-    """Look up tracked players' own rows in the downloaded tables, one row per match and player.
+    """Look up rows for the tracked players themselves in the downloaded tables, one row per match and player.
 
     - names match the downloads table case-insensitively, None keeps every tracked player
     - joins players and matches, so hero, won, team and the local day come along

@@ -164,7 +164,7 @@ class Players(Table):
 
 
 class Stats(Table):
-    """Cumulative snapshots taken every minute, with columns from the protobuf descriptor.
+    """Cumulative snapshots every 3 minutes through 15:00 and every 5 after, with columns from the protobuf descriptor.
 
     Declare a Column attribute here to describe a field. Anything not declared
     gets a generic description. spec() fills in the full protobuf field list.
@@ -769,7 +769,7 @@ def is_partitioned(table: str) -> bool:
 
 
 def partition_dir(table: str, parquet_dir: str | Path) -> Path:
-    """Directory that holds a partitioned table's per-month parquet files."""
+    """Directory that holds the monthly parquet files of a partitioned table."""
     return Path(parquet_dir) / table
 
 

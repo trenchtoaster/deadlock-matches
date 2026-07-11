@@ -2,14 +2,18 @@
 
 Deadlock match metadata is stored in the Steam HTTP cache (`appcache/httpcache` inside your Steam folder) after the client loads a match. This is the same data that you upload to Statlocker for analysis, so my original goal was to parse the data locally and be able to answer questions about it.
 
-This project is built upon [polars](https://pola.rs) and protobuf. Personal match analysis runs locally against your own Deadlock data; the comparison commands can also pull public matches from [deadlock-api](https://api.deadlock-api.com).
+This project is built upon [polars](https://pola.rs) and protobuf. Personal match analysis runs locally against your own Deadlock data, and the comparison commands can also pull public matches from [deadlock-api](https://api.deadlock-api.com).
 
-- archives your match history
-- caches API data for heroes, items, and abilities
-- processes the complex protobuf data into parquet tables with defined schemas
-- includes common polars queries that can be reused
-- includes a [marimo](https://marimo.io) notebook for exploring the tables interactively
-- includes a [deadlock-api](https://api.deadlock-api.com) client to pull matches from other players so you can compare your games against theirs
+- archives your match history so Steam's cache eviction never loses a game
+- processes the complex protobuf data into parquet tables with defined schemas, synced incrementally with lazy polars queries so reports stay quick as the archive grows
+- includes in-depth analysis for all of your matches, and the same views work on matches you download from players you track or pull from the API:
+  - souls, damage, healing, and healing prevented by source
+  - item and ability timing, golden statue buffs, and stack counters like Sticky Bomb
+  - stats the game tracks but never shows: aim against heroes, damage by range, parries, comeback souls, and the gun/melee/ability kill split
+  - movement: distance covered, dashes, and time spent sliding, in the air, on ziplines, or standing still
+- keeps hero, item, and ability data versioned per patch, so cards and queries use the values that were live when a match was played
+- downloads games from top players of your hero and compares your farm, movement, and builds against theirs
+- includes reusable polars queries and a [marimo](https://marimo.io) notebook for questions that do not fit an existing report
 
 The CLI contains a set of reports built on top of the exported match data. Treat those commands as examples for common questions, not the limit of what the data can answer. The same match metadata uploaded to Statlocker and the match data available from `deadlock-api` can be queried directly, so custom analysis does not need to wait for a dedicated CLI command.
 
@@ -44,6 +48,7 @@ The examples in this README use the `uv run deadlock` form from a clone. With a 
 ```toml
 # tables sync skips. movement is one row per player per second,
 # delete it from this list to export it
+# the per minute movement_intervals table always builds
 exclude = ["movement"]
 
 # convert timestamps to this timezone (detected from your OS but you can edit)
@@ -64,6 +69,10 @@ main = 111222333
 "proplayer1" = 666777888
 ```
 
+- the `movement` exclude is purely about size: one row per player per second is about 330 KB per match, while every other table stays small
+  - excluding it does not limit the movement commands. `deadlock match --movement` and `deadlock movement` read the per minute `movement_intervals` table, which always builds and stays around 5 KB per match
+  - the per second rows only matter when a question needs exact positions or health at a specific second: the who-was-nearby context in `deadlock deaths`, and custom queries like gank detection, rift fight attendance, or route heatmaps
+  - to export them, delete `"movement"` from the list and run `uv run deadlock sync`. The missing table triggers a full rebuild on its own
 - commands that read your matches archive the cache into `~/.local/share/deadlock-matches/matches/` (`%LOCALAPPDATA%\deadlock-matches\matches` on Windows)
   - Steam's cache only keeps the last 10,000 files it used for all of Steam combined - archiving the matches ensures you do not lose historical data
   - opening game history and clicking a match puts it back in the cache (or keeps it there), so it works as recovery too
@@ -71,11 +80,11 @@ main = 111222333
 
 ## CLI
 
-*Note - hero, item, and ability examples can drift when Deadlock patches. Asset data from 2026-01-01 onward is included with the package; current cards use the latest snapshot, and `--as-of` / `--changes` read that history.*
+*Note - hero, item, and ability examples can drift when Deadlock patches. Asset data from 2026-01-01 onward is included with the package. Current cards use the latest snapshot, and `--as-of` / `--changes` read that history.*
 
 These commands answer common questions from the parquet tables. Adding a command for every possible question is not feasible, so please see the section below on writing your own queries or using LLM agents if something is missing.
 
-The sections below group the commands by what they read. **Match analysis** reads your local match archive and parquet tables. **Heroes, abilities, and items** reads the included asset data. **Top players and public stats** pulls from [deadlock-api](https://api.deadlock-api.com).
+The sections below group the commands by what they read. **Match analysis** reads your local match archive and parquet tables. **Heroes, abilities, and items** reads the included asset data. **Tracked players and public stats** covers the comparisons, which read games `deadlock download` fetched from [deadlock-api](https://api.deadlock-api.com), plus the public meta numbers.
 
 A few flags repeat across commands:
 
@@ -85,7 +94,7 @@ A few flags repeat across commands:
 - `--account` picks which of your accounts count, by ID or a name from `config.toml`, comma-separated for several (`--account main` or `--account "main, alt1"`). Every command that reads your games takes it and defaults to all accounts in the config
 - `--days N` filters your last N days of games (`--days 7`)
 - `--since YYYY-MM-DD` filters for data since a date (`--since 2026-07-01`)
-- `--hero Mirage` filters a report to one hero (required for the top player commands since they pull from the leaderboard). Quote names with spaces: `--hero "Mo & Krill"`, though capitals and punctuation are optional (`--hero "mo krill"` works too)
+- `--hero Mirage` filters a report to one hero (required for the tracked player commands since players are tracked per hero). Quote names with spaces: `--hero "Mo & Krill"`, though capitals and punctuation are optional (`--hero "mo krill"` works too)
 - `--min-rating Oracle` limits public stats to lobbies at that average skill rating or higher. `winrate` and `item` default to Eternus, `meta` counts every rating, and `all` disables the filter
 
 ## Match analysis
@@ -207,7 +216,9 @@ Lobby average: The Hidden King Oracle 1, The Archmother Archon 6
 
 Each flag below swaps the interval table for a different view of the same match.
 
-- `--souls`: the in-game souls graph as a table, souls by source per interval, then grouped into lane (troopers and denies), roaming (jungle and breakables), combat, objectives (bosses and urn), and catch-up
+#### `--souls`: souls by source
+
+- the in-game souls graph as a table, souls by source per interval, then grouped into lane (troopers and denies), roaming (jungle and breakables), combat, objectives (bosses and the Rift & Urn), and catch-up
 
 ```
 Souls by source, 5-minute intervals
@@ -219,7 +230,7 @@ Souls by source, 5-minute intervals
   Kill Assists               0      316      184      274      684    1,093    1,111      349    4,011     9%
   Objectives                 0        0      625        0      350    1,500      400        0    2,875     6%
   Breakable Pickups          0      295      594      110      740      710      261        0    2,710     6%
-  Urn                        0        0      247        0      469        0    1,024        0    1,740     4%
+  Rift & Urn                 0        0      247        0      469        0    1,024        0    1,740     4%
   Team Catch-Up              0      142      175        0      307      181       56        0      861     2%
   Denies                    26        0        0        0        0        0        0        0       26     0%
   Total                  1,164    3,747    8,442    3,898    7,307   10,868    9,464    2,162   47,052
@@ -233,7 +244,9 @@ Souls by source, 5-minute intervals
   Total is gross souls earned by source, the in-game souls breakdown. Net worth (47,025) adds starting souls and subtracts souls lost to deaths.
 ```
 
-- `--damage`: the in-game damage graph, damage to heroes by source, then grouped into your gun, your abilities (melee counts as one), and item procs split into gun and spirit items. The source data samples about every 3 minutes, so an interval can differ from the Damage column in the main view while the totals still match
+#### `--damage`: damage by source and by enemy
+
+- the in-game damage graph, damage to heroes by source, then grouped into your gun, your abilities (melee counts as one), and item procs split into gun and spirit items, then the same damage split per enemy. The source data samples about every 3 minutes, so an interval can differ from the Damage column in the main view while the totals still match
 
 ```
 Damage to heroes by source, 5-minute intervals
@@ -256,9 +269,22 @@ Damage to heroes by source, 5-minute intervals
   Items (gun)                 175      523    1,316      106    1,114    1,375    1,106      334    6,049    15%
   Gun                         363      785    1,360      258      988      769      403      858    5,784    14%
   Items (spirit)                0        0        0        0        0      660    1,884    2,743    5,287    13%
+
+Damage dealt to enemy, 5-minute intervals
+
+  Enemy                      0-5m    5-10m   10-15m   15-20m   20-25m   25-30m   30-35m   35-37m    Total      %
+  Ivy                         863    1,494    1,027      208    3,096      931    1,617      297    9,533    24%
+  Warden                        0        0        0      741      797    4,635    1,273    1,103    8,549    21%
+  Bebop                         0        0    2,207        0    1,105    1,978        0    3,197    8,487    21%
+  Shiv                          0        0      212      457    1,067      293    2,652       96    4,777    12%
+  Pocket                       14    1,056      343      398        0      832    1,140      682    4,465    11%
+  Vindicta                      0        0      693        0      288        5    1,916    1,432    4,334    11%
+  Total                       877    2,550    4,482    1,804    6,353    8,674    8,598    6,807   40,145
 ```
 
-- `--healing`: the same view for your healing, plus a second table for the healing your anti-heal items prevented. The game shows neither per source
+#### `--healing`: healing and anti-heal
+
+- the same view for your healing, plus a second table for the healing your anti-heal items prevented. The game shows neither per source
 
 ```
 Healing by source, 5-minute intervals
@@ -282,7 +308,9 @@ Healing prevented, 5-minute intervals
   Total                   0        0      310       73      422      694      317      312    2,128
 ```
 
-- `--teams`: both teams per interval with the running lead, then every objective and Rejuvenator as it fell
+#### `--teams`: the soul lead and objectives
+
+- both teams per interval with the running lead, then every objective and Rejuvenator as it fell, mixed in with each Unstable Rift win (both teams, the souls each player got, noted when the winning team was behind) and each Soul Urn delivery (with the runner). Matches from before the June 30 objective rework carry no rift or urn line, the old modes worked differently
 
 ```
 Your team: The Hidden King
@@ -308,7 +336,49 @@ Your team: The Hidden King
    36:02  your team destroys the enemy Weakened Patron
 ```
 
-- `--abilities`: ability unlocks and upgrades in the order you spent them, with the level and soul threshold for that unlock or cumulative AP spend
+#### `--laning`: who won each lane
+
+- one section per lane with your lane first, a Yours and Enemy summary row with the two laners under each side, a signed Net row, then the lane's kills and guardian falls in time order. Stat columns read the last snapshot inside the window (9 minutes by default, the samples land every 3 minutes), kills and guardians use exact event times. `--laning 12` widens the window
+
+```
+Laning phase through 9:00
+
+Yellow (your lane)
+  Lane               Souls  Kills  Deaths   Damage    Taken  Healing  Prevented  Last hits  Denies
+  Yours             12,340      2       0    7,218    6,721    4,854          0         70       1
+   * Mirage          5,511      0       0    3,427    2,542    1,213          0         25       0
+     Mo & Krill      6,829      2       0    3,791    4,179    3,641          0         45       1
+  Enemy             10,665      0       2    6,985    7,910    1,179          0         49       1
+     Pocket          5,522      0       1    5,274    3,270       28          0         23       1
+     Ivy             5,143      0       1    1,711    4,640    1,151          0         26       0
+  Net               +1,675     +2      -2     +233   -1,189   +3,675         +0        +21      +0
+
+  3:07    Mo & Krill kills Ivy
+  4:20    Mo & Krill kills Pocket
+  both guardians up
+
+Blue
+  Lane               Souls  Kills  Deaths   Damage    Taken  Healing  Prevented  Last hits  Denies
+  Yours             14,669      6       2   10,641    7,972      561          0         55      11
+     Wraith          8,344      5       1    4,878    3,438      466          0         30       9
+     Drifter         6,325      1       1    5,763    4,534       95          0         25       2
+  Enemy             11,274      2       6    7,708    9,949      622          0         55      17
+     Shiv            5,853      1       3    3,748    5,396      622          0         21       0
+     Warden          5,421      1       3    3,960    4,553        0          0         34      17
+  Net               +3,395     +4      -4   +2,933   -1,977      -61         +0         +0      -6
+
+  5:00    Warden kills Drifter
+  5:02    Wraith kills Warden
+  5:25    Wraith kills Shiv
+  ...
+  both guardians up
+
+...
+```
+
+#### `--abilities`: skill order
+
+- ability unlocks and upgrades in the order you spent them, with the level and soul threshold for that unlock or cumulative AP spend
 
 ```
   Ability upgrades
@@ -325,7 +395,9 @@ Your team: The Hidden King
   Req souls is the threshold for that unlock or cumulative AP spend.
 ```
 
-- `--items`: every item purchase in buy order, with the shop price on that patch, when an item was sold, the upgrade that consumed it, and the ability an item was imbued into
+#### `--items`: buy order
+
+- every item purchase in buy order, with the shop price on that patch, when an item was sold, the upgrade that consumed it, and the ability an item was imbued into
 
 ```
   Item purchases
@@ -351,7 +423,9 @@ Your team: The Hidden King
   'into' means the item was consumed by that upgrade, not sold.
 ```
 
-- `--accolades`: the end-of-match stat awards with your number and the reward thresholds you cleared. Several of these stats exist nowhere else in the data: the gun/melee/ability kill split, close and long range kills and damage, killstreak kills, Sinner's Sacrifice jackpots, urn deliveries, and barrier absorption
+#### `--accolades`: the post-game stat awards
+
+- the end-of-match stat awards with your number and the reward thresholds you cleared. Several of these stats exist nowhere else in the data: the gun/melee/ability kill split, close and long range kills and damage, killstreak kills, Sinner's Sacrifice jackpots, urn deliveries, and barrier absorption
 
 ```
   Accolades
@@ -375,22 +449,36 @@ Your team: The Hidden King
   Stars counts the reward thresholds cleared, up to three.
 ```
 
-- `--statues`: the permanent buff statues you collected, counted per buff and level, with the stats they added up to. The statues get stronger as the game goes on, and the values come from the patch the match was played on. The scoreboard's Statues column is the same data as a total per player
+#### `--buffs`: permanent buffs
+
+- the permanent buffs you gained, counted per buff and level, with the stats they added up to. Statue pickups get stronger as the game goes on, and the values come from the patch the match was played on. Also lists the temporary bridge buffs you claimed, and breaks down where the permanent buffs came from: statues you collected, sinner jackpots (4 each), and mid boss kills (2 to the whole team). The scoreboard's Buffs column is the same permanent total per player
 
 ```
-  Statues
+  Permanent buffs
   Buff                   lv1   lv2   lv3  Total     Gained
-  max health               2     8     0     10       +230
-  spirit power             2     5     0      7        +19
-  weapon damage            2     4     0      6       +22%
-  fire rate                2     3     0      5        +9%
-  ammo                     1     5     0      6       +28%
-  cooldown reduction       2     5     0      7     +4.75%
+  max health               2    11     4     17       +370
+  spirit power             2     6     0      8        +22
+  weapon damage            1     5     2      8       +35%
+  fire rate                2     6     1      9     +17.5%
+  ammo                     2     6     1      9       +43%
+  cooldown reduction       1     7     2     10     +7.75%
+
+  Bridge buffs
+  vitality                 2
+  movement                 1
+
+  Sources
+  statues collected       13   35 broken
+  sinner jackpots          8   +32
+  mid boss kills           2   +4 to the whole team
+  other sources                +12 (urn runs and light melee jackpots)
 
   Gained uses the per statue values from the patch the match was played on.
 ```
 
-- `--stacks`: the stack counts for every player in the match, from the abilities and items that track stacks (Sticky Bomb stacks, Trophy Collector, etc)
+#### `--stacks`: stack counters (Sticky Bomb, Trophy Collector, etc)
+
+- the stack counts for every player in the match, from the abilities and items that track stacks
 
 ```
   Stacks
@@ -402,47 +490,118 @@ Your team: The Hidden King
   Counts only exist for abilities and items that track stacks.
 ```
 
-- `--combat`: the fight stats the game tracks but never shows. Accuracy against heroes in both directions (the enemy column is their whole team combined), damage split by the range it was dealt and taken at, parries with your melee pressure and parry item buys, comeback souls with the Unstable Rift called out, and how many souls sat unspent in your pocket. Heroes with their own counters (Celeste stack uptime, Apollo damage prevented) get a section when you play them
+#### `--combat`: parries, shooting accuracy against heroes, and other hidden metrics
+
+- the fight stats the game tracks but never shows. Every player in the match ranked by aim against heroes with the gun damage their aim produced, the fire the enemy team put at you (their whole team combined, no per-enemy split exists) with the familiar all-target accuracy printed for contrast, damage split by the range it was dealt and taken at, parries with your melee pressure and parry item buys, comeback souls with the Unstable Rift called out, and how many souls sat unspent in your pocket. Heroes with their own counters (Celeste stack uptime, Apollo damage prevented) get a section when you play them
 
 ```
-  Gunfight vs heroes
-                                     You   Enemy team at you
-  Shots                            1,171               1,377
-  Hits                         364 (31%)           600 (44%)
-  Headshots                     63 (17%)            69 (12%)
-  Lucky shots                          2                   -
+  Aim vs heroes
+  Hero       Side     Shots  Hit rate  HS rate  Gun damage  Headshot damage
+  Mirage *   ally       816     44.4%    31.8%       6,038            5,111
+  Yamato     enemy    1,551     12.0%    27.4%       5,476              794
+  Seven      enemy    2,636     30.8%    26.8%       7,325            5,235
+  Victor     ally     3,022     30.7%    22.4%      26,861           12,454
+  Ivy        ally     6,915     22.5%    21.1%      15,639            6,063
+
+  Rates count heroes only, the postgame screen counts every target.
+  Gun and headshot damage are the two bullet series from the damage graph.
+
+  Enemy team at you: 3,285 shots, 620 (19%) hits, 113 (18%) headshots
+  Lucky shots: 3
+  Accuracy with troopers and everything else included: 70%
 
   Damage by range
                   Gun dealt   Ability dealt       Gun taken   Ability taken
-  0-10m         7,234 (38%)     2,953 (35%)     1,624 (28%)     8,881 (39%)
-  10-20m        8,789 (46%)     3,695 (44%)     2,454 (42%)     5,812 (25%)
-  20-30m        2,134 (11%)     1,387 (16%)     1,193 (21%)     3,816 (17%)
-  Falloff on your hits: 37% none, 59% partial, 5% max
-  Falloff on hits taken: 17% none, 76% partial, 7% max
+  0-10m         4,824 (30%)    21,448 (50%)     3,069 (16%)     9,483 (30%)
+  10-20m        5,317 (33%)     7,031 (16%)     3,888 (20%)     7,264 (23%)
+  20-30m        3,082 (19%)      3,278 (8%)     3,645 (18%)     5,453 (17%)
+  Falloff on your hits: 10% none, 81% partial, 9% max
+  Falloff on hits taken: 12% none, 74% partial, 14% max
 
   Parries
-  Successful 9, missed 4
-  Melee damage taken (light/heavy melee): 2,840, most from Abrams (2,445)
-  Rebuttal bought at 21:35
+  Successful 1, missed 4
+  Melee damage taken (light/heavy melee): 1,982, most from Billy (1,617)
 
   Souls
-  Comeback souls: 40
-  Souls held unspent on average: 2,585
-  Ability points held unspent on average: 1.3
+  Comeback souls: 2,323
+  Unstable Rift comeback: 436
+  Souls held unspent on average: 2,648
+  Ability points held unspent on average: 1.2
 ```
 
-- `--deaths`: each death with who killed you, how long the fight lasted, how far away the killer stood, and your respawn timer. A death to troopers or an objective shows `not a player`
+#### `--movement`: dashes, slides, and time in the air
+
+- how everyone moved through the match, from the per minute `movement_intervals` table, which always builds even with `movement` in the config exclude list. The Movement table sums the whole match for every player (allies first, most meters first), then your own game splits per interval. Meters covered and the pace while moving, then how much of the alive time went to standing still, sliding, being in the air, riding ziplines, and fighting players, plus dash counts. An interval you spent fully dead prints `-` for the percents
 
 ```
+  Movement
+  Hero         Side   Meters   /min  Stationary   Slide  In air  Zipline  Fighting  Dashes  Air dash
+  Mirage *     ally   13,933    397        8.9%    4.0%    9.8%     5.7%     26.0%      71         4
+  Haze         ally   12,839    424        7.7%    6.7%    9.0%    10.4%     18.6%     110         9
+  Abrams       ally   12,063    409        6.6%    1.5%   11.5%    11.3%     33.2%     110        10
+  McGinnis     ally   11,855    386       11.2%    4.0%   13.2%    12.1%     22.9%      57        30
+  Wraith       ally   10,993    379       10.6%    1.4%   10.5%    12.4%     19.6%      61         7
+  Venator      ally   10,703    358        9.4%    1.3%   16.4%    12.6%     13.5%      81        21
+  Ivy          enemy  12,867    454        6.3%    3.6%   11.8%     5.1%     35.6%      85        11
+  Drifter      enemy  11,677    433       10.6%    3.7%    9.5%    12.0%     25.7%      51         5
+  Infernus     enemy  10,969    394       12.0%    5.8%    9.9%    12.6%     23.4%      64         4
+  Shiv         enemy  10,785    373        6.5%    4.0%   11.1%    11.8%     37.3%      74        13
+  Lash         enemy  10,614    384       13.7%    3.2%   34.9%    12.8%     28.7%      45        45
+  Grey Talon   enemy   9,991    386       11.3%    1.0%    9.1%    16.6%     21.4%     129         9
+
+  Mirage per interval
+  Time       Meters   /min  Stationary   Slide  In air  Zipline  Fighting  Dashes  Air dash
+  0-5m        1,490    324       10.5%    4.7%    4.3%     7.7%     45.0%       7         0
+  5-10m       1,812    384       10.6%    2.1%   12.2%     0.3%     33.4%       4         1
+  10-15m      1,847    426        3.8%    2.9%   11.6%     4.0%     17.7%      13         1
+  15-20m      2,034    418        8.2%    3.3%   11.3%     2.3%     10.0%      10         1
+  20-25m      1,830    402       10.6%    4.3%    9.0%     8.0%     14.7%       6         0
+  25-30m      1,685    413        8.6%    1.3%   10.3%    16.0%     28.0%      13         0
+  30-35m      2,020    428        8.5%    8.0%   11.0%     5.0%     36.3%      12         1
+  35-39m      1,214    376       10.3%    6.1%    8.6%     0.0%     20.3%       6         0
+  Total      13,933    397        8.9%    4.0%    9.8%     5.7%     26.0%      71         4
+```
+
+#### `--deaths`: damage from enemies and each death event
+
+- the damage each enemy dealt to you per interval, then each death with who killed you, how long the fight lasted, how far away the killer stood, and your respawn timer. A death to troopers or an objective shows `not a player`
+
+```
+Damage taken by enemy, 5-minute intervals
+
+  Enemy                0-5m    5-10m   10-15m   15-20m   20-25m   25-30m   30-35m   35-37m    Total      %
+  Vindicta                0        0    2,017      146      601    1,911      942    3,017    8,634    25%
+  Pocket                390    1,725    1,381      903    1,656    1,155        0      819    8,029    24%
+  Shiv                    0        0       13      692    1,038    1,075    3,332        0    6,150    18%
+  Warden                  0        0        0        0      543    3,094    1,283        0    4,920    14%
+  Ivy                   246      181       36      721      439    1,503      187      413    3,726    11%
+  Bebop                   0        0      581       67      108      982        0      868    2,606     8%
+  Total                 636    1,906    4,028    2,529    4,385    9,720    5,744    5,117   34,065
+
+
   Time    Killed by      Killed in  Distance  Respawn
   16:28   Bebop              15.8s        2m      29s
   21:54   Pocket             12.2s       17m      42s
   33:35   Vindicta           10.0s       32m      90s
 ```
 
-- `--kills`: the same log from the killer side, each kill with the victim, the distance, and the respawn it cost them
+#### `--kills`: damage to enemies and each kill event
+
+- the damage you dealt to each enemy per interval, then the same log from the killer side, each kill with the victim, the distance, and the respawn it cost them
 
 ```
+Damage dealt to enemy, 5-minute intervals
+
+  Enemy                0-5m    5-10m   10-15m   15-20m   20-25m   25-30m   30-35m   35-37m    Total      %
+  Ivy                   863    1,494    1,027      208    3,096      931    1,617      297    9,533    24%
+  Warden                  0        0        0      741      797    4,635    1,273    1,103    8,549    21%
+  Bebop                   0        0    2,207        0    1,105    1,978        0    3,197    8,487    21%
+  Shiv                    0        0      212      457    1,067      293    2,652       96    4,777    12%
+  Pocket                 14    1,056      343      398        0      832    1,140      682    4,465    11%
+  Vindicta                0        0      693        0      288        5    1,916    1,432    4,334    11%
+  Total                 877    2,550    4,482    1,804    6,353    8,674    8,598    6,807   40,145
+
+
   Time    Kill           Killed in  Distance  Respawn
   10:26   Vindicta            9.0s       80m      25s
   10:34   Bebop              15.7s       15m      18s
@@ -481,6 +640,59 @@ Abandons: 2 games — an ally left 1 (0-1), an enemy left 1 (1-0).
   Without them: 20 games, 11-9, 55.0% win rate.
 
 Not scored: 1 game left out of the table (safe to leave), 0-1 in match history.
+```
+
+### Does winning the lane win the game
+
+```
+uv run deadlock laning
+```
+
+- every scored game bucketed by where your lane stood at 9:00: your lane's souls minus the enemy side's, both read from the stats snapshots
+- your own deaths in that window get a table too, with finer buckets since one early death already moves the number
+- a second table splits the same games by the worst teammate death count in that window, games with an ally abandon are left out of it since a leaver feeds by definition
+- the last table crosses the two, so a lost lane can be read with and without a feeding teammate
+- `--days`, `--since`, `--hero`, and `--account` filter like `winrate`
+- `--minutes` moves the mark, default 9 like `match --laning`
+
+```
+Lane result at 9:00: your lane's souls minus the enemy side's, scored games only.
+
+  Lane at 9:00              Games     W     L   Win rate
+  behind 3k+                   32    10    22      31.2%
+  behind 1k-3k                 55    23    32      41.8%
+  even within 1k               88    52    36      59.1%
+  ahead 1k-3k                  47    33    14      70.2%
+  ahead 3k+                    13     9     4      69.2%
+
+  Lane result               Games     W     L   Win rate
+  lost lane                   137    62    75      45.3%
+  won lane                     98    65    33      66.3%
+
+Your deaths by 9:00:
+
+  Deaths                    Games     W     L   Win rate
+  0                            95    60    35      63.2%
+  1                            82    43    39      52.4%
+  2-3                          47    20    27      42.6%
+  4+                           11     4     7      36.4%
+
+Worst teammate deaths by 9:00, you excluded (8 games with an ally abandon left out):
+
+  Deaths                    Games     W     L   Win rate
+  0-1                          41    28    13      68.3%
+  2-3                         146    79    67      54.1%
+  4+                           40    17    23      42.5%
+
+Lane result and a feeding teammate (4+ deaths by 9:00):
+
+                            Games     W     L   Win rate
+  lost lane, ally fed          28    10    18      35.7%
+  lost lane, no feeder        103    50    53      48.5%
+  won lane, ally fed           12     7     5      58.3%
+  won lane, no feeder          84    57    27      67.9%
+
+Overall: 235 games, 127-108, 54.0% win rate.
 ```
 
 ### Deaths
@@ -629,7 +841,7 @@ uv run deadlock item "Mercurial Magnum"
 
 - the shop card for an item, straight from the asset data
 - innate stats first, then each passive or active section with the cooldown and description
-- adding `--hero` turns it into a full report of the item on that hero, covered with the top player commands below
+- adding `--hero` turns it into a full report of the item on that hero, covered with the tracked player commands below
 
 ```
 Mercurial Magnum  (spirit tier 4, 6,400 souls)
@@ -678,35 +890,31 @@ Mirage  (hero change history, 25 eras tracked)
 
 The same history feeds the analysis queries, so the ability tuning that was live when the match was played is used instead of just the current values. This data is written into parquet tables (`item_history`, `hero_history`, `ability_history`, `rank_history`, and `statue_history`) and `deadlock schema item_history --sample` reads them.
 
-## Top players and public stats
+## Tracked players and public stats
 
-Everything in this section uses [deadlock-api](https://api.deadlock-api.com). Top players come from the per-hero leaderboards, so Rank in these reports is their rank on that hero across regions. The overall ranked ladder is not used here since it says nothing about a specific hero.
+The comparison commands (`compare`, `movement`, `builds`, and the top player part of `item`) all read the same pool: the players you track for a hero. Tracking a player takes three steps, and after the download every comparison runs offline from the downloaded games:
 
-`--players` and `--games` set how many top players and how many recent ranked games per player are pulled (6 players with 10 games each by default currently).
-
-### Following specific players
-
-The commands below default to the current leaderboard top players, but the leaderboard shifts and a player you care about can drop off it. To follow specific people, go from a name to an account ID to a watchlist:
-
-1. **Find the top players for your hero.** `deadlock leaderboard --hero Mirage` lists the current top players with their account IDs. Add `--matches` to also print each one's recent match ids.
+1. **Find candidates.** `deadlock leaderboard --hero Mirage` lists the current top players of the hero with their account IDs and ends with paste-ready config lines:
 
    ```
    Mirage leaderboard:
      someplayer           111222333    rank 1    Europe
-         12345678  2026-07-05  win   14/2/23
      anothermain          444555666    rank 24   SAmerica
+
+   Track players by pasting lines into config.toml, then `deadlock download --hero "Mirage"`:
+
+   [players."Mirage"]
+   "someplayer" = 111222333
+   "anothermain" = 444555666
    ```
 
-2. **Get an account ID.** For someone off the leaderboard, the ID is exact in any match they played (`deadlock match <id> --hero <theirs>` prints every player), or convert their Steam profile URL from steam64 to steam32. Searching by name is unreliable, since the only name search is over current Steam persona names, which change often.
+   Rank is their rank on that hero across regions, from the per-hero leaderboards on [deadlock-api](https://api.deadlock-api.com). The overall ranked ladder is not used here since it says nothing about a specific hero. Anyone works, not just ladder players: for a friend, take the Steam64 number from their Steam profile URL and subtract 76561197960265728, the difference is the Steam32 account ID. A match of theirs you already downloaded also holds the exact ID in the `players` table ([writing your own queries](#writing-your-own-queries)). Searching by name is unreliable, since the only name search is over current Steam persona names, which change often.
 
-3. **Optionally pin them to a watchlist.** Add the ID under `[players.<Hero>]` in `config.toml` so `deadlock download` always pulls them, even when they are off the ladder. The name is just a label for reports.
+2. **Track the ones you want.** Paste their lines under `[players.<Hero>]` in `config.toml`. The name is just a label for reports, keep theirs or write your own.
 
-   ```toml
-   [players.Mirage]
-   someplayer = 111222333
-   ```
+3. **Download their games.** `deadlock download --hero Mirage` pulls recent ranked games from everyone tracked for the hero. Nothing is ever downloaded from the leaderboard on its own. Re-running adds new games without downloading old ones again.
 
-4. **Download and analyze.** `deadlock download --hero Mirage` pulls the top players plus everyone on the watchlist. To skip the watchlist and grab someone one-off, use `--account <id>`, or fetch a single game with `--match <id>`. Then any command works on their games by pointing `--parquet` at the downloaded tables, for example `deadlock --parquet ~/.local/share/deadlock-matches/parquet-players match <id> --hero Mirage`.
+To stop comparing against someone, delete their line from `config.toml`. The downloaded matches stay on disk (they cost little space and a game can contain more than one tracked player), they just stop being read, and tracking the player again later needs no new downloads. `deadlock movement --hero Mirage --by player` shows who is in the pool with their games and account IDs.
 
 ### Hero meta by rating
 
@@ -737,25 +945,25 @@ Mirage public data (Oracle+ lobbies, deadlock-api.com)
   Phantom 3           2,695    50.5%     22.1%
 ```
 
-### Top player builds
+### Tracked player builds
 
 ```
 uv run deadlock builds --hero Mirage
 ```
 
-- items top players buy (in wins vs losses)
+- items your tracked players buy (in wins vs losses), from their downloaded games
 - `--min-percent 30` hides items bought in fewer than 30% of the builds
 - an expensive late item with a big win/loss gap usually just means the winner got rich enough to buy it
 
 ```
-Top 6 Mirage players:
+Tracked Mirage players (30 downloaded games):
 
-  Player              Rank  Region    Record
-  someplayer             1  Europe    8W 2L
-  anothermain           14  SAmerica  6W 4L
-  thirdmain             45  Europe    7W 3L
+  Player             Games  Rank  Record
+  someplayer            10     1  8W 2L
+  anothermain           10    14  6W 4L
+  thirdmain             10     -  7W 3L
 
-Shared core across 35 winning builds:
+Shared core across 21 winning builds:
 
   Item                      Win %  Loss %  Median buy   Slot
   Dispel Magic                91%     96%         14m   vitality T3
@@ -766,27 +974,42 @@ Shared core across 35 winning builds:
   Healbane                    51%     36%          8m   vitality T2
 ```
 
-### Compare against top players
+### Compare against your tracked players
 
 ```
 uv run deadlock compare --hero Mirage
 ```
 
-- your stats vs top players minute by minute
-- `--stat farm` (default): souls from troopers, neutrals, boxes, treasure, and denies. Kill and assist gold is excluded, and the report ends with your kill and assist souls at 20 minutes so that figure stays visible
-- `--stat combat`, `objectives`, `catch_up`, `other` (Trophy Collector and similar item income), `souls` (net worth), `soul_sources` (every income source as one gap table), or any raw snapshot field: `creep_kills`, `denies`, `player_damage`
+- your stats vs your tracked players, from their downloaded games, on the same 5-minute intervals the `match` command uses (`--interval 10` for wider rows). Only your ranked games count, matching the pool
+- `--stat souls` (default, net worth) takes the `match` column names — `kills`, `deaths`, `assists`, `damage`, `damage_taken`, `obj_damage`, `healing`, `heal_prevented`, `creeps`, `neutrals`, `denies` — and the soul source groups: `farm` (troopers + jungle + breakables + rift/urn souls + deny souls, kill and assist souls excluded), `troopers`, `jungle`, `breakables`, `combat`, `objectives`, `catch_up`, `other`, or `soul_sources` for every income source as one gap table (rift and urn souls show there as the `rift_urn` row)
+- the summary table shows each player as one row with their whole-game rate (average and median per minute), you first for contrast. `kills` and `deaths` print as plain counts instead — per game in the summary, per interval in the table below it
+- every interval cell is the median of the per-game rates inside that window, so a game only counts while it lasts. The cumulative gap column keeps the running total of the gap column — positive means you are ahead by that point in a typical game, negative means you trail
+- late intervals are not shown once too few games reach them on either side, sparse records would skew the medians
+- `--since 2026-06-30` keeps only your games from that date, useful when a patch changed the soul economy and old games would drag your median
 
 ```
-You (111222333, 50 games) vs top Mirage players: farm
+You (111222333, 50 games) vs 3 tracked Mirage players (30 games): souls
 
-  Min       You (n)        Top (n)       Gap   You/min  Top/min
-    3     1,138 (50)     1,274 (60)      -137       379       425
-    6     2,754 (50)     3,019 (60)      -265       539       582
-    9     4,608 (50)     5,118 (59)      -510       618       700
-   12     6,720 (50)     7,441 (59)      -721       704       774
-   15     9,116 (50)     9,945 (59)      -830       798       835
-   20    12,992 (50)    14,684 (59)    -1,692       775       948
-   25    17,920 (50)    19,340 (55)    -1,420       986       931
+  Player             Games  Rank  Last download   Avg/min  Med/min
+  you                   50     -              -       978      961
+  someplayer            10     1     2026-07-10     1,102    1,056
+  anothermain           10    14     2026-07-10       989    1,004
+  thirdmain             10     -     2026-07-08     1,041    1,022
+
+  Min       You/min  Them/min   Gap/min Cumulative gap    Games
+  0-5           544       561       -17            -85    50/30
+  5-10          831       902       -71           -440    50/30
+  10-15         873     1,041      -168         -1,280    50/29
+  15-20         942     1,105      -163         -2,095    50/29
+  20-25       1,110     1,296      -186         -3,025    48/25
+  25-30       1,151     1,178       -27         -3,160    41/19
+  30-35       1,178     1,041      +137         -2,475    30/8
+  35-40       1,633     1,712       -79         -2,870    14/4
+  Total         961     1,022       -61
+
+  This table shows the median values for each interval
+  Games past 40m left out, too few tracked games reach them
+  Biggest souls gap: 20-25m, you 1,110/min vs tracked players 1,296/min
 ```
 
 ### Leaderboard
@@ -795,9 +1018,9 @@ You (111222333, 50 games) vs top Mirage players: farm
 uv run deadlock leaderboard --hero Mirage
 ```
 
-- the current top players of a hero from the per-hero leaderboard, with their account IDs
+- the current top players of a hero from the per-hero leaderboard, with their account IDs and paste-ready config lines for the ones you are not tracking yet ([Tracked players](#tracked-players-and-public-stats))
 - `--matches` (optionally `--matches 10`) lists each one's recent ranked match ids, win or loss, so you can pick a game to pull
-- config `[players.<Hero>]` entries show up too, marked `config`
+- tracked `[players.<Hero>]` entries show up too, marked `tracked`
 
 ```
 Mirage leaderboard:
@@ -814,11 +1037,14 @@ Mirage leaderboard:
 uv run deadlock download --hero Mirage
 ```
 
-- downloads recent matches from top players and your selected `[players.<Hero>]` entries in config into their own parquet tables (see below)
-- `--account 111222333` pulls a specific player's recent games instead of the leaderboard top players (still needs `--hero`); comma-separate for several
-- `--match 12345678` fetches one match by ID, no `--hero` needed: it stores every player in the match, so `match --hero <anyone>` then works on it; comma-separate for several
+- downloads recent games from the players you track into their own parquet tables (see below). Nothing is ever downloaded from the leaderboard on its own
+- without `--account` it downloads everyone under `[players.<Hero>]` in your config.toml
+- `--account 111222333` downloads a specific player without tracking them (still needs `--hero`, comma-separated for several). Their games archive and `deadlock match` reads them, but only players in config.toml join the comparisons
+- `--match 12345678` fetches one match by ID (comma-separated for several), no `--hero` needed: it stores every player in the match, so `match --hero <anyone>` then works on it
 - re-running adds new matches without downloading old ones again
-- `item` and `movement` use these downloaded games for their top player numbers
+- `--games 10` raises how many recent ranked games per player (5 by default)
+- any command reads a downloaded game directly by pointing `--parquet` at the tables, for example `deadlock --parquet ~/.local/share/deadlock-matches/parquet-players match <id> --hero Mirage`
+- players still on the ladder get their current rank noted when downloaded, so the comparison reports can show it later
 
 ### Is an item worth buying
 
@@ -826,11 +1052,11 @@ uv run deadlock download --hero Mirage
 uv run deadlock item "Escalating Exposure" --hero Mirage
 ```
 
-- stats for the item on one hero, your games vs top players
+- stats for the item on one hero, your games vs your tracked players
 - meta stats count Eternus+ lobbies by default and `--min-rating all` removes that filter
 - `--since 2026-06-30` limits your games and the meta stats to matches on or after a date, useful when a patch changed the item
 - `--top 15` shows more rows in the bought together table
-- if you ran `deadlock download`, it also shows damage per minute owned for top players
+- if you track players for the hero and ran `deadlock download`, it also shows their damage per minute owned
 - damage per minute owned can be compared across games since it ignores how late the item was bought and how long the game went
 - % of dmg is how much of your hero damage came from the item while you owned it
 
@@ -848,7 +1074,7 @@ Your games (accounts 111222333, 50 found):
   Built          34   20   14     58.8%    1,829      169     10.3%
   Not built      16   11    5     68.8%        -        -         -
 
-Top Mirage players: 219 damage per minute owned across 78 builds, 8.5% of their hero damage (deadlock-api.com)
+Tracked Mirage players: 219 damage per minute owned across 78 builds, 8.5% of their hero damage (their downloaded games)
 
 Results (Eternus+ lobbies):
   win rate 56.8% over 5,292 games, usually bought around 26m
@@ -869,21 +1095,34 @@ uv run deadlock movement --hero Mirage
 ```
 
 - movement profile on one hero: how much you slide, dash, and stay airborne, how far you move, and how often you stand still (small radius)
-- needs the `movement` table, so delete it from `exclude` in `config.toml` first
-- the Top column appears when `deadlock download` ran with movement enabled and is from the top players on the leaderboard
+- reads the per minute `movement_intervals` table, which always builds, so no config change is needed
+- the Tracked column comes from past `deadlock download` runs for the players you track on the hero, nothing is fetched by this command. Downloads add up over time, so the header says how many tracked players you are compared against and when the last download ran
 
 ```
-Mirage movement: you (50 games) vs top players (114 games)
+Mirage movement: you (50 games) vs 3 tracked players (34 games, last download 2026-07-01)
 
-  Metric                        You      Top      Gap
+  Metric                        You  Tracked      Gap
+  meters /min                 388.3    430.0    +41.7
+  stationary %                  9.9      7.1     -2.8
   slide %                       3.9      8.3     +4.4
-  ground dashes /min            1.7      2.4     +0.7
-  air dashes /min               0.2      0.8     +0.7
   in air %                      8.1     21.2    +13.1
   zipline %                     6.7      8.5     +1.9
   fighting players %           24.3     26.7     +2.4
-  distance /min            15,288.9 16,932.3 +1,643.4
-  stationary %                  9.9      7.1     -2.8
+  ground dashes /min            1.7      2.4     +0.7
+  air dashes /min               0.2      0.8     +0.7
+```
+
+- `--by player` shows one row per tracked player instead of the single Tracked column, so you can see exactly who you are compared against and whether they even play alike
+- Rank is their hero ladder rank when they were downloaded, `-` for players who were never on the board
+- long or wide names (Korean, Cyrillic) are cut to a fixed width so the table stays aligned
+- the Tracked averages can blend playstyles: here every tracked player beats the you row on meters and stationary, while in air ranges from 13% to 31% because ground and air Mirages are both viable
+
+```
+  Player            Account  Games    Rank   m /min  Stationary   Slide  In air  Zipline  Fighting  Dash/min  Air dash
+  you                     -     50       -    388.3        9.9%    3.9%    8.1%     6.7%     24.3%       1.7       0.2
+  proplayer1      111222333     14       1    453.2        5.4%    7.0%   13.3%     8.8%     26.4%       2.8       0.3
+  someplayer      444555666     10       -    451.7        7.2%    9.2%   31.0%     8.2%     28.2%       1.8       1.8
+  otherplayer     555666777     10      23    420.1        7.2%    7.4%   23.1%     8.6%     30.3%       1.9       1.9
 ```
 
 ## Maintenance
@@ -905,20 +1144,42 @@ uv run deadlock schema damage
 - column descriptions for the parquet table ("damage" table in this example)
 - add `--sample` after a table name to print the first 5 rows from that parquet table, or `--sample 10` for another count
 
+### API cache
+
+Leaderboards, match histories, and analytics responses are cached as json under `~/.cache/deadlock-matches/api/` (`%LOCALAPPDATA%\deadlock-matches\cache\api` on Windows).
+
+- entries refresh after a day, and a stale copy still serves when the API is unreachable
+- cache files untouched for 30 days are deleted on the next command that talks to the API. Only files this tool wrote (`v1*.json` in that directory) are ever removed, and every one can be redownloaded
+- match bodies, parquet tables, and the per-build asset data live elsewhere and are never cleaned up
+
+### Removing everything
+
+All data lives in two directories. Deleting them and the repo folder removes every trace:
+
+```
+rm -rf ~/.local/share/deadlock-matches ~/.cache/deadlock-matches
+```
+
+On Windows both live under `%LOCALAPPDATA%\deadlock-matches`.
+
+- `matches/` inside the data directory is the one thing that cannot be rebuilt: Steam evicts its copies and the replay servers only keep match bodies for a few months. Copy it somewhere first if you might come back
+- the parquet tables, asset data, and cache all rebuild or redownload from the archive and the API
+- `config.toml` sits in the repo folder and goes with it
+
 ## The parquet tables
 
 The raw match data is deeply nested protobuf, so every match has to be processed one at a time. Sync flattens the reusable parts into parquet tables. Any question across your whole match history can be answered with polars, and the same files work with [DuckDB](https://duckdb.org), [pandas](https://pandas.pydata.org), or anything else that reads parquet.
 
-The tables are stored in `~/.local/share/deadlock-matches/parquet/` (`%LOCALAPPDATA%\deadlock-matches\parquet` on Windows) and update automatically when new matches show up. Match tables are partitioned by month under directories like `players/` and `damage/`; asset-history tables live under `assets/`. `deadlock schema [table]` prints the data dictionary with the data type and description per column. `deadlock schema players --sample` also prints a small local preview, which is useful for checking join keys and real values without opening a notebook.
+The tables are stored in `~/.local/share/deadlock-matches/parquet/` (`%LOCALAPPDATA%\deadlock-matches\parquet` on Windows) and update automatically when new matches show up. Match tables are partitioned by month under directories like `players/` and `damage/`, and asset-history tables live under `assets/`. `deadlock schema [table]` prints the data dictionary with the data type and description per column. `deadlock schema players --sample` also prints a small local preview, which is useful for checking join keys and real values without opening a notebook.
 
 - `matches`: one row per match
 - `players`: one row per player per match, with `hero`, `won`, and `lane` (the starting lane color)
-- `stats`: cumulative stat snapshots taken every minute
+- `stats`: cumulative stat snapshots, every 3 minutes through 15:00 and every 5 minutes after, plus one at match end
 - `soul_sources`: souls per income source per snapshot
 - `item_events`: item purchases, with names, prices, and tiers merged in from the cached API data. Prices reflect the patch each match was played on
-- `statues`: the permanent buff statues each player collected, one row per statue type with the buff family and level. `statue_history` holds the per-pickup values by patch
+- `buffs`: the buffs each player ended the match with, one row per pickup type with the buff family and level, permanent statue buffs and temporary bridge buffs told apart by the `permanent` column. `statue_history` holds the per-pickup values by patch
 - `stacks`: the final counters from stacking abilities and items, one row per counter per player, with the class and display name resolved from the id
-- `custom_stats`: the named stat counters the game tracks but never shows, one row per stat per player with the family and name split out (parries, accuracy against heroes, damage by range, comeback souls, per-hero counters)
+- `custom_stats`: the named stat counters the game tracks but never shows, one row per stat per player per snapshot with the family and name split out (parries, accuracy against heroes, damage by range, comeback souls, per-hero counters)
 - `damage`: damage, healing, and mitigation per source and target, with the names you see in game like Dust Devil or "Promises Kept (crit)" for headshots. The totals from the match screen and the individual source rows have different `category` values, so filter to one or the other
 - `damage_sources`: the same sources over time, cumulative like the in-game damage graph. Summed over targets, split into hero targets and everything else
 - `mid_boss`: one row per midboss kill, with when it died, which team killed it, and which team claimed the Rejuvenator
@@ -928,9 +1189,32 @@ The tables are stored in `~/.local/share/deadlock-matches/parquet/` (`%LOCALAPPD
   - do top players slide and air dash more than I do on the same hero?
 - `deaths`: one row per death with the time, position, killer, and respawn timer. Joined to `movement`, this answers things like "was I alone when I died" or "how many enemies killed me"
 
+Sizes scale with the archive. Measured on a real archive, per 100 matches:
+
+| Table | Rows | Size |
+| --- | --: | --: |
+| `movement` | 2,600,000 | 33 MB |
+| `damage_sources` | 920,000 | 2.5 MB |
+| `custom_stats` | 640,000 | 1.1 MB |
+| `damage` | 230,000 | 1.3 MB |
+| `soul_sources` | 150,000 | 0.3 MB |
+| `movement_intervals` | 43,000 | 0.5 MB |
+| `item_events` | 38,000 | 0.2 MB |
+| `accolades` | 30,000 | 0.1 MB |
+| `buffs` | 13,000 | <0.1 MB |
+| `stats` | 12,000 | 0.7 MB |
+| `deaths` | 7,200 | 0.2 MB |
+| `objectives` | 2,100 | <0.1 MB |
+| `players` | 1,200 | <0.1 MB |
+| `stacks` | 430 | <0.1 MB |
+| `mid_boss` | 160 | <0.1 MB |
+| `matches` | 100 | <0.1 MB |
+
+That is about 40 MB per 100 matches, 33 of them movement, which is why the starter config excludes it. The asset-history tables under `assets/` are a fixed ~0.4 MB and do not grow with the archive.
+
 The tables do not cover everything Valve stores yet. The full structure is `CMsgMatchMetaDataContents` in [`protos/citadel_gcmessages_common.proto`](https://github.com/trenchtoaster/deadlock-matches/blob/main/protos/citadel_gcmessages_common.proto) and can be read as plain text. This is a work in progress, and new columns and tables get added as more of that data turns out to be interesting to query.
 
-`deadlock download --hero` builds the same tables for matches from *other* players in the `parquet-players/` directory. This includes top players from the leaderboard, anyone selected under `players` in config, and any account or match id you pass to `--account` / `--match`. The layout is identical, so every query works on their games. An extra `downloads` table records which player each match came from, their rank at the time, and when it was retrieved; a match pulled by id has no player, so those columns are null. Re-running adds new matches without downloading old ones again.
+`deadlock download --hero` builds the same tables for matches from *other* players in the `parquet-players/` directory: the players tracked under `[players.<Hero>]` in config, plus any account or match id you pass to `--account` / `--match`. The layout is identical, so every query works on their games. An extra `downloads` table records which player each match came from, their rank at the time, and when it was retrieved. A match pulled by id has no player, so those columns are null. Re-running adds new matches without downloading old ones again. The comparison commands read only the games of players currently in config, so deleting a config line removes them from comparisons without touching the data.
 
 ## Writing your own queries
 
@@ -961,6 +1245,8 @@ Questions like these are a few lines of polars each:
 - `death_context()` adds how many allies and enemies were within 2000 units when you died (needs the movement table)
 - `movement_profile()` is the per-match frame behind `deadlock movement`
 - `hero_scaling()` is base health and spirit power per hero per level
+
+Every query in the module is a lazy polars plan and all collections use the streaming engine. Nothing is read until `.collect()`, the plan prunes the scan down to the columns and rows it actually touches, and memory stays bounded at any archive size. Keep your own queries lazy from `scan()` to `.collect()` and they get the same treatment.
 
 This section is also available as a [marimo](https://marimo.io) notebook if you would rather poke at the tables interactively. It runs the same queries live on your own exported data and needs nothing installed beyond uv:
 
