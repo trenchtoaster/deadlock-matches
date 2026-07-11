@@ -2125,29 +2125,29 @@ def _source_intervals(
 
     print()
 
-    return True
+    return width
 
 
 def winrate_report(args: argparse.Namespace, config: str | Path | None = None) -> None:
     """W/L table per day, week, or month with net wins and a running total."""
     tz = config_timezone(config)
     try:
-        df = queries.daily_record(
+        games = queries.record_games(
             args.parquet,
             accounts=args.account,
             tz=tz,
             days=args.days,
             since=args.since,
             hero=args.hero,
-            by=args.by,
         )
+        df = queries.daily_record(args.parquet, by=args.by, games=games)
     except ValueError as e:
         print(e)
         return
 
     if df.is_empty():
         print("No games found for the configured accounts")
-        _unscored_line(args, tz)
+        _unscored_line(games)
 
         if args.hero is not None:
             _hero_baseline_line(args.hero, args.min_rating, args.since)
@@ -2172,9 +2172,9 @@ def winrate_report(args: argparse.Namespace, config: str | Path | None = None) -
             f"{r['net']:>+11}{r['cum_net']:>+17}"
         )
 
-    games = int(df.get_column("games").sum())
+    total_games = int(df.get_column("games").sum())
     wins = int(df.get_column("wins").sum())
-    rate = wins / games * 100
+    rate = wins / total_games * 100
     net = df.item(-1, "cum_net")
     mvps = int(df.get_column("mvps").sum())
     keys = int(df.get_column("key_players").sum())
@@ -2187,23 +2187,16 @@ def winrate_report(args: argparse.Namespace, config: str | Path | None = None) -
         lobbies = f", {average} lobbies"
 
     print(
-        f"\nOverall: {games} games, {wins}-{games - wins}, {rate:.1f}% win rate, "
+        f"\nOverall: {total_games} games, {wins}-{total_games - wins}, {rate:.1f}% win rate, "
         f"{net:+} net wins, {mvps} MVP, {keys} Key Player{lobbies}."
     )
 
-    abandons = queries.abandon_record(
-        args.parquet,
-        accounts=args.account,
-        tz=tz,
-        days=args.days,
-        since=args.since,
-        hero=args.hero,
-    )
+    abandons = queries.abandon_record(args.parquet, accounts=args.account, games=games)
 
     if not abandons.is_empty():
-        _abandon_lines(abandons, games, wins)
+        _abandon_lines(abandons, total_games, wins)
 
-    _unscored_line(args, tz)
+    _unscored_line(games)
 
     if args.hero is not None:
         _hero_baseline_line(args.hero, args.min_rating, args.since)
@@ -2247,16 +2240,9 @@ def _abandon_lines(abandons: pl.DataFrame, games: int, wins: int) -> None:
         )
 
 
-def _unscored_line(args: argparse.Namespace, tz: str) -> None:
+def _unscored_line(games: pl.DataFrame) -> None:
     """Print the unscored games the table left out, nothing when there are none."""
-    unscored = queries.unscored_record(
-        args.parquet,
-        accounts=args.account,
-        tz=tz,
-        days=args.days,
-        since=args.since,
-        hero=args.hero,
-    )
+    unscored = queries.unscored_record(games=games)
 
     if unscored.is_empty():
         return
@@ -2411,9 +2397,21 @@ def _death_frame(args: argparse.Namespace, tz: str, *, has_context: bool) -> pl.
     """Load deaths for the player with the command line filters applied.
 
     - joins nearby ally and enemy context when the movement table is exported
+    - keeps only the columns the report reads
     """
+    columns = [
+        "match_id",
+        "day",
+        "won",
+        "game_time_s",
+        "time_to_kill_s",
+        "death_duration_s",
+        "killer_account_id",
+    ]
+
     if has_context:
         lf = queries.death_context(args.radius, args.parquet, accounts=args.account, tz=tz)
+        columns += ["solo", "outnumbered", "enemies"]
     else:
         lf = queries.my_deaths(args.parquet, accounts=args.account, tz=tz)
 
@@ -2423,7 +2421,7 @@ def _death_frame(args: argparse.Namespace, tz: str, *, has_context: bool) -> pl.
     if args.since is not None:
         lf = lf.filter(pl.col("day") >= dt.date.fromisoformat(args.since))
 
-    df = lf.collect()
+    df = lf.select(columns).collect()
 
     if args.days is not None and not df.is_empty():
         keep = df["day"].unique().sort().tail(args.days).implode()
@@ -2496,21 +2494,21 @@ def deaths_report(args: argparse.Namespace, config: str | Path | None = None) ->
     print()
 
     killers = (
-        df.filter(pl.col("killer_account_id").is_not_null())
+        df.lazy()
+        .filter(pl.col("killer_account_id").is_not_null())
         .join(
-            queries.scan("players", args.parquet)
-            .select(
+            queries.scan("players", args.parquet).select(
                 "match_id",
                 killer_account_id=pl.col("account_id"),
                 killer=pl.col("hero"),
-            )
-            .collect(),
+            ),
             on=["match_id", "killer_account_id"],
         )
         .group_by("killer")
         .len()
-        .sort("len", descending=True)
+        .sort(["len", "killer"], descending=[True, False])
         .head(5)
+        .collect()
     )
 
     if not killers.is_empty():

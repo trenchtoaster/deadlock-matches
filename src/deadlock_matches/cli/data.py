@@ -117,17 +117,17 @@ def match_history(args: argparse.Namespace, config: str | Path | None = None) ->
     accounts = args.account
     players_lf = queries.scan("players", args.parquet).filter(pl.col("account_id").is_in(accounts))
 
-    matches = (
+    matches_lf = (
         queries.scan("matches", args.parquet)
         .join(players_lf.select("match_id").unique(), on="match_id")
         .with_columns(pl.col("start_time").dt.convert_time_zone(tz).alias("start_local"))
         .with_columns(pl.col("start_local").dt.date().alias("day"))
-        .sort("start_time")
-        .collect()
     )
 
     if since is not None:
-        matches = matches.filter(pl.col("day") >= since)
+        matches_lf = matches_lf.filter(pl.col("day") >= since)
+
+    matches = matches_lf.sort("start_time").select("match_id", "start_local", "day").collect()
 
     if days is not None:
         keep = matches["day"].unique().sort().tail(days).implode()
@@ -146,6 +146,18 @@ def match_history(args: argparse.Namespace, config: str | Path | None = None) ->
         )
         .with_columns(pl.col("player_damage").fill_null(0))
         .sort("start_local")
+        .select(
+            "match_id",
+            "account_id",
+            "hero",
+            "won",
+            "kills",
+            "deaths",
+            "assists",
+            "net_worth",
+            "player_damage",
+            "start_local",
+        )
         .collect()
     )
 

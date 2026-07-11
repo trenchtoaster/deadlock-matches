@@ -5,6 +5,8 @@ from __future__ import annotations
 from pathlib import Path
 from typing import TYPE_CHECKING
 
+import polars as pl
+
 from deadlock_matches import heroes, items, meta, players, queries
 from deadlock_matches.cli import cards
 from deadlock_matches.cli.data import no_pool_hint
@@ -43,52 +45,50 @@ def item_report(args: argparse.Namespace, config: str | Path | None = None) -> N
 
     if args.account:
         ids = format_accounts(args.account, config)
-        rows = queries.item_games(
-            item.name, args.hero, args.parquet, args.account, args.since
-        ).collect()
-        built = [
-            r
-            for r in rows.iter_rows(named=True)
-            if r["game_time_s"] is not None and item.class_name
-        ]
-        skipped_wins = sum(r["won"] for r in rows.iter_rows(named=True)) - sum(
-            r["won"] for r in built
+        rows = (
+            queries.item_games(item.name, args.hero, args.parquet, args.account, args.since)
+            .select("match_id", "won", "game_time_s", "damage", "owned_s", "dealt_after_buy")
+            .collect()
         )
+        built = (
+            rows.filter(pl.col("game_time_s").is_not_null()) if item.class_name else rows.clear()
+        )
+        wins = int(built.get_column("won").sum())
+        skipped_wins = int(rows.get_column("won").sum()) - wins
         skipped_losses = len(rows) - len(built) - skipped_wins
         window = f" since {args.since}" if args.since else ""
         print(f"Your games (accounts {ids}, {len(rows)} found{window}):\n")
 
-        if built:
+        if not built.is_empty():
             print(f"  {'Match':<10} {'Result':<6} {'Damage':>7} {'Owned':>6} {'% of dmg':>9}")
 
-        dmgs = []
-        owned_s = 0.0
-        dealt_s = 0.0
-        for r in built:
+        damage_total = float(built.get_column("damage").fill_null(0).sum())
+        owned_s = float(built.get_column("owned_s").sum())
+        dealt_s = float(built.get_column("dealt_after_buy").fill_null(0).sum())
+
+        for r in built.iter_rows(named=True):
             d = r["damage"] or 0.0
-            owned = r["owned_s"]
             dealt = r["dealt_after_buy"] or 0.0
-            dmgs.append(d)
-            owned_s += owned
-            dealt_s += dealt
             percent = f"{d / dealt * 100:.1f}%" if dealt else "-"
             result = "WIN" if r["won"] else "loss"
-            print(f"  {r['match_id']:<10} {result:<6} {d:>7,.0f} {owned / 60:>5.0f}m {percent:>9}")
+            print(
+                f"  {r['match_id']:<10} {result:<6} {d:>7,.0f} "
+                f"{r['owned_s'] / 60:>5.0f}m {percent:>9}"
+            )
 
-        if built or skipped_wins or skipped_losses:
+        if not built.is_empty() or skipped_wins or skipped_losses:
             print(
                 f"\n  {'':<10} {'Games':>6} {'W':>4} {'L':>4} {'Win rate':>9} "
                 f"{'Avg dmg':>8} {'Dmg/min':>8} {'% of dmg':>9}"
             )
 
-        if built:
-            wins = sum(r["won"] for r in built)
+        if not built.is_empty():
             rate = wins / len(built) * 100
-            per_min = f"{sum(dmgs) * 60 / owned_s:,.0f}" if owned_s else "-"
-            percent = f"{sum(dmgs) / dealt_s * 100:.1f}%" if dealt_s else "-"
+            per_min = f"{damage_total * 60 / owned_s:,.0f}" if owned_s else "-"
+            percent = f"{damage_total / dealt_s * 100:.1f}%" if dealt_s else "-"
             print(
                 f"  {'Built':<10} {len(built):>6} {wins:>4} {len(built) - wins:>4} "
-                f"{rate:>8.1f}% {sum(dmgs) / len(dmgs):>8,.0f} {per_min:>8} {percent:>9}"
+                f"{rate:>8.1f}% {damage_total / len(built):>8,.0f} {per_min:>8} {percent:>9}"
             )
 
         if skipped_wins or skipped_losses:

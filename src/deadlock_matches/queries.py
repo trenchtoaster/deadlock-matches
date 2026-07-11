@@ -7,6 +7,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 import polars as pl
+import polars.selectors as cs
 
 from deadlock_matches import abilities, config, export, heroes, history, items, schemas
 from deadlock_matches import skill_rating as sr
@@ -290,7 +291,7 @@ def item_value(
         .agg(pl.col("damage").sum())
     )
 
-    row = (
+    totals = (
         _item_buys(windows)
         .join(dmg, on=["match_id", "account_id"], how="left")
         .select(
@@ -298,18 +299,15 @@ def item_value(
             pl.col("owned_s").sum(),
             pl.col("damage").fill_null(0).sum().alias("damage"),
         )
-        .collect()
     )
+    dealt_total = _dealt_owning(windows, parquet_dir).select(
+        pl.col("dealt_after_buy").sum().alias("dealt")
+    )
+    row, dealt_row = pl.collect_all([totals, dealt_total])
 
     builds = int(row.item(0, "builds"))
     owned = float(row.item(0, "owned_s") or 0)
     total = float(row.item(0, "damage") or 0)
-
-    dealt_row = (
-        _dealt_owning(windows, parquet_dir)
-        .select(pl.col("dealt_after_buy").sum().alias("dealt"))
-        .collect()
-    )
     dealt = float(dealt_row.item() or 0)
 
     return {
@@ -362,7 +360,10 @@ def item_games(
 
         games = games.filter(pl.col("hero_id") == hero_id)
 
-    windows = _item_windows(pl.col("item_id") == it.id, parquet_dir)
+    keys = games.select("match_id", "account_id")
+    windows = _item_windows(pl.col("item_id") == it.id, parquet_dir).join(
+        keys, on=["match_id", "account_id"], how="semi"
+    )
     dealt = (
         scan("damage", parquet_dir)
         .filter(
@@ -370,12 +371,18 @@ def item_games(
             pl.col("stat") == "damage",
             pl.col("target_account_id").is_not_null(),
         )
+        .join(
+            keys.rename({"account_id": "dealer_account_id"}),
+            on=["match_id", "dealer_account_id"],
+            how="semi",
+        )
         .group_by("match_id", "dealer_account_id")
         .agg(pl.col("damage").sum())
     )
     ordered_buys = (
         scan("item_events", parquet_dir)
         .filter(pl.col("item").is_not_null())
+        .join(keys, on=["match_id", "account_id"], how="semi")
         .sort("match_id", "account_id", "game_time_s")
         .with_columns(
             pl.int_range(1, pl.len() + 1).over("match_id", "account_id").alias("buy_n"),
@@ -594,13 +601,15 @@ def daily_record(
     since: str | dt.date | None = None,
     hero: str | None = None,
     by: str = "day",
+    games: pl.DataFrame | None = None,
 ) -> pl.DataFrame:
     """Per local day W/L record with net wins and a running total.
 
     days keeps only the last N days of games, None keeps everything. since
     keeps only days on or after that date (YYYY-MM-DD or YYYYMMDD, like 2026-07-01). hero filters to
     one hero. by rolls the days into week or month buckets, where a
-    week starts on Monday.
+    week starts on Monday. games takes a precomputed record_games frame
+    instead of scanning again.
 
     - unscored matches stay out of every count, unscored_record has those
     - abandons counts the games where anyone abandoned
@@ -611,13 +620,16 @@ def daily_record(
         msg = f"Unknown bucket {by!r}, use day, week, or month"
         raise ValueError(msg)
 
-    games = _scored(_record_games(parquet_dir, accounts, tz, days, since, hero))
+    if games is None:
+        games = record_games(parquet_dir, accounts, tz, days, since, hero)
+
+    games = _scored(games)
 
     abandoned_ids = (
         scan("players", parquet_dir)
         .filter(
             pl.col("abandon_time_s").is_not_null(),
-            pl.col("match_id").is_in(games.get_column("match_id")),
+            pl.col("match_id").is_in(games.get_column("match_id").implode()),
         )
         .select("match_id")
         .unique()
@@ -626,7 +638,7 @@ def daily_record(
     )
 
     daily = (
-        games.with_columns(pl.col("match_id").is_in(abandoned_ids).alias("abandoned"))
+        games.with_columns(pl.col("match_id").is_in(abandoned_ids.implode()).alias("abandoned"))
         .group_by("day")
         .agg(
             pl.len().cast(pl.Int32).alias("games"),
@@ -644,11 +656,7 @@ def daily_record(
         every = "1w" if by == "week" else "1mo"
         daily = (
             daily.group_by(pl.col("day").dt.truncate(every))
-            .agg(
-                pl.col(
-                    "games", "wins", "mvps", "key_players", "abandons", "subrank_sum", "rated_games"
-                ).sum()
-            )
+            .agg(cs.exclude("day").sum())
             .sort("day")
         )
 
@@ -693,17 +701,19 @@ def _subrank_label(column: str) -> pl.Expr:
     return badge.replace_strict(mapping, default=None, return_dtype=pl.String)
 
 
-def _record_games(
-    parquet_dir: str | Path | None,
-    accounts: Sequence[int] | None,
-    tz: str | None,
-    days: int | None,
-    since: str | dt.date | None,
-    hero: str | None,
+def record_games(
+    parquet_dir: str | Path | None = None,
+    accounts: Sequence[int] | None = None,
+    tz: str | None = None,
+    days: int | None = None,
+    since: str | dt.date | None = None,
+    hero: str | None = None,
 ) -> pl.DataFrame:
     """Take one row per match in the winrate window.
 
     days keeps only the last N days that had games, None keeps everything.
+    The result feeds daily_record, abandon_record, and unscored_record
+    through their games parameter.
     """
     lf = my_games(parquet_dir, accounts, tz)
 
@@ -715,6 +725,10 @@ def _record_games(
             raise ValueError(msg)
 
         lf = lf.filter(pl.col("hero_id") == hero_id)
+
+    if since is not None:
+        since = dt.date.fromisoformat(since) if isinstance(since, str) else since
+        lf = lf.filter(pl.col("day") >= since)
 
     games = (
         lf.unique(subset="match_id")
@@ -732,13 +746,9 @@ def _record_games(
         .collect()
     )
 
-    if since is not None:
-        since = dt.date.fromisoformat(since) if isinstance(since, str) else since
-        games = games.filter(pl.col("day") >= since)
-
     if days is not None:
         kept = games.get_column("day").unique().sort().tail(days)
-        games = games.filter(pl.col("day").is_in(kept))
+        games = games.filter(pl.col("day").is_in(kept.implode()))
 
     return games
 
@@ -750,10 +760,12 @@ def abandon_record(
     days: int | None = None,
     since: str | dt.date | None = None,
     hero: str | None = None,
+    games: pl.DataFrame | None = None,
 ) -> pl.DataFrame:
     """Take one row per scored match in the winrate window where someone abandoned.
 
     - same filters as daily_record, unscored matches stay out of both
+    - games takes a precomputed record_games frame instead of scanning again
     - you/ally/enemy flag who left: you = one of your accounts, ally = a
       teammate, enemy = someone on the other team
     - returned = the leaver dealt growing damage between samples after the
@@ -767,13 +779,16 @@ def abandon_record(
         msg = "no accounts: pass accounts= or fill in accounts in config.toml"
         raise ValueError(msg)
 
-    games = _scored(_record_games(parquet_dir, accounts, tz, days, since, hero))
+    if games is None:
+        games = record_games(parquet_dir, accounts, tz, days, since, hero)
+
+    games = _scored(games)
 
     leaver_rows = (
         scan("players", parquet_dir)
         .filter(
             pl.col("abandon_time_s").is_not_null(),
-            pl.col("match_id").is_in(games.get_column("match_id")),
+            pl.col("match_id").is_in(games.get_column("match_id").implode()),
         )
         .select("match_id", "account_id", pl.col("team").alias("leaver_team"), "abandon_time_s")
         .collect()
@@ -783,7 +798,7 @@ def abandon_record(
 
     damage_grew = (
         scan("damage_sources", parquet_dir)
-        .filter(pl.col("match_id").is_in(match_ids))
+        .filter(pl.col("match_id").is_in(match_ids.implode()))
         .group_by("match_id", pl.col("dealer_account_id").alias("account_id"), "time_stamp_s")
         .agg(pl.col("damage").sum())
         .join(leaver_rows.lazy(), on=["match_id", "account_id"])
@@ -827,13 +842,16 @@ def unscored_record(
     days: int | None = None,
     since: str | dt.date | None = None,
     hero: str | None = None,
+    games: pl.DataFrame | None = None,
 ) -> pl.DataFrame:
     """Take one row per unscored match the winrate table left out, same window filters.
 
     Match history still shows the result, the flag most likely means no
-    rating change.
+    rating change. games takes a precomputed record_games frame instead of
+    scanning again.
     """
-    games = _record_games(parquet_dir, accounts, tz, days, since, hero)
+    if games is None:
+        games = record_games(parquet_dir, accounts, tz, days, since, hero)
 
     return (
         games.filter(pl.col("not_scored").fill_null(value=False))
@@ -942,7 +960,12 @@ def damage_by_source(
     if matches is not None:
         predicate = predicate & pl.col("match_id").is_in(list(matches))
 
-    rows = hero_damage(parquet_dir=parquet_dir).filter(predicate).collect()
+    rows = (
+        hero_damage(parquet_dir=parquet_dir)
+        .filter(predicate)
+        .select("match_id", "source_name", "delivery", "damage")
+        .collect()
+    )
 
     if rows.is_empty():
         msg = f"no damage rows for {hero} on accounts {accounts}"
@@ -950,7 +973,7 @@ def damage_by_source(
 
     minutes = (
         scan("matches", parquet_dir)
-        .filter(pl.col("match_id").is_in(rows.get_column("match_id").unique()))
+        .filter(pl.col("match_id").is_in(rows.get_column("match_id").unique().implode()))
         .select(pl.col("duration_s").sum())
         .collect()
         .item()
@@ -1147,7 +1170,7 @@ def final_stats(parquet_dir: str | Path | None = None, tz: str | None = None) ->
     finals = (
         scan("stats", parquet_dir)
         .group_by("match_id", "account_id")
-        .agg(pl.exclude("match_id", "account_id").max())
+        .agg(cs.exclude("match_id", "account_id").max())
         .with_columns(
             pl.when(shots > 0).then(pl.col("shots_hit") / shots).alias("accuracy"),
             pl.when(bullets > 0)
