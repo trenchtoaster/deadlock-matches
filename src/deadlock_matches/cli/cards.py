@@ -13,6 +13,7 @@ if TYPE_CHECKING:
 
 UNITS_PER_METER = 39.37
 BASE_MELEE = (50.0, 116.0)
+TRANSCENDENT_ITEM_CDR = 0.25
 
 
 def _as_of_note(when: dt.date | None) -> str:
@@ -223,13 +224,32 @@ def _item_stat_line(item: items.Item, prop: str, indent: str) -> str | None:
     info = item.labels.get(prop, {})
     label = str(info.get("label") or prop.replace("_", " ")).lower()
 
-    if isinstance(value, str):
-        shown = value
-    else:
-        shown = f"{value:+g}" if info.get("signed") else f"{value:g}"
-        shown += str(info.get("postfix", ""))
+    prefix = str(info.get("prefix", ""))
 
-    return f"{indent}{label:<34} {shown:>10}"
+    if isinstance(value, str):
+        shown = f"{prefix}{value}"
+    else:
+        body = f"{value:+g}" if info.get("signed") else f"{value:g}"
+        shown = f"{prefix}{body}{info.get('postfix', '')}"
+
+    line = f"{indent}{label:<34} {shown:>10}"
+
+    scale = item.scaling.get(prop)
+
+    if scale and scale.get("scale") and scale.get("linear") is not False:
+        line += f"  +{scale['scale']:g} x {_scale_label(scale['stat'])}"
+
+    if cond := item.conditionals.get(prop):
+        line += f"  {cond}"
+
+    if (dmg := item.damage_types.get(prop)) and prop not in item.scaling:
+        line += f"  ({dmg})"
+
+    if item.scale_types.get(prop) == "item_cooldown" and isinstance(value, int | float):
+        reduced = value * (1 - TRANSCENDENT_ITEM_CDR)
+        line += f"  ({reduced:g}{info.get('postfix', '')} with Transcendent Cooldown)"
+
+    return line
 
 
 def item_card(item: items.Item, when: dt.date | None = None) -> None:
@@ -253,9 +273,10 @@ def item_card(item: items.Item, when: dt.date | None = None) -> None:
 
         return
 
-    cooldown = item.properties.get("ability_cooldown")
     typed = {sec["section"] for sec in item.sections}
     fallback = "active" if item.is_active and "active" not in typed else "passive"
+    in_section = any("ability_cooldown" in sec["properties"] for sec in item.sections)
+    pending_cooldown = bool(item.properties.get("ability_cooldown")) and not in_section
 
     for sec in item.sections:
         if sec["section"] == "innate":
@@ -267,13 +288,7 @@ def item_card(item: items.Item, when: dt.date | None = None) -> None:
 
             continue
 
-        note = ""
-
-        if cooldown:
-            note = f"  (cooldown {cooldown:g}s)"
-            cooldown = None
-
-        print(f"\n{(sec['section'] or fallback).capitalize()}{note}")
+        print(f"\n{(sec['section'] or fallback).capitalize()}")
 
         if sec["text"]:
             print(f"  {sec['text']}")
@@ -281,6 +296,12 @@ def item_card(item: items.Item, when: dt.date | None = None) -> None:
         for prop in sec["properties"]:
             if line := _item_stat_line(item, prop, "  "):
                 print(line)
+
+        if pending_cooldown:
+            if line := _item_stat_line(item, "ability_cooldown", "  "):
+                print(line)
+
+            pending_cooldown = False
 
 
 def _scale_label(stat: str) -> str:
@@ -355,7 +376,7 @@ def _tier_changes(ability: abilities.Ability, n: int, ctx: dict[str, float]) -> 
                 out.append(f"{name} {before:.4g} -> {after:.4g}")
             elif not scale_up and prop not in ability.properties and not ability.stat(prop, n - 1):
                 out.append(_upgrade_line(up))
-        else:
+        elif not (base and base.get("linear") is False):
             before = ability.scaling_at(prop, n - 1).get(stat, 0.0)
             after = ability.scaling_at(prop, n).get(stat, 0.0)
 
@@ -471,6 +492,9 @@ def ability_report(args: argparse.Namespace) -> None:
         value = ability.stat(prop)
         scales = ability.scaling_at(prop)
         notes = []
+
+        if ability.scaling.get(prop, {}).get("linear") is False:
+            scales = {}
 
         for stat, scale in list(scales.items()):
             if ctx.get(stat):

@@ -118,6 +118,10 @@ def item_report(args: argparse.Namespace, config: str | Path | None = None) -> N
                 f"Tracked {args.hero} players: {top['per_min']:,.0f} damage per minute owned "
                 f"across {top['builds']} builds{note} (their downloaded games)\n"
             )
+        else:
+            print(
+                f"Tracked {args.hero} players: none of their downloaded games bought {item.name}\n"
+            )
     else:
         print(no_pool_hint(args.hero, tracked_in_config=bool(pool)) + "\n")
 

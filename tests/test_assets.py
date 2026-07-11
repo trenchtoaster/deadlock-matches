@@ -83,6 +83,14 @@ ITEM_REC = {
             "label": "Max Health",
             "postfix": "%",
         },
+        "SlowPercent": {
+            "value": "20",
+            "css_class": "slow",
+            "disable_value": "0",
+            "label": "Move Speed",
+            "postfix": "%",
+            "prefix": "-",
+        },
         "AbilityCooldown": {"value": "0", "disable_value": "0", "label": "Cooldown"},
         "AbilityCharges": {"value": "-1", "disable_value": "-1"},
     },
@@ -98,7 +106,7 @@ ITEM_REC = {
             "section_attributes": [
                 {
                     "loc_string": "Deal <b>bonus</b> damage",
-                    "properties": ["BonusSprintSpeed"],
+                    "properties": ["BonusSprintSpeed", "SlowPercent"],
                     "important_properties": ["MaxHealthLossPercent"],
                 }
             ],
@@ -222,6 +230,7 @@ def test_item_properties_keep_stat_grants_only(tmp_path, monkeypatch):
         "bonus_health": 75,
         "bonus_sprint_speed": "1m",
         "max_health_loss_percent": -13,
+        "slow_percent": 20,
     }
 
 
@@ -250,6 +259,7 @@ def test_refresh_items_keeps_labels_for_surviving_properties(tmp_path, monkeypat
 
     assert rec["labels"]["tech_power"] == {"label": "Spirit Power", "signed": True}
     assert rec["labels"]["bonus_sprint_speed"] == {"label": "Sprint Speed", "postfix": "m/s"}
+    assert rec["labels"]["slow_percent"] == {"label": "Move Speed", "postfix": "%", "prefix": "-"}
     assert "ability_cooldown" not in rec["labels"]
     assert "ability_charges" not in rec["labels"]
 
@@ -267,9 +277,245 @@ def test_refresh_items_flattens_tooltip_sections(tmp_path, monkeypatch):
         {
             "section": "passive",
             "text": "Deal bonus damage",
-            "properties": ["max_health_loss_percent", "bonus_sprint_speed"],
+            "properties": ["max_health_loss_percent", "bonus_sprint_speed", "slow_percent"],
         },
     ]
+
+
+def test_scaling_and_types_reads_spirit_damage_scaling():
+    props = {
+        "DotHealthPercent": {
+            "value": "1.9",
+            "css_class": "tech_damage",
+            "scale_function": {
+                "class_name": "scale_function_tech_damage",
+                "specific_stat_scale_type": "ETechPower",
+                "stat_scale": 0.005,
+            },
+        }
+    }
+
+    derived = assets._derive_properties(props, {"dot_health_percent"})
+
+    assert derived["scaling"] == {"dot_health_percent": {"stat": "tech_power", "scale": 0.005}}
+    assert derived["damage_types"] == {"dot_health_percent": "spirit"}
+
+
+def test_scaling_and_types_recovers_missing_scale_type():
+    props = {
+        "MagicDamagePerBullet": {
+            "value": "1",
+            "css_class": "tech_damage",
+            "scale_function": {
+                "class_name": "scale_function_tech_damage",
+                "specific_stat_scale_type": None,
+                "stat_scale": 0.03,
+            },
+        }
+    }
+
+    derived = assets._derive_properties(props, {"magic_damage_per_bullet"})
+
+    assert derived["scaling"] == {"magic_damage_per_bullet": {"stat": "tech_power", "scale": 0.03}}
+    assert derived["damage_types"] == {"magic_damage_per_bullet": "spirit"}
+
+
+def test_scaling_and_types_skips_damage_colored_stat_grants():
+    props = {
+        "BaseAttackDamagePercent": {"value": "15", "css_class": "bullet_damage"},
+        "WeaponPowerPerStack": {"value": "7", "css_class": "bullet_damage"},
+        "BonusFireRatePerHero": {"value": "4", "css_class": "bullet_damage"},
+    }
+    kept = {"base_attack_damage_percent", "weapon_power_per_stack", "bonus_fire_rate_per_hero"}
+
+    derived = assets._derive_properties(props, kept)
+
+    assert derived["scaling"] == {}
+    assert derived["damage_types"] == {}
+
+
+def test_scaling_and_types_keeps_named_damage_without_a_damage_function():
+    props = {
+        "HeadShotBonusDamage": {
+            "value": "40",
+            "css_class": "bullet_damage",
+            "scale_function": {"class_name": "scale_function_single_stat", "stat_scale": 4.0},
+        }
+    }
+
+    derived = assets._derive_properties(props, {"head_shot_bonus_damage"})
+
+    assert derived["damage_types"] == {"head_shot_bonus_damage": "weapon"}
+
+
+def test_scaling_and_types_skips_filtered_out_properties():
+    props = {
+        "MaxHealthDamage": {
+            "value": "0",
+            "css_class": "tech_damage",
+            "scale_function": {"class_name": "scale_function_tech_damage", "stat_scale": 0.1},
+        }
+    }
+
+    derived = assets._derive_properties(props, set())
+
+    assert derived["damage_types"] == {}
+
+
+def test_scaling_flags_custom_nonlinear_functions():
+    props = {
+        "MaxBonusBulletDamage": {
+            "value": "5",
+            "css_class": "tech_damage",
+            "scale_function": {
+                "class_name": "scale_function_kinetic_carbine_damage",
+                "specific_stat_scale_type": "EWeaponPower",
+                "stat_scale": 125.0,
+            },
+        }
+    }
+
+    derived = assets._derive_properties(props, {"max_bonus_bullet_damage"})
+
+    assert derived["scaling"]["max_bonus_bullet_damage"] == {
+        "stat": "weapon_power",
+        "scale": 125.0,
+        "linear": False,
+    }
+
+
+def test_derive_properties_buckets_scale_types():
+    props = {
+        "AbilityCooldown": {
+            "value": "14",
+            "css_class": "cooldown",
+            "scale_function": {"specific_stat_scale_type": "EItemCooldown"},
+        },
+        "AbilityRange": {
+            "value": "20",
+            "scale_function": {"specific_stat_scale_type": "ETechRange"},
+        },
+    }
+
+    derived = assets._derive_properties(props, {"ability_cooldown", "ability_range"})
+
+    assert derived["scale_types"] == {
+        "ability_cooldown": "item_cooldown",
+        "ability_range": "tech_range",
+    }
+    assert derived["scaling"] == {}
+
+
+def test_derive_properties_marks_negatives_and_conditionals():
+    props = {
+        "OutgoingDamagePenaltyPercent": {"value": "-14", "negative_attribute": True},
+        "NonPlayerBonusWeaponPower": {"value": "25", "conditional": "against NPCs"},
+    }
+    kept = {"outgoing_damage_penalty_percent", "non_player_bonus_weapon_power"}
+
+    derived = assets._derive_properties(props, kept)
+
+    assert derived["negatives"] == ["outgoing_damage_penalty_percent"]
+    assert derived["conditionals"] == {"non_player_bonus_weapon_power": "against NPCs"}
+
+
+def test_derive_properties_limits_new_views_to_kept():
+    props = {
+        "AbilityCooldown": {
+            "value": "0",
+            "scale_function": {"specific_stat_scale_type": "EItemCooldown"},
+        },
+        "Downside": {"value": "0", "negative_attribute": True, "conditional": "vs NPCs"},
+    }
+
+    derived = assets._derive_properties(props, set())
+
+    assert derived["scale_types"] == {}
+    assert derived["negatives"] == []
+    assert derived["conditionals"] == {}
+
+
+def test_item_snapshot_keeps_card_fields():
+    rec = {
+        "id": 5,
+        "name": "Compress Cooldown",
+        "item_slot_type": "spirit",
+        "item_tier": 2,
+        "is_active_item": False,
+        "activation": "passive",
+        "shopable": True,
+        "disabled": False,
+        "imbue": "imbue_modifier_value",
+        "description": "reduces cooldowns",
+        "properties": {
+            "AbilityCooldown": {
+                "value": "14",
+                "css_class": "cooldown",
+                "scale_function": {"specific_stat_scale_type": "EItemCooldown"},
+            },
+            "OutgoingDamagePenaltyPercent": {"value": "-14", "negative_attribute": True},
+        },
+        "upgrades": [{"property_upgrades": [{"name": "BonusClipSizePercent", "bonus": "30"}]}],
+    }
+
+    snap = assets._item_snapshot(rec)
+
+    assert snap["activation"] == "passive"
+    assert snap["imbue"] == "imbue_modifier_value"
+    assert snap["disabled"] is False
+    assert snap["scale_types"] == {"ability_cooldown": "item_cooldown"}
+    assert snap["negatives"] == ["outgoing_damage_penalty_percent"]
+    assert snap["upgrades"] == [[{"property": "bonus_clip_size_percent", "bonus": 30}]]
+
+
+def test_ability_snapshot_keeps_card_fields():
+    rec = {
+        "id": 7,
+        "name": "Seismic Impact",
+        "class_name": "hero_seismic",
+        "hero": 1,
+        "ability_type": "ultimate",
+        "boss_damage_scale": 0.5,
+        "behaviours": ["CITADEL_ABILITY_BEHAVIOR_PROJECTILE"],
+        "description": {"desc": "boom"},
+        "properties": {
+            "AbilityCooldown": {
+                "value": "110",
+                "scale_function": {"specific_stat_scale_type": "ETechCooldown"},
+            },
+        },
+    }
+
+    snap = assets._ability_snapshot(rec, "ability")
+
+    assert snap["ability_type"] == "ultimate"
+    assert snap["boss_damage_scale"] == 0.5
+    assert snap["behaviours"] == ["CITADEL_ABILITY_BEHAVIOR_PROJECTILE"]
+    assert snap["scale_types"] == {"ability_cooldown": "tech_cooldown"}
+
+
+def test_ability_snapshot_captures_damage_types():
+    rec = {
+        "id": 3,
+        "name": "Djinns Mark",
+        "class_name": "mirage_sand_phantom",
+        "properties": {
+            "ProcDamageBase": {
+                "value": "35",
+                "css_class": "tech_damage",
+                "scale_function": {
+                    "class_name": "scale_function_tech_damage",
+                    "specific_stat_scale_type": "ETechPower",
+                    "stat_scale": 0.35,
+                },
+            }
+        },
+    }
+
+    snap = assets._ability_snapshot(rec, "ability")
+
+    assert snap["scaling"] == {"proc_damage_base": {"stat": "tech_power", "scale": 0.35}}
+    assert snap["damage_types"] == {"proc_damage_base": "spirit"}
 
 
 def test_loaded_item_defaults_without_display_fields(tmp_path):

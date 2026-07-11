@@ -171,8 +171,12 @@ def _property_labels(props: dict[str, Any] | None, kept: dict[str, Any]) -> dict
         if prop.get("postfix"):
             entry["postfix"] = prop["postfix"]
 
-        if "sign" in (prop.get("prefix") or ""):
+        prefix = prop.get("prefix") or ""
+
+        if "sign" in prefix:
             entry["signed"] = True
+        elif prefix in ("+", "-"):
+            entry["prefix"] = prefix
 
         out[key] = entry
 
@@ -211,6 +215,7 @@ def _item_snapshot(rec: dict[str, Any]) -> dict[str, Any]:
     """Convert an API upgrade record to the snapshot shape (the API uses longer field names)."""
     desc = rec.get("description")
     props = _property_values(rec.get("properties"))
+    derived = _derive_properties(rec.get("properties"), set(props))
 
     return {
         "id": rec["id"],
@@ -220,36 +225,136 @@ def _item_snapshot(rec: dict[str, Any]) -> dict[str, Any]:
         "slot": rec.get("item_slot_type"),
         "tier": rec.get("item_tier"),
         "is_active": bool(rec.get("is_active_item")),
+        "activation": rec.get("activation"),
+        "shopable": bool(rec.get("shopable")),
+        "disabled": bool(rec.get("disabled")),
+        "imbue": rec.get("imbue"),
         "description": _clean_text(desc.get("desc") if isinstance(desc, dict) else desc),
         "components": rec.get("component_items") or [],
+        "upgrades": _tier_bonuses(rec.get("upgrades")),
         "properties": props,
+        **derived,
         "labels": _property_labels(rec.get("properties"), props),
         "sections": _card_sections(rec.get("tooltip_sections")),
     }
 
 
-def _split_ability_properties(
+NONLINEAR_SCALE_FUNCTIONS = {
+    "scale_function_kinetic_carbine_damage",
+    "scale_function_nanotech_rounds_damage",
+}
+
+
+def _damage_stat(css_class: str | None) -> str | None:
+    """Return the stat a spirit damage line scales with when the API omits the scale type.
+
+    Weapon damage has no single scaling stat (Carbine and the base-weapon-damage
+    abilities each use their own function), so weapon lines get no fallback.
+    """
+    if css_class == "tech_damage":
+        return "tech_power"
+
+    return None
+
+
+def _damage_line(key: str, css: str | None, scale_class: str | None) -> str | None:
+    """Return the damage type of a real damage line, None for stat grants.
+
+    css only sets the color, so fire rate and slow stats share the damage
+    colors. A real damage line either scales through a *_damage function or
+    names itself *_damage, which keeps stat grants like weapon damage percent
+    out.
+    """
+    if css not in ("tech_damage", "bullet_damage"):
+        return None
+
+    scales_damage = bool(scale_class) and scale_class.endswith("_damage")
+
+    if not scales_damage and not key.endswith("_damage"):
+        return None
+
+    return "spirit" if css == "tech_damage" else "weapon"
+
+
+def _derive_properties(
     props: dict[str, Any] | None,
-) -> tuple[dict[str, Any], dict[str, Any]]:
-    """Split ability properties into base values and stat scaling."""
-    values = {}
+    kept: set[str],
+) -> dict[str, Any]:
+    """Pull the derived per-property views a card reads.
+
+    - scaling keeps the stat and coefficient for anything that scales by one,
+      falling back to the css damage stat when the API leaves out the scale type
+    - damage_types marks the type of each real damage line
+    - scale_types buckets a value into the reduction family it belongs to, such
+      as item cooldown, ability cooldown, duration, range, or healing
+    - negatives lists the properties an item counts as a downside
+    - conditionals gives the case a value only applies in
+    - the kept-only views stay limited to properties that survived filtering
+    """
     scaling = {}
+    damage_types = {}
+    scale_types = {}
+    negatives = []
+    conditionals = {}
 
     for name, prop in (props or {}).items():
         if not isinstance(prop, dict):
             continue
 
         key = CAMEL_RE.sub("_", name).lower()
-        fn = prop.get("scale_function")
+        css = prop.get("css_class")
+        fn = prop.get("scale_function") if isinstance(prop.get("scale_function"), dict) else None
+        scale_class = fn.get("class_name") if fn else None
+        stat_type = fn.get("specific_stat_scale_type") if fn else None
+        scale = _number(fn.get("stat_scale")) if fn else None
+        has_coeff = isinstance(scale, int | float)
 
-        has_scale = isinstance(fn, dict) and fn.get("stat_scale") is not None
+        if key in kept:
+            dtype = _damage_line(key, css, scale_class)
 
-        if has_scale and fn.get("specific_stat_scale_type"):
-            scaling[key] = {
-                "stat": _enum_key(fn["specific_stat_scale_type"]),
-                "scale": _number(fn["stat_scale"]),
-            }
+            if dtype:
+                damage_types[key] = dtype
 
+            if prop.get("negative_attribute"):
+                negatives.append(key)
+
+            if prop.get("conditional"):
+                conditionals[key] = prop["conditional"]
+
+            if stat_type and not has_coeff:
+                scale_types[key] = _enum_key(stat_type)
+
+        if has_coeff:
+            stat = _enum_key(stat_type) if stat_type else _damage_stat(css)
+
+            if stat:
+                entry: dict[str, Any] = {"stat": stat, "scale": scale}
+
+                if scale_class in NONLINEAR_SCALE_FUNCTIONS:
+                    entry["linear"] = False
+
+                scaling[key] = entry
+
+    return {
+        "scaling": scaling,
+        "damage_types": damage_types,
+        "scale_types": scale_types,
+        "negatives": negatives,
+        "conditionals": conditionals,
+    }
+
+
+def _split_ability_properties(
+    props: dict[str, Any] | None,
+) -> tuple[dict[str, Any], dict[str, Any]]:
+    """Split ability properties into base values and the derived per-property views."""
+    values = {}
+
+    for name, prop in (props or {}).items():
+        if not isinstance(prop, dict):
+            continue
+
+        key = CAMEL_RE.sub("_", name).lower()
         val = _measure(prop.get("value"))
 
         if not isinstance(val, int | float) or val == 0:
@@ -260,7 +365,7 @@ def _split_ability_properties(
 
         values[key] = val
 
-    return values, scaling
+    return values, _derive_properties(props, set(values))
 
 
 def _tier_bonuses(tiers: list[dict[str, Any]] | None) -> list[list[dict[str, Any]]]:
@@ -315,7 +420,12 @@ def _ability_snapshot(rec: dict[str, Any], kind: str) -> dict[str, Any]:
         desc = rec.get("description")
         desc = desc if isinstance(desc, dict) else {"desc": desc}
         out["description"] = _clean_text(desc.get("desc"))
-        out["properties"], out["scaling"] = _split_ability_properties(rec.get("properties"))
+        out["ability_type"] = rec.get("ability_type")
+        out["boss_damage_scale"] = rec.get("boss_damage_scale")
+        out["behaviours"] = rec.get("behaviours") or []
+        values, derived = _split_ability_properties(rec.get("properties"))
+        out["properties"] = values
+        out.update(derived)
         out["upgrades"] = _tier_bonuses(rec.get("upgrades"))
         out["tier_descriptions"] = [
             _clean_text(desc.get(f"t{n}_desc")) for n in range(1, len(out["upgrades"]) + 1)

@@ -35,8 +35,15 @@ class Ability:
     kind: str
     description: str | None = None
     weapon: dict[str, Any] = field(default_factory=dict)
+    ability_type: str | None = None
+    boss_damage_scale: float | None = None
+    behaviours: tuple[str, ...] = ()
     properties: dict[str, Any] = field(default_factory=dict)
     scaling: dict[str, Any] = field(default_factory=dict)
+    damage_types: dict[str, str] = field(default_factory=dict)
+    scale_types: dict[str, str] = field(default_factory=dict)
+    negatives: tuple[str, ...] = ()
+    conditionals: dict[str, str] = field(default_factory=dict)
     upgrades: tuple[tuple[dict[str, Any], ...], ...] = ()
     tier_descriptions: tuple[str | None, ...] = ()
 
@@ -51,8 +58,15 @@ class Ability:
             kind=rec.get("kind") or "ability",
             description=rec.get("description"),
             weapon=dict(rec.get("weapon") or {}),
+            ability_type=rec.get("ability_type"),
+            boss_damage_scale=rec.get("boss_damage_scale"),
+            behaviours=tuple(rec.get("behaviours") or ()),
             properties=dict(rec.get("properties") or {}),
             scaling=dict(rec.get("scaling") or {}),
+            damage_types=dict(rec.get("damage_types") or {}),
+            scale_types=dict(rec.get("scale_types") or {}),
+            negatives=tuple(rec.get("negatives") or ()),
+            conditionals=dict(rec.get("conditionals") or {}),
             upgrades=tuple(tuple(dict(up) for up in tier) for tier in rec.get("upgrades") or []),
             tier_descriptions=tuple(rec.get("tier_descriptions") or ()),
         )

@@ -2798,7 +2798,8 @@ def test_item_command_prints_card_without_hero(capsys, tmp_path):
     assert "Mercurial Magnum  (spirit tier 4, 6,400 souls)" in out
     assert "upgrades from Quicksilver Reload" in out
     assert "spirit power" in out
-    assert "Passive  (cooldown 15s)" in out
+    assert "Passive" in out
+    assert "cooldown                                  15s  (11.25s with Transcendent Cooldown)" in out
     assert "fire rate" in out
     assert "win rate" not in out
 
@@ -2808,14 +2809,88 @@ def test_item_command_card_shows_active_section(capsys, tmp_path):
 
     out = capsys.readouterr().out
 
-    assert "Active  (cooldown" in out
+    assert "Active\n" in out
     assert "Reset the cooldown" in out
+    assert "cooldown                                  35s  (26.25s with Transcendent Cooldown)" in out
 
 
 def test_item_command_unknown_item(capsys, tmp_path):
     main(["item", "No Such Trinket"], config=tmp_path / "none.json")
 
     assert "Unknown item" in capsys.readouterr().out
+
+
+def test_item_card_shows_cooldown_reduced_value(capsys, tmp_path):
+    main(["item", "Siphon Bullets"], config=tmp_path / "none.json")
+
+    out = capsys.readouterr().out
+
+    assert "max frequency" in out
+    assert "1.2s  (0.9s with Transcendent Cooldown)" in out
+
+
+def test_item_card_shows_cooldown_as_line_item(capsys, tmp_path):
+    main(["item", "Metal Skin"], config=tmp_path / "none.json")
+
+    out = capsys.readouterr().out
+
+    assert "Active\n" in out
+    assert "cooldown" in out
+    assert "24s  (18s with Transcendent Cooldown)" in out
+    assert out.count("18s") == 1
+
+
+def test_item_card_keeps_cooldown_when_outside_section_props(capsys, tmp_path):
+    main(["item", "Mercurial Magnum"], config=tmp_path / "none.json")
+
+    out = capsys.readouterr().out
+
+    assert "cooldown" in out
+    assert "15s  (11.25s with Transcendent Cooldown)" in out
+    assert out.count("cooldown ") == 1
+
+
+def test_item_card_marks_conditional_stat(capsys, tmp_path):
+    main(["item", "Close Quarters"], config=tmp_path / "none.json")
+
+    out = capsys.readouterr().out
+
+    assert "weapon damage" in out
+    assert "within Range" in out
+
+
+def test_item_stat_line_applies_display_prefix():
+    it = items.Item(
+        id=1,
+        name="Slow Thing",
+        class_name="x",
+        cost=0,
+        slot="spirit",
+        tier=1,
+        is_active=True,
+        properties={"slow_percent": 20, "bonus_souls": 180},
+        labels={
+            "slow_percent": {"label": "Move Speed", "postfix": "%", "prefix": "-"},
+            "bonus_souls": {"label": "Bonus Souls", "postfix": "%", "prefix": "+"},
+        },
+    )
+
+    slow = cards._item_stat_line(it, "slow_percent", "  ")
+    souls = cards._item_stat_line(it, "bonus_souls", "  ")
+
+    assert slow is not None
+    assert souls is not None
+    assert "-20%" in slow
+    assert "+180%" in souls
+
+
+def test_item_card_shows_slow_as_negative(capsys, tmp_path):
+    main(["item", "Slowing Hex"], config=tmp_path / "none.json")
+
+    out = capsys.readouterr().out
+
+    assert "move speed" in out
+    assert "-20%" in out
 
 
 def test_item_card_falls_back_without_sections(capsys):
@@ -2883,6 +2958,51 @@ def test_item_command_games_table_collapses_not_built(monkeypatch, capsys, tmp_p
     assert re.search(r"Built\s+1\s+1\s+0", out)
     assert re.search(r"Not built\s+2\s+1\s+1", out)
     assert "90111333" not in out
+
+
+def test_item_command_notes_when_tracked_players_never_bought_it(monkeypatch, capsys, tmp_path):
+    rows = pl.LazyFrame(
+        {
+            "match_id": [90111222],
+            "account_id": [42],
+            "hero": ["Mirage"],
+            "won": [True],
+            "duration_s": [1800],
+            "game_time_s": [900],
+            "owned_s": [900],
+            "damage": [1200],
+            "dealt_after_buy": [12000],
+        }
+    )
+    monkeypatch.setattr(cli_items.queries, "item_games", lambda *a, **kw: rows)
+    monkeypatch.setattr(cli_items.players, "PARQUET_DIR", tmp_path)
+    monkeypatch.setattr(cli_items.queries, "table_exists", lambda *a, **kw: True)
+    monkeypatch.setattr(
+        cli_items.queries,
+        "item_value",
+        lambda *a, **kw: {"builds": 0, "per_min": 0.0, "percent_of_hero_damage": 0.0},
+    )
+
+    def no_api(*a, **kw):
+        raise ValueError("no api data")
+
+    monkeypatch.setattr(cli_items.meta, "get_item_stats", no_api)
+
+    cfg = tmp_path / "config.toml"
+    cfg.write_text("[players.Mirage]\npro = 11\n")
+
+    args = argparse.Namespace(
+        item="Mystic Shot",
+        hero="Mirage",
+        account=[42],
+        parquet=str(tmp_path),
+        top=10,
+        min_rating="Eternus",
+        since=None,
+    )
+    cli_items.item_report(args, cfg)
+
+    assert "none of their downloaded games bought Mystic Shot" in capsys.readouterr().out
 
 
 def test_item_command_header_uses_account_names(monkeypatch, capsys, tmp_path):

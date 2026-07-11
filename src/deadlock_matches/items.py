@@ -33,13 +33,23 @@ class Item:
     is_active: bool
     description: str | None = None
     components: tuple[str, ...] = ()
+    activation: str | None = None
+    shopable: bool = False
+    disabled: bool = False
+    imbue: str | None = None
+    upgrades: tuple[tuple[dict[str, Any], ...], ...] = ()
     properties: dict[str, Any] = field(default_factory=dict)
+    scaling: dict[str, Any] = field(default_factory=dict)
+    damage_types: dict[str, str] = field(default_factory=dict)
+    scale_types: dict[str, str] = field(default_factory=dict)
+    negatives: tuple[str, ...] = ()
+    conditionals: dict[str, str] = field(default_factory=dict)
     labels: dict[str, Any] = field(default_factory=dict)
     sections: tuple[dict[str, Any], ...] = ()
 
     @classmethod
     def from_record(cls, rec: dict[str, Any]) -> Item:
-        """Parse a raw items.json record."""
+        """Parse one items.json record into an Item."""
         return cls(
             id=rec["id"],
             name=rec["name"],
@@ -50,7 +60,17 @@ class Item:
             is_active=bool(rec.get("is_active")),
             description=rec.get("description"),
             components=tuple(rec.get("components") or ()),
+            activation=rec.get("activation"),
+            shopable=bool(rec.get("shopable")),
+            disabled=bool(rec.get("disabled")),
+            imbue=rec.get("imbue"),
+            upgrades=tuple(tuple(dict(up) for up in tier) for tier in rec.get("upgrades") or []),
             properties=dict(rec.get("properties") or {}),
+            scaling=dict(rec.get("scaling") or {}),
+            damage_types=dict(rec.get("damage_types") or {}),
+            scale_types=dict(rec.get("scale_types") or {}),
+            negatives=tuple(rec.get("negatives") or ()),
+            conditionals=dict(rec.get("conditionals") or {}),
             labels=dict(rec.get("labels") or {}),
             sections=tuple(rec.get("sections") or ()),
         )
