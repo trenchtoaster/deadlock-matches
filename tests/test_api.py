@@ -1,3 +1,4 @@
+import gzip
 import json
 import os
 import time
@@ -64,6 +65,7 @@ def test_get_json_use_cache_false_redownloads(tmp_path, monkeypatch):
     api.get_json("v1/assets/heroes", use_cache=False)
 
     assert len(calls) == 2
+    assert not api.cache_path("v1/assets/heroes").exists()
 
 
 def test_cache_filename_flattens_path_and_query(tmp_path, monkeypatch):
@@ -147,6 +149,58 @@ def test_get_json_permanent_stores_in_data_dir(tmp_path, monkeypatch):
     api.get_json("v1/matches/900/metadata", permanent=True)
 
     assert len(calls) == 1
+
+
+def test_first_request_purges_stale_cache_json_only(tmp_path, monkeypatch):
+    monkeypatch.setattr(api, "CACHE_DIR", tmp_path / "cache")
+    monkeypatch.setattr(api, "DATA_DIR", tmp_path / "data")
+    monkeypatch.setattr(api, "_pruned", False)
+    monkeypatch.setattr(urllib.request, "urlopen", _fake_urlopen({"rank": 1}, []))
+
+    (tmp_path / "cache").mkdir()
+    (tmp_path / "data").mkdir()
+    stale = time.time() - api.PRUNE_AGE - 60
+
+    old = tmp_path / "cache" / "v1_leaderboard_Europe.json"
+    old.write_text("{}", encoding="utf-8")
+    os.utime(old, (stale, stale))
+
+    fresh = tmp_path / "cache" / "v1_leaderboard_Asia.json"
+    fresh.write_text("{}", encoding="utf-8")
+
+    foreign = tmp_path / "cache" / "notes.txt"
+    foreign.write_text("keep", encoding="utf-8")
+    os.utime(foreign, (stale, stale))
+
+    foreign_json = tmp_path / "cache" / "notes.json"
+    foreign_json.write_text("{}", encoding="utf-8")
+    os.utime(foreign_json, (stale, stale))
+
+    permanent = tmp_path / "data" / "v1_assets_heroes_client_version=1.json.gz"
+    permanent.write_bytes(gzip.compress(b"[]"))
+    os.utime(permanent, (stale, stale))
+
+    api.get_json("v1/assets/heroes", use_cache=False)
+
+    assert not old.exists()
+    assert fresh.exists()
+    assert foreign.exists()
+    assert foreign_json.exists()
+    assert permanent.exists()
+
+
+def test_get_json_permanent_bodies_are_gzipped(tmp_path, monkeypatch):
+    monkeypatch.setattr(api, "CACHE_DIR", tmp_path / "cache")
+    monkeypatch.setattr(api, "DATA_DIR", tmp_path / "data")
+    monkeypatch.setattr(urllib.request, "urlopen", _fake_urlopen([{"id": 7}], []))
+
+    api.get_json("v1/assets/heroes?client_version=100", permanent=True)
+
+    stored = api.data_path("v1/assets/heroes?client_version=100")
+
+    assert stored.suffix == ".gz"
+    assert json.loads(gzip.decompress(stored.read_bytes())) == [{"id": 7}]
+    assert api.get_json("v1/assets/heroes?client_version=100", permanent=True) == [{"id": 7}]
 
 
 def test_get_json_permanent_migrates_old_cache_file(tmp_path, monkeypatch):
