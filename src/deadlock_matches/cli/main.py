@@ -32,6 +32,7 @@ COMMAND_HELP = {
     "history": "one line per game of yours with the match ID",
     "match": "one match: the final scoreboard, then your intervals of souls and damage",
     "winrate": "wins and losses per day",
+    "laning": "whether winning your lane or a feeding teammate decides your games",
     "deaths": "how you die: when, to whom, alone or ganked",
     "leaderboard": "the current top players of a hero, with paste-ready lines for config.toml",
     "download": "fetch recent games from your tracked players into their own tables",
@@ -48,7 +49,7 @@ COMMAND_HELP = {
 }
 
 SECTIONS = (
-    ("your matches", ("sync", "history", "match", "winrate", "deaths")),
+    ("your matches", ("sync", "history", "match", "winrate", "laning", "deaths")),
     (
         "the players you track (config.toml [players], data via download)",
         ("leaderboard", "download", "compare", "movement", "builds", "item"),
@@ -464,6 +465,27 @@ def build_parser(config: str | Path | None = None) -> argparse.ArgumentParser:
         "skill rating or higher, 'all' disables",
     )
 
+    ln = command("laning")
+    ln.add_argument(
+        "--account",
+        type=account_list,
+        default=accounts,
+        help="your account IDs or names from config.toml, defaults to all accounts there",
+    )
+    ln.add_argument("--days", type=int, default=None, help="only your last N days of games")
+    ln.add_argument(
+        "--since",
+        default=None,
+        help="only days on or after this date (YYYY-MM-DD or YYYYMMDD), like 2026-07-01",
+    )
+    ln.add_argument("--hero", default=None, help="hero display name, like Mirage")
+    ln.add_argument(
+        "--minutes",
+        type=int,
+        default=9,
+        help="laning window in minutes, default 9 like match --laning",
+    )
+
     he = command("hero")
     he.add_argument("hero", help="hero display name, like Mirage")
     he.add_argument("--souls", type=int, default=None, help="total souls earned")
@@ -597,7 +619,8 @@ def main(argv: Sequence[str] | None = None, config: str | Path | None = None) ->
     card_only = args.cmd == "item" and args.hero is None
 
     if (
-        args.cmd in (None, "history", "item", "compare", "winrate", "deaths", "movement", "match")
+        args.cmd
+        in (None, "history", "item", "compare", "winrate", "laning", "deaths", "movement", "match")
         and not card_only
     ):
         new = data.sync_archive(args.cache, args.archive, quiet=True)
@@ -610,9 +633,14 @@ def main(argv: Sequence[str] | None = None, config: str | Path | None = None) ->
                     args.archive, args.parquet, accounts, config_exclude(config), quiet=True
                 )
 
-    needs_account = args.cmd in ("history", "compare", "winrate", "deaths", "movement") or (
-        args.cmd == "match" and (args.match_id is None or args.hero is None)
-    )
+    needs_account = args.cmd in (
+        "history",
+        "compare",
+        "winrate",
+        "laning",
+        "deaths",
+        "movement",
+    ) or (args.cmd == "match" and (args.match_id is None or args.hero is None))
 
     if needs_account and not args.account:
         print("No account set: pass --account or update config.toml")
@@ -640,6 +668,8 @@ def main(argv: Sequence[str] | None = None, config: str | Path | None = None) ->
         data.leaderboard_report(args, config)
     elif args.cmd == "winrate":
         performance.winrate_report(args, config)
+    elif args.cmd == "laning":
+        performance.laning_games_report(args, config)
     elif args.cmd == "deaths":
         performance.deaths_report(args, config)
     elif args.cmd == "movement":

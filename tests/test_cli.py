@@ -47,6 +47,7 @@ def write_cache_entry(
     team_gold_sources=(),
     death_log=(),
     lanes=False,
+    enemy_worth=None,
     abandon_s=None,
     not_scored=False,
     badges=None,
@@ -95,7 +96,7 @@ def write_cache_entry(
         enemy.account_id = 77
         enemy.hero_id = 1
         enemy.team = pb.k_ECitadelLobbyTeam_Team0
-        enemy.net_worth = stats[-1][1] // 2
+        enemy.net_worth = enemy_worth if enemy_worth is not None else stats[-1][1] // 2
         enemy.player_slot = 2
 
         if lanes:
@@ -140,7 +141,7 @@ def write_cache_entry(
 
         es = enemy.stats.add()
         es.time_stamp_s = t
-        es.net_worth = worth // 2
+        es.net_worth = enemy_worth if enemy_worth is not None else worth // 2
 
     for item_id, t in ability_items:
         it = p.items.add()
@@ -2153,6 +2154,76 @@ def test_winrate_no_abandon_footer_without_abandons(capsys, tmp_path):
 
     assert "Abandons:" not in out
     assert "Not scored:" not in out
+
+
+def test_laning_command_prints_rate_tables(capsys, tmp_path):
+    cache = tmp_path / "cache"
+    cache.mkdir()
+    write_cache_entry(cache, match_id=100, stats=((540, 3000),), lanes=True, won=True)
+    write_cache_entry(
+        cache, match_id=101, stats=((540, 1000),), enemy_worth=4000, lanes=True, won=False
+    )
+
+    run_main(tmp_path, "laning", "--account", "42")
+
+    out = capsys.readouterr().out
+
+    assert "Lane result at 9:00" in out
+    assert "ahead 1k-3k" in out
+    assert "won lane" in out
+    assert "lost lane" in out
+    assert "Your deaths by 9:00" in out
+    assert "Worst teammate deaths by 9:00" in out
+    assert "Overall: 2 games, 1-1, 50.0% win rate." in out
+
+
+def test_laning_command_labels_a_tied_lane(capsys, tmp_path):
+    cache = tmp_path / "cache"
+    cache.mkdir()
+    write_cache_entry(
+        cache, match_id=100, stats=((540, 2000),), enemy_worth=2000, lanes=True, won=True
+    )
+
+    run_main(tmp_path, "laning", "--account", "42")
+
+    out = capsys.readouterr().out
+
+    assert "even lane" in out
+    assert "lost lane" not in out
+
+
+def test_laning_command_drops_a_match_without_a_lane_snapshot(capsys, tmp_path):
+    cache = tmp_path / "cache"
+    cache.mkdir()
+    write_cache_entry(cache, match_id=100, stats=((540, 3000),), lanes=True, won=True)
+    write_cache_entry(cache, match_id=101, stats=((900, 3000),), lanes=True, won=False)
+
+    run_main(tmp_path, "laning", "--account", "42")
+
+    out = capsys.readouterr().out
+
+    assert "Overall: 1 games, 1-0, 100.0% win rate." in out
+
+
+def test_laning_command_minutes_widens_the_window(capsys, tmp_path):
+    cache = tmp_path / "cache"
+    cache.mkdir()
+    write_cache_entry(cache, match_id=100, stats=((540, 1000), (900, 5000)), lanes=True)
+
+    run_main(tmp_path, "laning", "--account", "42", "--minutes", "15")
+
+    out = capsys.readouterr().out
+
+    assert "Lane result at 15:00" in out
+    assert "ahead 1k-3k" in out
+
+
+def test_laning_command_without_account_prints_hint(capsys, tmp_path):
+    run_main(tmp_path, "laning", accounts=None)
+
+    out = capsys.readouterr().out
+
+    assert "No account set" in out
 
 
 def test_winrate_weekly_table(capsys, tmp_path):

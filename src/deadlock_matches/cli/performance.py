@@ -2304,6 +2304,96 @@ def _hero_baseline_line(hero: str, rating: str, since: str | None) -> None:
     )
 
 
+LANE_CUTS = [-3000, -1000, 1000, 3000]
+LANE_LABELS = ["behind 3k+", "behind 1k-3k", "even within 1k", "ahead 1k-3k", "ahead 3k+"]
+FEED_CUTS = [1, 3]
+FEED_LABELS = ["0-1", "2-3", "4+"]
+OWN_CUTS = [0, 1, 3]
+OWN_LABELS = ["0", "1", "2-3", "4+"]
+FED_AT = 4
+
+
+def _rate_table(games: pl.DataFrame, bucket: pl.Expr, header: str) -> None:
+    """Print a wins and losses table for one way of bucketing the games."""
+    rows = (
+        games.group_by(bucket=bucket)
+        .agg(games=pl.len(), wins=pl.col("won").cast(pl.Int32).sum())
+        .sort("bucket")
+    )
+
+    print(f"  {header:<24}{'Games':>7}{'W':>6}{'L':>6}{'Win rate':>11}")
+
+    for r in rows.iter_rows(named=True):
+        rate = r["wins"] / r["games"] * 100
+        print(
+            f"  {r['bucket']!s:<24}{r['games']:>7}{r['wins']:>6}"
+            f"{r['games'] - r['wins']:>6}{rate:>10.1f}%"
+        )
+
+
+def laning_games_report(args: argparse.Namespace, config: str | Path | None = None) -> None:
+    """Win rate by lane result at the laning mark and by teammate deaths."""
+    tz = config_timezone(config)
+    mark_s = args.minutes * 60
+
+    try:
+        games = queries.lane_records(
+            args.parquet,
+            accounts=args.account,
+            tz=tz,
+            days=args.days,
+            since=args.since,
+            hero=args.hero,
+            mark_s=mark_s,
+        )
+    except ValueError as e:
+        print(e)
+        return
+
+    if games.is_empty():
+        print("No games found for the configured accounts")
+        return
+
+    mark = f"{args.minutes}:00"
+    lane = (
+        pl.when(pl.col("lane_net") > 0)
+        .then(pl.lit("won lane"))
+        .when(pl.col("lane_net") < 0)
+        .then(pl.lit("lost lane"))
+        .otherwise(pl.lit("even lane"))
+    )
+
+    print(f"Lane result at {mark}: your lane's souls minus the enemy side's, scored games only.\n")
+    _rate_table(games, pl.col("lane_net").cut(LANE_CUTS, labels=LANE_LABELS), f"Lane at {mark}")
+    print()
+    _rate_table(games, lane, "Lane result")
+
+    print(f"\nYour deaths by {mark}:\n")
+    _rate_table(games, pl.col("my_early").cut(OWN_CUTS, labels=OWN_LABELS), "Deaths")
+
+    clean = games.filter(pl.col("ally_left").not_())
+    left_out = len(games) - len(clean)
+    note = f" ({left_out} games with an ally abandon left out)" if left_out else ""
+
+    if not clean.is_empty():
+        print(f"\nWorst teammate deaths by {mark}, you excluded{note}:\n")
+        _rate_table(clean, pl.col("worst_early").cut(FEED_CUTS, labels=FEED_LABELS), "Deaths")
+
+        fed = (
+            pl.when(pl.col("worst_early") >= FED_AT)
+            .then(pl.lit("ally fed"))
+            .otherwise(pl.lit("no feeder"))
+        )
+
+        print(f"\nLane result and a feeding teammate ({FED_AT}+ deaths by {mark}):\n")
+        _rate_table(clean, lane + pl.lit(", ") + fed, "")
+
+    total = len(games)
+    wins = int(games.get_column("won").cast(pl.Int32).sum())
+
+    print(f"\nOverall: {total} games, {wins}-{total - wins}, {wins / total * 100:.1f}% win rate.")
+
+
 DEATH_PHASES = [(0, "0-10 min"), (600, "10-20 min"), (1200, "20-30 min"), (1800, "30+ min")]
 
 
