@@ -977,6 +977,25 @@ def test_help_sections_cover_every_command(tmp_path):
     assert set(COMMAND_HELP) == registered
 
 
+def test_help_sweep_includes_nested_skill_commands(tmp_path, capsys):
+    parser = build_parser(tmp_path / "config.toml")
+    sub = next(a for a in parser._actions if isinstance(a, argparse._SubParsersAction))
+
+    commands = [[], ["skill"], ["skill", "path"], ["skill", "print"], ["skill", "install"]]
+    commands.extend([[name] for name in sub.choices])
+
+    for command in commands:
+        with pytest.raises(SystemExit) as exc:
+            parser.parse_args([*command, "--help"])
+
+        assert exc.value.code == 0
+
+    out = capsys.readouterr().out
+
+    assert "install or inspect the bundled Claude Code skill" in out
+    assert "replace an existing deadlock-matches Claude Code skill" in out
+
+
 def test_winrate_without_account_prints_hint(capsys, tmp_path):
     run_main(tmp_path, "winrate", accounts=None)
 
@@ -1088,6 +1107,63 @@ def test_config_edit_creates_and_opens_the_file(capsys, tmp_path, monkeypatch):
     assert opened == [cfg]
     assert cfg.exists()
     assert "Opened" in capsys.readouterr().out
+
+
+def test_skill_command_prints_install_path(capsys, tmp_path):
+    main(["skill", "path", "--dir", str(tmp_path / "skills")], config=tmp_path / "none.json")
+
+    out = capsys.readouterr().out
+
+    assert "skills/deadlock-matches/SKILL.md" in out
+
+
+def test_skill_command_installs_bundled_claude_skill(capsys, tmp_path):
+    root = tmp_path / "skills"
+
+    main(["skill", "install", "--dir", str(root)], config=tmp_path / "none.json")
+
+    target = root / "deadlock-matches" / "SKILL.md"
+    out = capsys.readouterr().out
+
+    assert target.exists()
+    assert "Deadlock match metadata" in target.read_text()
+    assert "skills/deadlock-matches/SKILL.md" in out
+
+
+def test_skill_command_refuses_to_overwrite_without_force(capsys, tmp_path):
+    target = tmp_path / "skills" / "deadlock-matches" / "SKILL.md"
+    target.parent.mkdir(parents=True)
+    target.write_text("local edit")
+
+    main(["skill", "install", "--dir", str(tmp_path / "skills")], config=tmp_path / "none.json")
+
+    out = capsys.readouterr().out
+
+    assert "already exists" in out
+    assert target.read_text() == "local edit"
+
+
+def test_skill_command_force_replaces_existing_skill(capsys, tmp_path):
+    target = tmp_path / "skills" / "deadlock-matches" / "SKILL.md"
+    target.parent.mkdir(parents=True)
+    target.write_text("local edit")
+
+    main(
+        ["skill", "install", "--dir", str(tmp_path / "skills"), "--force"],
+        config=tmp_path / "none.json",
+    )
+
+    assert "Installed" in capsys.readouterr().out
+    assert "Deadlock match metadata" in target.read_text()
+
+
+def test_skill_command_prints_bundled_skill(capsys, tmp_path):
+    main(["skill", "print"], config=tmp_path / "none.json")
+
+    out = capsys.readouterr().out
+
+    assert "Deadlock match metadata" in out
+    assert "uv run deadlock history" in out
 
 
 def test_default_command_lists_last_ten_games(capsys, tmp_path):

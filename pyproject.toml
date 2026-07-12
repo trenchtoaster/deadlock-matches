@@ -27,7 +27,7 @@ package-dir = { "" = "src" }
 packages = { find = { where = ["src"], include = ["deadlock_matches*"] } }
 
 [tool.setuptools.package-data]
-deadlock_matches = ["gen/**/*.py", "gen/**/*.pyi"]
+deadlock_matches = ["agent/**/*.md", "gen/**/*.py", "gen/**/*.pyi"]
 "deadlock_matches.assets" = ["data/*.json", "data/*.parquet"]
 
 [dependency-groups]

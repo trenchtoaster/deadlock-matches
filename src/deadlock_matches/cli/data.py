@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import datetime as dt
 import json
+from importlib import resources
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
@@ -47,6 +48,44 @@ def _tilde(path: str | Path) -> str:
 TEAMS = {0: "The Hidden King", 1: "The Archmother"}
 
 MVP_LABELS = {1: "1 (MVP)", 2: "2 (Key)", 3: "3 (Key)"}
+
+CLAUDE_SKILL_RESOURCE = "agent/claude/deadlock-matches/SKILL.md"
+
+
+def _claude_skill_target(base: str | Path | None = None) -> Path:
+    """Return the Claude Code skill destination file."""
+    root = Path(base).expanduser() if base is not None else Path.home() / ".claude" / "skills"
+    return root / "deadlock-matches" / "SKILL.md"
+
+
+def _bundled_claude_skill() -> resources.abc.Traversable:
+    """Return the packaged Claude Code skill resource."""
+    return resources.files("deadlock_matches").joinpath(CLAUDE_SKILL_RESOURCE)
+
+
+def skill_report(args: argparse.Namespace) -> None:
+    """Install or print the bundled Claude Code skill."""
+    action = args.skill_action or "path"
+    target = _claude_skill_target(getattr(args, "dir", None))
+
+    if action == "path":
+        print(_tilde(target))
+        return
+
+    skill = _bundled_claude_skill()
+
+    if action == "print":
+        print(skill.read_text(encoding="utf-8"), end="")
+        return
+
+    if target.exists() and not args.force:
+        print(f"Claude Code skill already exists at {_tilde(target)}")
+        print("Run `deadlock skill install --force` to replace it.")
+        return
+
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.write_text(skill.read_text(encoding="utf-8"), encoding="utf-8")
+    print(f"Installed Claude Code skill at {_tilde(target)}")
 
 
 def final_stats(match_ids: pl.LazyFrame, parquet_dir: str | Path) -> pl.LazyFrame:

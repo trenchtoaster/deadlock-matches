@@ -47,6 +47,7 @@ COMMAND_HELP = {
     "assets": "redownload heroes.json / items.json (run after a patch)",
     "accounts": "Steam accounts on this PC that have run Deadlock, for config.toml",
     "config": "where config.toml lives and the settings it holds",
+    "skill": "install or inspect the bundled Claude Code skill",
     "schema": "column docs for the parquet tables (the data dictionary)",
 }
 
@@ -57,7 +58,7 @@ SECTIONS = (
         ("leaderboard", "download", "compare", "movement", "builds", "item"),
     ),
     ("game knowledge", ("hero", "ability", "meta", "assets")),
-    ("setup", ("accounts", "config", "schema")),
+    ("setup", ("accounts", "config", "skill", "schema")),
 )
 
 
@@ -562,6 +563,32 @@ def build_parser(config: str | Path | None = None) -> argparse.ArgumentParser:
         help="open config.toml in your editor ($EDITOR or the default app)",
     )
 
+    sk = command("skill")
+    sk_sub = sk.add_subparsers(dest="skill_action", metavar="<action>")
+    sk_path = sk_sub.add_parser("path", help="print where the Claude Code skill installs")
+    sk_path.add_argument(
+        "--dir",
+        default=None,
+        help="use this Claude skills directory instead of the default",
+    )
+    sk_print = sk_sub.add_parser("print", help="print the bundled Claude Code skill")
+    sk_print.add_argument(
+        "--dir",
+        default=None,
+        help=argparse.SUPPRESS,
+    )
+    sk_install = sk_sub.add_parser("install", help="install the Claude Code skill")
+    sk_install.add_argument(
+        "--dir",
+        default=None,
+        help="use this Claude skills directory instead of the default",
+    )
+    sk_install.add_argument(
+        "--force",
+        action="store_true",
+        help="replace an existing deadlock-matches Claude Code skill",
+    )
+
     at = command("assets")
     at.add_argument(
         "--backfill",
@@ -709,6 +736,8 @@ def main(argv: Sequence[str] | None = None, config: str | Path | None = None) ->
         data.list_accounts(args, config)
     elif args.cmd == "config":
         data.config_report(args, config)
+    elif args.cmd == "skill":
+        data.skill_report(args)
     elif args.cmd == "assets" and args.backfill:
         data.rebuild_history(args)
     elif args.cmd == "assets":
