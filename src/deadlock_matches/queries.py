@@ -1159,6 +1159,99 @@ def aim_rates(
     return frame
 
 
+def _basic_melee() -> pl.Expr:
+    """Match the bare light and heavy melee swing the game reports as Melee."""
+    return pl.col("source_class").str.contains("ability_melee_")
+
+
+def melee_by_player(match_id: int, parquet_dir: str | Path | None = None) -> pl.LazyFrame:
+    """Sum melee dealt and taken between heroes and count parries for every player in a match.
+
+    - melee is the bare light and heavy swing the game reports as Melee
+    - empower items, procs, and melee abilities stay out
+    - dealt and taken count only hero targets and skip trooper farming
+    - parries and missed_parries read the final parry snapshot
+    """
+    players = (
+        scan("players", parquet_dir)
+        .filter(pl.col("match_id") == match_id)
+        .select("match_id", "account_id", "hero", "team")
+    )
+
+    melee = (
+        scan("damage", parquet_dir)
+        .filter(
+            pl.col("match_id") == match_id,
+            pl.col("stat") == "damage",
+            pl.col("category") != "total",
+            pl.col("target_account_id").is_not_null(),
+            _basic_melee(),
+        )
+        .select("dealer_account_id", "target_account_id", "damage")
+    )
+
+    dealt = (
+        melee.group_by("dealer_account_id")
+        .agg(pl.col("damage").sum().alias("melee_dealt"))
+        .rename({"dealer_account_id": "account_id"})
+    )
+
+    taken = (
+        melee.group_by("target_account_id")
+        .agg(pl.col("damage").sum().alias("melee_taken"))
+        .rename({"target_account_id": "account_id"})
+    )
+
+    parries = (
+        scan("custom_stats", parquet_dir)
+        .filter(
+            pl.col("match_id") == match_id,
+            pl.col("stat").is_in(["Parry Success", "Parry Miss"]),
+        )
+        .group_by("account_id", "stat")
+        .agg(pl.col("value").sort_by("time_stamp_s").last())
+        .group_by("account_id")
+        .agg(
+            pl.col("value").filter(pl.col("stat") == "Parry Success").sum().alias("parries"),
+            pl.col("value").filter(pl.col("stat") == "Parry Miss").sum().alias("missed_parries"),
+        )
+    )
+
+    return (
+        players.join(dealt, on="account_id", how="left")
+        .join(taken, on="account_id", how="left")
+        .join(parries, on="account_id", how="left")
+        .with_columns(cs.exclude("match_id", "account_id", "hero", "team").fill_null(0))
+    )
+
+
+def melee_taken_by_attacker(
+    match_id: int, account_id: int, parquet_dir: str | Path | None = None
+) -> pl.LazyFrame:
+    """Total the melee one player took per attacking hero."""
+    attackers = (
+        scan("players", parquet_dir)
+        .filter(pl.col("match_id") == match_id)
+        .select(pl.col("account_id").alias("dealer_account_id"), pl.col("hero").alias("attacker"))
+    )
+
+    return (
+        scan("damage", parquet_dir)
+        .filter(
+            pl.col("match_id") == match_id,
+            pl.col("target_account_id") == account_id,
+            pl.col("stat") == "damage",
+            pl.col("category") != "total",
+            _basic_melee(),
+        )
+        .group_by("dealer_account_id")
+        .agg(pl.col("damage").sum().alias("melee"))
+        .join(attackers, on="dealer_account_id", how="left")
+        .select("attacker", "melee")
+        .sort("melee", descending=True)
+    )
+
+
 def final_stats(parquet_dir: str | Path | None = None, tz: str | None = None) -> pl.LazyFrame:
     """Final snapshot values for each player in each match, with hero/won, local day, and gun rates.
 

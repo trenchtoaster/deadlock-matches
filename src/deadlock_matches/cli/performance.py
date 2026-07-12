@@ -811,6 +811,10 @@ def match_report(args: argparse.Namespace, config: str | Path | None = None) -> 
         combat_report(row, args)
         return
 
+    if args.melee:
+        melee_report(row, args)
+        return
+
     if args.movement:
         match_movement_report(row, args)
         return
@@ -1501,7 +1505,7 @@ DIST_SPANS = (
 
 FALLOFF_ORDER = ("No Falloff", "Partial Falloff", "Max Falloff")
 FALLOFF_LABELS = ("none", "partial", "max")
-PARRY_ITEMS = (1414025773, 4204808176)
+MELEE_ITEMS = (1414025773, 4204808176, 26002154, 800008313)
 POWERUP_STATS = frozenset({"PowerUp Gold", "PowerUp Permanent", "PowerUp Temp"})
 COMEBACK_LABELS = (
     ("Comeback Gold", "Comeback souls"),
@@ -1650,6 +1654,9 @@ def _range_section(stats: dict[tuple[str | None, str], int]) -> None:
     yours = _falloff_line(_take_group(stats, "Enemy Hero Falloff"))
     theirs = _falloff_line(_take_group(stats, "Enemy Hero Falloff - Incoming"))
 
+    if yours or theirs:
+        print()
+
     if yours:
         print(f"  Falloff on your hits: {yours}")
 
@@ -1657,45 +1664,14 @@ def _range_section(stats: dict[tuple[str | None, str], int]) -> None:
         print(f"  Falloff on hits taken: {theirs}")
 
 
-def _melee_taken(row: dict[str, Any], args: argparse.Namespace) -> tuple[int, str, int]:
-    """Sum light and heavy melee damage this player took, with the top attacker."""
-    attackers = queries.scan("players", args.parquet).select(
-        "match_id",
-        pl.col("account_id").alias("dealer_account_id"),
-        pl.col("hero").alias("attacker"),
-    )
-    df = (
-        queries.scan("damage", args.parquet)
-        .filter(
-            pl.col("match_id") == row["match_id"],
-            pl.col("target_account_id") == row["account_id"],
-            pl.col("stat") == "damage",
-            pl.col("category") != "total",
-            pl.col("source_class").str.contains("ability_melee_"),
-        )
-        .join(attackers, on=["match_id", "dealer_account_id"], how="left")
-        .group_by("attacker")
-        .agg(pl.col("damage").sum())
-        .sort("damage", descending=True)
-        .collect()
-    )
-
-    if df.is_empty():
-        return (0, "", 0)
-
-    top = df.row(0, named=True)
-
-    return (int(df["damage"].sum()), top["attacker"] or "?", int(top["damage"]))
-
-
-def _parry_item_buys(row: dict[str, Any], args: argparse.Namespace) -> list[tuple[str, int]]:
-    """List the parry item purchases with their buy times."""
+def _melee_item_buys(row: dict[str, Any], args: argparse.Namespace) -> list[tuple[str, int]]:
+    """List the melee and parry item buys with their game times."""
     df = (
         queries.scan("item_events", args.parquet)
         .filter(
             pl.col("match_id") == row["match_id"],
             pl.col("account_id") == row["account_id"],
-            pl.col("item_id").is_in(PARRY_ITEMS),
+            pl.col("item_id").is_in(MELEE_ITEMS),
         )
         .sort("game_time_s")
         .select("item", "game_time_s")
@@ -1705,29 +1681,116 @@ def _parry_item_buys(row: dict[str, Any], args: argparse.Namespace) -> list[tupl
     return df.rows()
 
 
-def _parry_section(
-    row: dict[str, Any], args: argparse.Namespace, stats: dict[tuple[str | None, str], int]
-) -> None:
-    """Print parries with the melee pressure and parry items for context."""
+def _rebuttal_returned(row: dict[str, Any], args: argparse.Namespace) -> int:
+    """Sum the Rebuttal damage this player returned to enemy heroes on a parry."""
+    heroes = (
+        queries.scan("players", args.parquet)
+        .filter(pl.col("match_id") == row["match_id"])
+        .select("account_id")
+        .collect()
+        .to_series()
+        .to_list()
+    )
+
+    returned = (
+        queries.scan("damage", args.parquet)
+        .filter(
+            pl.col("match_id") == row["match_id"],
+            pl.col("dealer_account_id") == row["account_id"],
+            pl.col("target_account_id").is_in(heroes),
+            pl.col("source_class") == "upgrade_melee_rebuttal",
+            pl.col("stat") == "damage",
+        )
+        .select(pl.col("damage").sum())
+        .collect()
+        .item()
+    )
+
+    return int(returned or 0)
+
+
+def _parry_line(row: dict[str, Any], stats: dict[tuple[str | None, str], int]) -> None:
+    """Print the parry count and point at the melee view for the full picture."""
     success = stats.pop((None, "Parry Success"), 0)
     missed = stats.pop((None, "Parry Miss"), 0)
-    total, attacker, top_damage = _melee_taken(row, args)
-    buys = _parry_item_buys(row, args)
 
-    if not (success or missed or total or buys):
+    if not (success or missed):
         return
 
-    print("\n  Parries")
-    print(f"  Successful {success}, missed {missed}")
+    print(f"\n  Parries {success} landed, {missed} missed  (--melee for the lobby table)")
 
-    if total:
+
+def melee_report(row: dict[str, Any], args: argparse.Namespace) -> None:
+    """Rank every player by melee, show the melee the viewer took, and list melee item buys."""
+    table = (
+        queries.melee_by_player(row["match_id"], args.parquet)
+        .with_columns(
+            side=pl.when(pl.col("team") == row["team"])
+            .then(pl.lit("ally"))
+            .otherwise(pl.lit("enemy"))
+        )
+        .sort("melee_dealt", descending=True)
+        .collect()
+    )
+
+    if table.is_empty():
+        print(f"No melee in match {row['match_id']}")
+        return
+
+    rows = table.to_dicts()
+    heroes_shown = [
+        f"{r['hero'] or '?'} *" if r["account_id"] == row["account_id"] else r["hero"] or "?"
+        for r in rows
+    ]
+    width = max(max(len(h) for h in heroes_shown), 4) + 2
+
+    print("\n  Melee")
+    print(
+        f"  {'Hero':<{width}} {'Side':<6} {'Melee dealt':>12} {'Melee taken':>12}"
+        f" {'Parried':>8} {'Missed parry':>13}"
+    )
+
+    for shown, r in zip(heroes_shown, rows, strict=True):
+        dealt = f"{r['melee_dealt']:,}" if r["melee_dealt"] else "-"
+        taken = f"{r['melee_taken']:,}" if r["melee_taken"] else "-"
+        parried = f"{r['parries']:,}" if r["parries"] else "-"
+        whiffed = f"{r['missed_parries']:,}" if r["missed_parries"] else "-"
         print(
-            f"  Melee damage taken (light/heavy melee): {total:,}, "
-            f"most from {attacker} ({top_damage:,})"
+            f"  {shown:<{width}} {r['side']:<6} {dealt:>12} {taken:>12} {parried:>8} {whiffed:>13}"
         )
 
-    for item, game_time_s in buys:
-        print(f"  {item} bought at {_game_time(game_time_s)}")
+    _melee_detail_lines(row, args)
+
+
+def _melee_detail_lines(row: dict[str, Any], args: argparse.Namespace) -> None:
+    """Print the melee the viewer took per enemy, the Rebuttal returned, and the item buys."""
+    taken = (
+        queries.melee_taken_by_attacker(row["match_id"], row["account_id"], args.parquet)
+        .filter(pl.col("melee") > 0)
+        .collect()
+        .rows()
+    )
+
+    if taken:
+        width = max((len(attacker or "?") for attacker, _ in taken), default=4) + 2
+
+        print("\n  Melee taken by you")
+
+        for attacker, melee in taken:
+            print(f"    {attacker or '?':<{width}} {melee:>7,}")
+
+    returned = _rebuttal_returned(row, args)
+
+    if returned:
+        print(f"\n  Rebuttal returned {returned:,} on parries")
+
+    buys = _melee_item_buys(row, args)
+
+    if buys:
+        print("\n  Melee items")
+
+        for item, game_time_s in buys:
+            print(f"    {item} bought at {_game_time(game_time_s)}")
 
 
 def _comeback_section(row: dict[str, Any], stats: dict[tuple[str | None, str], int]) -> None:
@@ -1833,7 +1896,7 @@ def combat_report(row: dict[str, Any], args: argparse.Namespace) -> None:
 
     _aim_section(row, args, stats)
     _range_section(stats)
-    _parry_section(row, args, stats)
+    _parry_line(row, stats)
     _comeback_section(row, stats)
     _leftover_sections(stats)
 
@@ -1915,7 +1978,7 @@ def _lobby_aim_table(row: dict[str, Any], args: argparse.Namespace) -> None:
         )
 
     print(
-        "\n  Rates count heroes only, the postgame screen counts every target."
+        "\n  Rates count heroes only, troopers and other NPCs left out."
         "\n  Gun and headshot damage are the two bullet series from the damage graph."
     )
 

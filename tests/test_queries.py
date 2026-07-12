@@ -1989,3 +1989,105 @@ def test_asset_asof_older_than_all_eras_gets_earliest(tmp_path):
 
     assert out["cost"].to_list() == [500]
     assert out["client_version"].to_list() == [100]
+
+
+@pytest.fixture
+def melee_pq(tmp_path):
+    players = pl.DataFrame(
+        {
+            "match_id": [700, 700, 701],
+            "account_id": [42, 99, 42],
+            "hero": ["Mirage", "Yamato", "Mirage"],
+            "team": [1, 0, 1],
+        }
+    )
+
+    damage = pl.DataFrame(
+        {
+            "match_id": [700, 700, 700, 700, 700, 700, 700, 701],
+            "dealer_account_id": [42, 99, 99, 99, 99, 99, 99, 42],
+            "target_account_id": [99, 42, 42, None, 42, 42, 42, 99],
+            "source_class": [
+                "ability_melee_mirage",
+                "ability_melee_yamato",
+                "upgrade_melee_charge",
+                "ability_melee_yamato",
+                "Melee",
+                "citadel_weapon_yamato",
+                "ability_melee_yamato",
+                "ability_melee_mirage",
+            ],
+            "category": [
+                "ability",
+                "ability",
+                "item",
+                "ability",
+                "total",
+                "gun",
+                "ability",
+                "ability",
+            ],
+            "stat": [
+                "damage",
+                "damage",
+                "damage",
+                "damage",
+                "damage",
+                "damage",
+                "healing",
+                "damage",
+            ],
+            "damage": [300, 500, 80, 9999, 580, 1000, 50, 777],
+        },
+        schema_overrides={"target_account_id": pl.Int64},
+    )
+
+    custom_stats = pl.DataFrame(
+        {
+            "match_id": [700, 700, 700, 700],
+            "account_id": [42, 42, 42, 99],
+            "time_stamp_s": [180, 360, 180, 200],
+            "stat": ["Parry Success", "Parry Success", "Parry Miss", "Parry Miss"],
+            "value": [1, 2, 1, 3],
+        }
+    )
+
+    for name, df in {
+        "players": players,
+        "damage": damage,
+        "custom_stats": custom_stats,
+    }.items():
+        df.write_parquet(tmp_path / f"{name}.parquet")
+
+    return tmp_path
+
+
+def test_melee_by_player_sums_swings_and_final_parries(melee_pq):
+    rows = {r["account_id"]: r for r in queries.melee_by_player(700, melee_pq).collect().to_dicts()}
+
+    assert rows[42]["melee_dealt"] == 300
+    assert rows[42]["melee_taken"] == 500
+    assert rows[42]["parries"] == 2
+    assert rows[42]["missed_parries"] == 1
+
+    assert rows[99]["melee_dealt"] == 500
+    assert rows[99]["melee_taken"] == 300
+    assert rows[99]["parries"] == 0
+    assert rows[99]["missed_parries"] == 3
+
+
+def test_melee_by_player_keeps_the_swing_pure(melee_pq):
+    rows = {r["account_id"]: r for r in queries.melee_by_player(700, melee_pq).collect().to_dicts()}
+
+    assert rows[99]["melee_dealt"] == 500
+    assert rows[42]["melee_taken"] == 500
+
+
+def test_melee_by_player_scopes_to_the_match(melee_pq):
+    accounts = queries.melee_by_player(700, melee_pq).collect()["account_id"].to_list()
+
+    assert sorted(accounts) == [42, 99]
+
+
+def test_melee_taken_by_attacker_ranks_pure_swings(melee_pq):
+    assert queries.melee_taken_by_attacker(700, 42, melee_pq).collect().rows() == [("Yamato", 500)]

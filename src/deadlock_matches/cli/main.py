@@ -333,6 +333,13 @@ def build_parser(config: str | Path | None = None) -> argparse.ArgumentParser:
         "by range, parries, comeback souls, and per-hero counters",
     )
     view.add_argument(
+        "--melee",
+        action="store_true",
+        help="every player ranked by melee dealt and taken between heroes, with "
+        "parries landed and missed, then the melee you took per enemy and the "
+        "melee item buys (melee is the bare light and heavy swing the game shows)",
+    )
+    view.add_argument(
         "--movement",
         action="store_true",
         help="how you moved per interval: meters covered and the pace while "

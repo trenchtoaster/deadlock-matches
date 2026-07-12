@@ -1505,7 +1505,28 @@ def test_match_combat_flag_prints_aim_and_ranges(capsys, tmp_path):
     assert "Falloff on hits taken" not in out
 
 
-def test_match_combat_flag_parry_lines(capsys, tmp_path):
+def test_match_combat_flag_parry_line_points_at_melee(capsys, tmp_path):
+    cache = tmp_path / "cache"
+    cache.mkdir()
+    write_cache_entry(
+        cache,
+        match_id=100,
+        stats=[(300, 3000)],
+        custom_stats=[("Parry Success", 4), ("Parry Miss", 2)],
+        item_events=[(COUNTERSPELL, 884, 0, 0)],
+        damage=[("ability_melee_inferno", [100, 400], 0, 2, 1)],
+    )
+
+    run_main(tmp_path, "match", "--account", "42", "--combat")
+
+    out = capsys.readouterr().out
+
+    assert "Parries 4 landed, 2 missed  (--melee for the lobby table)" in out
+    assert "Melee damage taken" not in out
+    assert "Counterspell bought" not in out
+
+
+def test_match_melee_flag_ranks_players_and_lists_buys(capsys, tmp_path):
     cache = tmp_path / "cache"
     cache.mkdir()
     write_cache_entry(
@@ -1515,18 +1536,21 @@ def test_match_combat_flag_parry_lines(capsys, tmp_path):
         custom_stats=[("Parry Success", 4), ("Parry Miss", 2)],
         item_events=[(COUNTERSPELL, 884, 0, 0)],
         damage=[
+            ("ability_melee_mirage", [50, 300], 0, 1, 2),
             ("ability_melee_inferno", [100, 400], 0, 2, 1),
+            ("upgrade_melee_charge", [10, 90], 0, 2, 1),
             ("citadel_weapon_hornet", [50, 900], 0, 2, 1),
         ],
     )
 
-    run_main(tmp_path, "match", "--account", "42", "--combat")
+    run_main(tmp_path, "match", "--account", "42", "--melee")
 
     out = capsys.readouterr().out
 
-    assert "Parries" in out
-    assert "Successful 4, missed 2" in out
-    assert "Melee damage taken (light/heavy melee): 400, most from Infernus (400)" in out
+    assert "Melee" in out
+    assert re.search(r"Infernus\s+enemy\s+400\s+300\s+-\s+-", out)
+    assert re.search(r"Mirage \*\s+ally\s+300\s+400\s+4\s+2", out)
+    assert re.search(r"Melee taken by you\n\s+Infernus\s+400", out)
     assert "Counterspell bought at 14:44" in out
 
 
