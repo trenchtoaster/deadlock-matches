@@ -9,10 +9,10 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
-from deadlock_matches.assets import history
+from deadlock_matches.assets import history, store
 
-ITEMS_JSON = Path(__file__).parent / "data" / "items.json"
-ITEM_HISTORY_PARQUET = Path(__file__).parent / "data" / "item_history.parquet"
+ITEMS_JSON = store.seed_path("items.json")
+ITEM_HISTORY_PARQUET = store.seed_path("item_history.parquet")
 
 
 @dataclass(frozen=True, slots=True)
@@ -77,14 +77,15 @@ class Item:
 
 
 @functools.cache
-def item_map(path: Path = ITEMS_JSON) -> dict[int, Item]:
+def item_map(path: Path | None = None) -> dict[int, Item]:
     """Cached load of items.json, keyed by item ID."""
-    records = json.loads(Path(path).read_text(encoding="utf-8"))
+    src = Path(path) if path is not None else store.read_path("items.json")
+    records = json.loads(src.read_text(encoding="utf-8"))
 
     return {rec["id"]: Item.from_record(rec) for rec in records}
 
 
-def item_name(item_id: int, path: Path = ITEMS_JSON) -> str:
+def item_name(item_id: int, path: Path | None = None) -> str:
     """Item display name, falling back to "id<N>" for unknown IDs."""
     item = item_map(path).get(item_id)
 
@@ -92,7 +93,7 @@ def item_name(item_id: int, path: Path = ITEMS_JSON) -> str:
 
 
 @functools.cache
-def item_by_name(name: str, path: Path = ITEMS_JSON) -> Item | None:
+def item_by_name(name: str, path: Path | None = None) -> Item | None:
     """Look up an item by display name, ignoring case."""
     low = name.lower()
 
@@ -104,7 +105,7 @@ def item_by_name(name: str, path: Path = ITEMS_JSON) -> Item | None:
 
 
 @functools.cache
-def item_by_class_name(class_name: str, path: Path = ITEMS_JSON) -> Item | None:
+def item_by_class_name(class_name: str, path: Path | None = None) -> Item | None:
     """Look up an item by engine class_name."""
     for item in item_map(path).values():
         if item.class_name == class_name:
@@ -113,32 +114,31 @@ def item_by_class_name(class_name: str, path: Path = ITEMS_JSON) -> Item | None:
     return None
 
 
-def item_asof(
-    item_id: int, when: dt.datetime | dt.date, path: Path = ITEM_HISTORY_PARQUET
-) -> Item | None:
+def item_asof(item_id: int, at: dt.datetime | dt.date, path: Path | None = None) -> Item | None:
     """Return the item cost, tier, and slot in effect at the given time.
 
-    - latest era on or before `when`
+    - latest era on or before `at`
     - times older than all history get the earliest era
-    - no history at all falls back to the bundled current snapshot
+    - no history at all falls back to the current snapshot
     """
-    if not history.has_history(path):
+    src = Path(path) if path is not None else store.read_path("item_history.parquet")
+
+    if not history.has_history(src):
         return item_map().get(item_id)
 
-    rec = history.record_asof(path, item_id, when)
+    rec = history.record_asof(src, item_id, at)
 
     return Item.from_record(rec) if rec else None
 
 
-def item_map_asof(
-    when: dt.datetime | dt.date, path: Path = ITEM_HISTORY_PARQUET
-) -> dict[int, Item]:
+def item_map_asof(at: dt.datetime | dt.date, path: Path | None = None) -> dict[int, Item]:
     """Return every item in effect at a time, keyed by id.
 
-    - one Item per id from the era live at when
-    - no history at all falls back to the bundled current snapshot
+    - one Item per id from the era live at the target time
+    - no history at all falls back to the current snapshot
     """
-    records = history.records_asof(path, when)
+    src = Path(path) if path is not None else store.read_path("item_history.parquet")
+    records = history.records_asof(src, at)
 
     if records is None:
         return item_map()

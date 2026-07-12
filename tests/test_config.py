@@ -96,6 +96,38 @@ def test_config_players_missing(tmp_path):
     assert config.config_players("Mirage", p) == {}
 
 
+def test_find_config_prefers_current_directory(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    cfg = tmp_path / "config.toml"
+    cfg.write_text("[accounts]\nmain = 42\n")
+
+    assert config.find_config() == cfg
+
+
+def test_find_config_falls_back_to_user_dir_when_installed(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(config, "_source_root", lambda: None)
+    monkeypatch.setattr(config.paths, "config_dir", lambda: tmp_path / "cfg")
+
+    target = tmp_path / "cfg" / "deadlock-matches" / "config.toml"
+
+    assert config.find_config() == target
+    assert not target.exists()
+
+
+def test_ensure_config_writes_to_user_dir_when_installed(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(config, "_source_root", lambda: None)
+    monkeypatch.setattr(config.paths, "config_dir", lambda: tmp_path / "cfg")
+
+    config.ensure_config()
+
+    target = tmp_path / "cfg" / "deadlock-matches" / "config.toml"
+
+    assert target.exists()
+    assert "[accounts]" in target.read_text(encoding="utf-8")
+
+
 def test_ensure_config_writes_starter(tmp_path):
     p = tmp_path / "config.toml"
     config.ensure_config(p)

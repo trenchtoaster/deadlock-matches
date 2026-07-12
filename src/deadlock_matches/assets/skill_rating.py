@@ -7,33 +7,34 @@ import functools
 import json
 from pathlib import Path
 
-from deadlock_matches.assets import history
+from deadlock_matches.assets import history, store
 
-SKILL_RATING_JSON = Path(__file__).parent / "data" / "skill_rating.json"
-RANK_HISTORY_PARQUET = Path(__file__).parent / "data" / "rank_history.parquet"
+SKILL_RATING_JSON = store.seed_path("skill_rating.json")
+RANK_HISTORY_PARQUET = store.seed_path("rank_history.parquet")
 
 
 @functools.cache
-def tier_map(path: Path = SKILL_RATING_JSON) -> dict[int, str]:
+def tier_map(path: Path | None = None) -> dict[int, str]:
     """Load skill_rating.json into {tier: name}, cached per path."""
-    records = json.loads(Path(path).read_text(encoding="utf-8"))
+    src = Path(path) if path is not None else store.read_path("skill_rating.json")
+    records = json.loads(src.read_text(encoding="utf-8"))
 
     return {rec["tier"]: rec["name"] for rec in records}
 
 
-def rank_asof(
-    tier: int, when: dt.datetime | dt.date, path: Path = RANK_HISTORY_PARQUET
-) -> str | None:
+def rank_asof(tier: int, at: dt.datetime | dt.date, path: Path | None = None) -> str | None:
     """Return the rank name for a tier in effect at the given time.
 
-    - latest era on or before `when`
+    - latest era on or before `at`
     - times older than all history get the earliest era
-    - no history at all falls back to the bundled current snapshot
+    - no history at all falls back to the current snapshot
     """
-    if not history.has_history(path):
+    src = Path(path) if path is not None else store.read_path("rank_history.parquet")
+
+    if not history.has_history(src):
         return tier_map().get(tier)
 
-    rec = history.record_asof(path, tier, when)
+    rec = history.record_asof(src, tier, at)
 
     return rec["name"] if rec else None
 
@@ -59,7 +60,7 @@ def badge_from_subrank(index: int) -> int:
     return tier * 10 + index - tier * 6
 
 
-def label(badge: int | None, path: Path = SKILL_RATING_JSON) -> str | None:
+def label(badge: int | None, path: Path | None = None) -> str | None:
     """Turn a badge level into a label.
 
     - badge levels are the tier number * 10 plus the level within the tier

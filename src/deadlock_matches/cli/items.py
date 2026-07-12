@@ -8,7 +8,7 @@ from typing import TYPE_CHECKING
 import polars as pl
 
 from deadlock_matches import meta, players, queries
-from deadlock_matches.assets import heroes, items
+from deadlock_matches.assets import heroes, items, store
 from deadlock_matches.cli import cards
 from deadlock_matches.cli.data import no_pool_hint
 from deadlock_matches.config import config_players, format_accounts
@@ -25,7 +25,7 @@ def item_report(args: argparse.Namespace, config: str | Path | None = None) -> N
         return
 
     if getattr(args, "changes", False):
-        cards.print_changes(item.name, "item", items.ITEM_HISTORY_PARQUET, item.id)
+        cards.print_changes(item.name, "item", store.read_path("item_history.parquet"), item.id)
         return
 
     when = getattr(args, "as_of", None)

@@ -23,6 +23,14 @@ def cache_dir() -> Path:
     return Path.home() / ".cache/deadlock-matches"
 
 
+def config_dir() -> Path:
+    """~/.config on Linux, %APPDATA% on Windows."""
+    if sys.platform == "win32":
+        return Path(os.environ.get("APPDATA") or Path.home() / "AppData/Roaming")
+
+    return Path.home() / ".config"
+
+
 def tilde(path: str | Path) -> str:
     """Shorten a path under the home directory to a ~ prefix for printing."""
     p = Path(path).resolve()

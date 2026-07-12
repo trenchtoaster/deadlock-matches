@@ -12,10 +12,10 @@ from typing import TYPE_CHECKING, Any
 if TYPE_CHECKING:
     from collections.abc import Iterator
 
-from deadlock_matches.assets import heroes, history, items
+from deadlock_matches.assets import heroes, history, items, store
 
-ABILITIES_JSON = Path(__file__).parent / "data" / "abilities.json"
-ABILITY_HISTORY_PARQUET = Path(__file__).parent / "data" / "ability_history.parquet"
+ABILITIES_JSON = store.seed_path("abilities.json")
+ABILITY_HISTORY_PARQUET = store.seed_path("ability_history.parquet")
 
 
 @dataclass(frozen=True, slots=True)
@@ -92,7 +92,7 @@ class Ability:
         """Apply scale upgrades to the scaling of a property ({tech_power: 0.3}) through a tier.
 
         An upgrade with no stat of its own applies to the scaling stat of the
-        property, tech_power when it has none.
+        property, tech_power for a property that has none.
         """
         info = self.scaling.get(name)
         default_stat = info["stat"] if info else "tech_power"
@@ -123,36 +123,39 @@ class Ability:
 
 
 @functools.cache
-def ability_map(path: Path = ABILITIES_JSON) -> dict[str, Ability]:
+def ability_map(path: Path | None = None) -> dict[str, Ability]:
     """Load abilities.json into {class_name: Ability}, cached per path."""
-    records = json.loads(Path(path).read_text(encoding="utf-8"))
+    src = Path(path) if path is not None else store.read_path("abilities.json")
+    records = json.loads(src.read_text(encoding="utf-8"))
 
     return {rec["class_name"]: Ability.from_record(rec) for rec in records}
 
 
 def ability_asof(
-    class_name: str, when: dt.datetime | dt.date, path: Path = ABILITY_HISTORY_PARQUET
+    class_name: str, at: dt.datetime | dt.date, path: Path | None = None
 ) -> Ability | None:
     """Return the ability tuning in effect at the given time.
 
-    - latest era on or before `when`
+    - latest era on or before `at`
     - times older than all history get the earliest era
-    - no history at all falls back to the bundled current snapshot
+    - no history at all falls back to the current snapshot
     """
-    if not history.has_history(path):
+    src = Path(path) if path is not None else store.read_path("ability_history.parquet")
+
+    if not history.has_history(src):
         return ability_map().get(class_name)
 
-    rec = history.record_asof(path, class_name, when)
+    rec = history.record_asof(src, class_name, at)
 
     return Ability.from_record(rec) if rec else None
 
 
 def ability_by_name(
-    name: str, hero_id: int | None = None, path: Path = ABILITIES_JSON
+    name: str, hero_id: int | None = None, path: Path | None = None
 ) -> Ability | None:
     """Look up an ability or gun by display name ("Dust Devil", "djinns mark").
 
-    Pass hero_id when the name exists on several heroes, without it an
+    Pass hero_id for a name that exists on several heroes, without it an
     ambiguous name raises ValueError.
     """
     wanted = heroes.normalize_name(name)
@@ -171,12 +174,12 @@ def ability_by_name(
     return matches[0] if matches else None
 
 
-def for_hero(hero_id: int, path: Path = ABILITIES_JSON) -> tuple[Ability, ...]:
+def for_hero(hero_id: int, path: Path | None = None) -> tuple[Ability, ...]:
     """List the abilities for a hero."""
     return tuple(a for a in ability_map(path).values() if a.hero == hero_id and a.kind == "ability")
 
 
-def hero_gun(hero_id: int, path: Path = ABILITIES_JSON) -> Ability | None:
+def hero_gun(hero_id: int, path: Path | None = None) -> Ability | None:
     """Look up the gun and weapon stats for a hero."""
     for ability in ability_map(path).values():
         if ability.hero == hero_id and ability.kind == "weapon":
@@ -185,7 +188,7 @@ def hero_gun(hero_id: int, path: Path = ABILITIES_JSON) -> Ability | None:
     return None
 
 
-def hero_alt_gun(hero_id: int, path: Path = ABILITIES_JSON) -> Ability | None:
+def hero_alt_gun(hero_id: int, path: Path | None = None) -> Ability | None:
     """Look up the alt-fire weapon for a hero with a second firing mode.
 
     The alt record shares the primary display name or has none, so it
@@ -234,17 +237,17 @@ def string_token(name: str) -> int:
 
 
 @functools.cache
-def _token_map(path: Path = ABILITIES_JSON) -> dict[int, str]:
+def _token_map(path: Path | None = None) -> dict[int, str]:
     """Map string tokens back to the ability class names they hash from."""
     return {string_token(name): name for name in ability_map(path)}
 
 
-def class_by_token(token: int, path: Path = ABILITIES_JSON) -> str | None:
-    """Reverse a string token to an ability class name, None when unknown."""
+def class_by_token(token: int, path: Path | None = None) -> str | None:
+    """Reverse a string token to an ability class name."""
     return _token_map(path).get(token)
 
 
-def label(class_name: str, path: Path = ABILITIES_JSON) -> str:
+def label(class_name: str, path: Path | None = None) -> str:
     """Display name for a damage source class_name, whether ability, gun, or item.
 
     Gun headshot damage comes in as <gun class>_crit and resolves to

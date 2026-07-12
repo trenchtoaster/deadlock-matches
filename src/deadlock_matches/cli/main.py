@@ -16,6 +16,7 @@ from deadlock_matches.config import (
     config_accounts,
     config_exclude,
     ensure_config,
+    find_config,
 )
 
 if TYPE_CHECKING:
@@ -558,7 +559,7 @@ def build_parser(config: str | Path | None = None) -> argparse.ArgumentParser:
     at.add_argument(
         "--backfill",
         action="store_true",
-        help="rebuild the committed asset history from every patch instead (maintainer)",
+        help="build the versioned asset history instead of the current snapshot",
     )
     at.add_argument(
         "--confirm",
@@ -568,7 +569,12 @@ def build_parser(config: str | Path | None = None) -> argparse.ArgumentParser:
     at.add_argument(
         "--full",
         action="store_true",
-        help="rescan every build instead of resuming from the last committed era (maintainer)",
+        help="rescan every build instead of resuming from the last stored era",
+    )
+    at.add_argument(
+        "--seed",
+        action="store_true",
+        help="write the bundled seed instead of your user store (maintainer, source checkout)",
     )
 
     sc = command("schema")
@@ -654,7 +660,7 @@ def main(argv: Sequence[str] | None = None, config: str | Path | None = None) ->
     ) or (args.cmd == "match" and (args.match_id is None or args.hero is None))
 
     if needs_account and not args.account:
-        print("No account set: pass --account or update config.toml")
+        print(f"No account set: pass --account or add one to {paths.tilde(find_config())}")
         print("`deadlock accounts` lists the accounts on this PC with their IDs")
         return
 

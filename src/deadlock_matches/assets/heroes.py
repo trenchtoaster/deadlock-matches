@@ -10,10 +10,10 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
-from deadlock_matches.assets import history
+from deadlock_matches.assets import history, store
 
-HEROES_JSON = Path(__file__).parent / "data" / "heroes.json"
-HERO_HISTORY_PARQUET = Path(__file__).parent / "data" / "hero_history.parquet"
+HEROES_JSON = store.seed_path("heroes.json")
+HERO_HISTORY_PARQUET = store.seed_path("hero_history.parquet")
 
 
 @dataclass(frozen=True, slots=True)
@@ -177,33 +177,34 @@ class Hero:
 
 
 @functools.cache
-def hero_map(path: Path = HEROES_JSON) -> dict[int, Hero]:
+def hero_map(path: Path | None = None) -> dict[int, Hero]:
     """Load heroes.json into {hero_id: Hero}, cached per path."""
-    records = json.loads(Path(path).read_text(encoding="utf-8"))
+    src = Path(path) if path is not None else store.read_path("heroes.json")
+    records = json.loads(src.read_text(encoding="utf-8"))
 
     return {rec["id"]: Hero.from_record(rec) for rec in records}
 
 
-def hero_name(hero_id: int, path: Path = HEROES_JSON) -> str:
-    """Name for a hero ID, or "id<N>" when the ID is unknown."""
+def hero_name(hero_id: int, path: Path | None = None) -> str:
+    """Name for a hero ID, or "id<N>" for an unknown ID."""
     hero = hero_map(path).get(hero_id)
 
     return hero.name if hero else f"id{hero_id}"
 
 
-def hero_asof(
-    hero_id: int, when: dt.datetime | dt.date, path: Path = HERO_HISTORY_PARQUET
-) -> Hero | None:
+def hero_asof(hero_id: int, at: dt.datetime | dt.date, path: Path | None = None) -> Hero | None:
     """Return the hero stats and scaling in effect at the given time.
 
-    - latest era on or before `when`
+    - latest era on or before `at`
     - times older than all history get the earliest era
-    - no history at all falls back to the bundled current snapshot
+    - no history at all falls back to the current snapshot
     """
-    if not history.has_history(path):
+    src = Path(path) if path is not None else store.read_path("hero_history.parquet")
+
+    if not history.has_history(src):
         return hero_map().get(hero_id)
 
-    rec = history.record_asof(path, hero_id, when)
+    rec = history.record_asof(src, hero_id, at)
 
     return Hero.from_record(rec) if rec else None
 
@@ -217,7 +218,7 @@ def normalize_name(name: str) -> str:
     return re.sub(r"[^a-z0-9]", "", name.lower())
 
 
-def hero_id_by_name(name: str, path: Path = HEROES_JSON) -> int | None:
+def hero_id_by_name(name: str, path: Path | None = None) -> int | None:
     """Look up the hero ID for a display name ("Mirage", "mo krill")."""
     wanted = normalize_name(name)
 

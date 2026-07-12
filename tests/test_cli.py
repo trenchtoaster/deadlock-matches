@@ -2434,8 +2434,13 @@ def test_winrate_no_games_for_account(capsys, tmp_path):
 
 
 def test_assets_subcommand_reports_counts(monkeypatch, capsys):
-    monkeypatch.setattr(snapshots, "refresh_heroes", lambda: 57)
-    monkeypatch.setattr(snapshots, "refresh_items", lambda: 251)
+    monkeypatch.setattr(snapshots, "refresh_heroes", lambda *a, **k: 57)
+    monkeypatch.setattr(snapshots, "refresh_items", lambda *a, **k: 251)
+    monkeypatch.setattr(snapshots, "refresh_abilities", lambda *a, **k: 0)
+    monkeypatch.setattr(snapshots, "refresh_skill_rating", lambda *a, **k: 0)
+    monkeypatch.setattr(snapshots, "refresh_accolades", lambda *a, **k: 0)
+    monkeypatch.setattr(snapshots, "refresh_statues", lambda *a, **k: 0)
+    monkeypatch.setattr(snapshots, "history_lags", lambda **k: [])
 
     data.refresh_assets(argparse.Namespace())
 
@@ -2832,7 +2837,9 @@ def test_item_command_prints_card_without_hero(capsys, tmp_path):
     assert "upgrades from Quicksilver Reload" in out
     assert "spirit power" in out
     assert "Passive" in out
-    assert "cooldown                                  15s  (11.25s with Transcendent Cooldown)" in out
+    assert (
+        "cooldown                                  15s  (11.25s with Transcendent Cooldown)" in out
+    )
     assert "fire rate" in out
     assert "win rate" not in out
 
@@ -2844,7 +2851,9 @@ def test_item_command_card_shows_active_section(capsys, tmp_path):
 
     assert "Active\n" in out
     assert "Reset the cooldown" in out
-    assert "cooldown                                  35s  (26.25s with Transcendent Cooldown)" in out
+    assert (
+        "cooldown                                  35s  (26.25s with Transcendent Cooldown)" in out
+    )
 
 
 def test_item_command_unknown_item(capsys, tmp_path):
@@ -3300,7 +3309,7 @@ def _stub_refreshes(monkeypatch):
 
 def test_assets_warns_when_history_trails(monkeypatch, capsys):
     _stub_refreshes(monkeypatch)
-    monkeypatch.setattr(snapshots, "history_lags", lambda: [("items", "2026-06-30", 6601)])
+    monkeypatch.setattr(snapshots, "history_lags", lambda **k: [("items", "2026-06-30", 6601)])
 
     main(["assets"], config="none.json")
 
@@ -3313,7 +3322,7 @@ def test_assets_warns_when_history_trails(monkeypatch, capsys):
 
 def test_assets_quiet_when_history_current(monkeypatch, capsys):
     _stub_refreshes(monkeypatch)
-    monkeypatch.setattr(snapshots, "history_lags", list)
+    monkeypatch.setattr(snapshots, "history_lags", lambda **k: [])
 
     main(["assets"], config="none.json")
 

@@ -5,7 +5,7 @@ from __future__ import annotations
 import datetime as dt
 from typing import TYPE_CHECKING, Any
 
-from deadlock_matches.assets import abilities, heroes, history, items
+from deadlock_matches.assets import abilities, heroes, history, items, store
 
 if TYPE_CHECKING:
     import argparse
@@ -183,7 +183,9 @@ def hero_report(args: argparse.Namespace) -> None:
         return
 
     if getattr(args, "changes", False):
-        print_changes(heroes.hero_name(hero_id), "hero", heroes.HERO_HISTORY_PARQUET, hero_id)
+        print_changes(
+            heroes.hero_name(hero_id), "hero", store.read_path("hero_history.parquet"), hero_id
+        )
         return
 
     when = getattr(args, "as_of", None)
@@ -415,7 +417,10 @@ def ability_report(args: argparse.Namespace) -> None:
 
     if getattr(args, "changes", False):
         print_changes(
-            ability.name, ability.kind, abilities.ABILITY_HISTORY_PARQUET, ability.class_name
+            ability.name,
+            ability.kind,
+            store.read_path("ability_history.parquet"),
+            ability.class_name,
         )
         return
 

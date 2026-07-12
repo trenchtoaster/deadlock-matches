@@ -1,4 +1,4 @@
-"""Read and create the gitignored config.toml at the repo root."""
+"""Read and create the gitignored config.toml, from a clone or an installed CLI."""
 
 from __future__ import annotations
 
@@ -9,10 +9,53 @@ import zoneinfo
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
+from deadlock_matches import paths
+
 if TYPE_CHECKING:
     from collections.abc import Iterable
 
-CONFIG_PATH = Path(__file__).resolve().parents[2] / "config.toml"
+
+def _source_root() -> Path | None:
+    """Repo root when running from a source checkout, None once installed."""
+    root = Path(__file__).resolve().parents[2]
+
+    return root if (root / "pyproject.toml").is_file() else None
+
+
+def _default_config() -> Path:
+    """Where a new config.toml gets written.
+
+    The repo root in a source checkout, the user config directory otherwise.
+    """
+    root = _source_root()
+
+    if root is not None:
+        return root / "config.toml"
+
+    return paths.config_dir() / "deadlock-matches" / "config.toml"
+
+
+def find_config() -> Path:
+    """Locate config.toml across clone, editable, and installed use.
+
+    Checks the current directory, then the source checkout, then the user
+    config directory, and returns the first that exists. Falls back to the
+    default write location when none is there yet.
+    """
+    candidates = [Path.cwd() / "config.toml"]
+
+    root = _source_root()
+
+    if root is not None:
+        candidates.append(root / "config.toml")
+
+    candidates.append(paths.config_dir() / "deadlock-matches" / "config.toml")
+
+    for candidate in candidates:
+        if candidate.exists():
+            return candidate
+
+    return _default_config()
 
 
 def _config(path: str | Path | None = None) -> dict[str, Any]:
@@ -20,7 +63,7 @@ def _config(path: str | Path | None = None) -> dict[str, Any]:
 
     - invalid TOML exits with the line number
     """
-    path = Path(path) if path else CONFIG_PATH
+    path = Path(path) if path else find_config()
 
     if not path.exists():
         return {}
@@ -48,7 +91,7 @@ def _accounts_table(path: str | Path | None) -> dict[str, Any]:
 
 
 def config_accounts(path: str | Path | None = None) -> list[int] | None:
-    """Read the default Steam32 account IDs from the gitignored config.toml at the repo root.
+    """Read the default Steam32 account IDs from the gitignored config.toml.
 
     - accounts is an [accounts] table of name = id pairs
     - several accounts mean the union, every one counts as you
@@ -93,10 +136,12 @@ def ensure_config(path: str | Path | None = None) -> None:
     - the movement table is excluded by default because it tracks movement
       per second per game
     """
-    path = Path(path) if path else CONFIG_PATH
+    path = Path(path) if path else find_config()
 
     if path.exists():
         return
+
+    path.parent.mkdir(parents=True, exist_ok=True)
 
     starter = f"""# tables the export skips. movement is one row per player per second,
 # delete it from this list to export it. the per minute movement_intervals

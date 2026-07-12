@@ -5,7 +5,7 @@ import polars as pl
 import pytest
 
 from deadlock_matches import export, queries, schemas
-from deadlock_matches.assets import heroes, history
+from deadlock_matches.assets import history, store
 from deadlock_matches.extract import pb
 
 START = 1783000000
@@ -1081,7 +1081,7 @@ def _seed_hero_history(tmp_path, monkeypatch, first, second):
             {"from": "2026-02-01T00:00:00", "build": 200, "records": {"52": second}},
         ],
     )
-    monkeypatch.setattr(heroes, "HERO_HISTORY_PARQUET", path)
+    monkeypatch.setattr(store, "store_dir", lambda: tmp_path)
 
 
 def test_hero_scaling_asof_picks_era_correct_health(tmp_path, monkeypatch):

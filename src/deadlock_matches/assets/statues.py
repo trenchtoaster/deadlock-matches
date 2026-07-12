@@ -10,10 +10,10 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-from deadlock_matches.assets import history
+from deadlock_matches.assets import history, store
 
-STATUES_JSON = Path(__file__).parent / "data" / "statues.json"
-STATUE_HISTORY_PARQUET = Path(__file__).parent / "data" / "statue_history.parquet"
+STATUES_JSON = store.seed_path("statues.json")
+STATUE_HISTORY_PARQUET = store.seed_path("statue_history.parquet")
 
 STATUE_RE = re.compile(r"^(?P<buff>\w+?)_permanent_pickup(?:_lv(?P<level>\d+))?$")
 POWER_UP_RE = re.compile(r"^(?P<buff>\w+?)_powerup_pickup$")
@@ -71,22 +71,22 @@ class Statue:
 
 
 @functools.cache
-def statue_map(path: Path = STATUES_JSON) -> dict[str, Statue]:
+def statue_map(path: Path | None = None) -> dict[str, Statue]:
     """Cached load of statues.json, keyed by class name."""
-    records = json.loads(Path(path).read_text(encoding="utf-8"))
+    src = Path(path) if path is not None else store.read_path("statues.json")
+    records = json.loads(src.read_text(encoding="utf-8"))
 
     return {rec["class_name"]: Statue.from_record(rec) for rec in records}
 
 
-def statue_map_asof(
-    when: dt.datetime | dt.date, path: Path = STATUE_HISTORY_PARQUET
-) -> dict[str, Statue]:
+def statue_map_asof(at: dt.datetime | dt.date, path: Path | None = None) -> dict[str, Statue]:
     """Return every statue in effect at a time, keyed by class name.
 
-    - one Statue per class name from the era live at when
-    - no history at all falls back to the bundled current snapshot
+    - one Statue per class name from the era live at the target time
+    - no history at all falls back to the current snapshot
     """
-    records = history.records_asof(path, when)
+    src = Path(path) if path is not None else store.read_path("statue_history.parquet")
+    records = history.records_asof(src, at)
 
     if records is None:
         return statue_map()

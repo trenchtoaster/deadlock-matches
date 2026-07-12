@@ -1072,17 +1072,13 @@ def _stub_history(tmp_path, monkeypatch, live, stored):
 
 
 def test_history_lags_flags_a_trailing_type(tmp_path, monkeypatch):
-    _stub_history(
-        tmp_path, monkeypatch, [{"id": 10, "cost": 500}], {"10": {"id": 10, "cost": 800}}
-    )
+    _stub_history(tmp_path, monkeypatch, [{"id": 10, "cost": 500}], {"10": {"id": 10, "cost": 800}})
 
     assert snapshots.history_lags() == [("items", "2026-06-30", 6601)]
 
 
 def test_history_lags_quiet_when_live_matches_history(tmp_path, monkeypatch):
-    _stub_history(
-        tmp_path, monkeypatch, [{"id": 10, "cost": 800}], {"10": {"id": 10, "cost": 800}}
-    )
+    _stub_history(tmp_path, monkeypatch, [{"id": 10, "cost": 800}], {"10": {"id": 10, "cost": 800}})
 
     assert snapshots.history_lags() == []
 

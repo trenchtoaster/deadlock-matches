@@ -10,7 +10,7 @@ import polars as pl
 import polars.selectors as cs
 
 from deadlock_matches import config, export, schemas
-from deadlock_matches.assets import abilities, heroes, history, items
+from deadlock_matches.assets import abilities, heroes, history, items, store
 from deadlock_matches.assets import skill_rating as sr
 
 if TYPE_CHECKING:
@@ -2488,7 +2488,7 @@ def _era_from(value: str) -> dt.datetime:
 
 def _hero_by_era() -> Iterator[tuple[dt.datetime, int | None, heroes.Hero]]:
     """Yield the era start, client version, and hero resolved for each hero in each balance era."""
-    path = heroes.HERO_HISTORY_PARQUET
+    path = store.read_path("hero_history.parquet")
     era_list = history.eras(path)
 
     if not era_list:
@@ -2509,7 +2509,7 @@ def _hero_by_era() -> Iterator[tuple[dt.datetime, int | None, heroes.Hero]]:
 
 def _hero_era_starts() -> list[dt.datetime]:
     """Return each hero balance era start as a UTC datetime, oldest first."""
-    era_list = history.eras(heroes.HERO_HISTORY_PARQUET)
+    era_list = history.eras(store.read_path("hero_history.parquet"))
 
     if not era_list:
         return [_ERA_SENTINEL]

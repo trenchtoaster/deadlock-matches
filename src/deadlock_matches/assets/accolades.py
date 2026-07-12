@@ -8,7 +8,9 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-ACCOLADES_JSON = Path(__file__).parent / "data" / "accolades.json"
+from deadlock_matches.assets import store
+
+ACCOLADES_JSON = store.seed_path("accolades.json")
 
 
 @dataclass(frozen=True, slots=True)
@@ -30,8 +32,9 @@ class Accolade:
 
 
 @functools.cache
-def accolade_map(path: Path = ACCOLADES_JSON) -> dict[int, Accolade]:
+def accolade_map(path: Path | None = None) -> dict[int, Accolade]:
     """Cached load of accolades.json, keyed by accolade id."""
-    records = json.loads(Path(path).read_text(encoding="utf-8"))
+    src = Path(path) if path is not None else store.read_path("accolades.json")
+    records = json.loads(src.read_text(encoding="utf-8"))
 
     return {rec["id"]: Accolade.from_record(rec) for rec in records}

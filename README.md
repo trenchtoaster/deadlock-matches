@@ -32,7 +32,7 @@ Works on Linux and Windows, the cache path is detected automatically. Two ways t
 - `uv tool install deadlock-matches` installs the `deadlock` command on its own. [uv](https://docs.astral.sh/uv/) downloads a Python for it if you do not have one. `pip install deadlock-matches` works too on Python 3.12 or newer.
 - clone this repository and use `uv run deadlock` instead. Pick this if you want the marimo notebook, the Claude Code skill, or the source next to your queries.
 
-The examples in this README use the `uv run deadlock` form from a clone. With a tool or pip install the prefix goes away and the commands are just `deadlock history`, `deadlock sync`, and so on.
+The examples in this README use the `uv run deadlock` form from a clone. With a tool or pip install the prefix goes away and the commands are just `deadlock history`, `deadlock sync`, and so on. A clone keeps `config.toml` at the repo root, an installed CLI keeps it in your user config directory (`~/.config/deadlock-matches/` on Linux), and every command prints the exact path when no account is set.
 
 - run `uv run deadlock accounts` to get set up. It writes a starter `config.toml` and lists the Steam accounts on your PC with their account IDs (the "Steam32" ID), so paste the ones that are you into the config.
   - the name is just a label so you can use your Steam account name, profile name, or just a nickname like "main" or "alt"
@@ -1129,11 +1129,21 @@ Mirage movement: you (50 games) vs 3 tracked players (34 games, last download 20
 
 ### Refresh the game data
 
+Hero, item, and ability values ship with the package, so everything works offline out of the box. After a Deadlock patch the values on `deadlock-api.com` move ahead of the bundled copy, which only catches up when a new release of `deadlock-matches` ships. To pull the current values yourself instead of waiting:
+
 ```
 uv run deadlock assets
 ```
 
-- redownloads the hero, item, and ability data after a patch
+This saves the current snapshot to `~/.local/share/deadlock-matches/assets/`. Every command reads from there before the bundled copy, so you stay current.
+
+To bring the `--as-of` and `--changes` history up to the new patch too:
+
+```
+uv run deadlock assets --backfill
+```
+
+It fetches only the patches newer than what shipped and appends them.
 
 ### Table schemas
 

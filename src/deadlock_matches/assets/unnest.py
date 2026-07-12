@@ -13,8 +13,7 @@ from typing import TYPE_CHECKING, Any
 import polars as pl
 
 from deadlock_matches import schemas
-from deadlock_matches.assets import abilities, heroes, history, items, snapshots, statues
-from deadlock_matches.assets import skill_rating as sr
+from deadlock_matches.assets import history, snapshots, statues, store
 
 if TYPE_CHECKING:
     from collections.abc import Iterator
@@ -41,7 +40,7 @@ def _era_records(path: Path) -> Iterator[tuple[dt.datetime, int, str, dict[str, 
 
 def item_tables(path: Path | None = None) -> dict[str, pl.DataFrame]:
     """Flatten the committed item history into the item and component tables."""
-    path = items.ITEM_HISTORY_PARQUET if path is None else path
+    path = store.read_path("item_history.parquet") if path is None else path
     parents: list[dict] = []
     components: list[dict] = []
 
@@ -80,7 +79,7 @@ def item_tables(path: Path | None = None) -> dict[str, pl.DataFrame]:
 
 def hero_tables(path: Path | None = None) -> dict[str, pl.DataFrame]:
     """Flatten the committed hero history into the hero, level, stat, and boon tables."""
-    path = heroes.HERO_HISTORY_PARQUET if path is None else path
+    path = store.read_path("hero_history.parquet") if path is None else path
     parents: list[dict] = []
     levels: list[dict] = []
     stats: list[dict] = []
@@ -134,7 +133,7 @@ def hero_tables(path: Path | None = None) -> dict[str, pl.DataFrame]:
 
 def ability_tables(path: Path | None = None) -> dict[str, pl.DataFrame]:
     """Flatten the committed ability history into the ability, property, upgrade, and weapon tables."""
-    path = abilities.ABILITY_HISTORY_PARQUET if path is None else path
+    path = store.read_path("ability_history.parquet") if path is None else path
     parents: list[dict] = []
     props: list[dict] = []
     upgrades: list[dict] = []
@@ -206,7 +205,7 @@ def ability_tables(path: Path | None = None) -> dict[str, pl.DataFrame]:
 
 def rank_tables(path: Path | None = None) -> dict[str, pl.DataFrame]:
     """Flatten the committed rank history into the rank table."""
-    path = sr.RANK_HISTORY_PARQUET if path is None else path
+    path = store.read_path("rank_history.parquet") if path is None else path
     rows: list[dict] = []
 
     for era_from, build, _rid, rec in _era_records(path):
@@ -224,7 +223,7 @@ def rank_tables(path: Path | None = None) -> dict[str, pl.DataFrame]:
 
 def statue_tables(path: Path | None = None) -> dict[str, pl.DataFrame]:
     """Flatten the committed statue history into the statue table."""
-    path = statues.STATUE_HISTORY_PARQUET if path is None else path
+    path = store.read_path("statue_history.parquet") if path is None else path
     rows: list[dict] = []
 
     for era_from, build, _rid, rec in _era_records(path):

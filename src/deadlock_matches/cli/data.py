@@ -18,13 +18,11 @@ from deadlock_matches import (
     queries,
 )
 from deadlock_matches.assets import (
-    abilities,
     heroes,
     history,
     items,
-    skill_rating,
     snapshots,
-    statues,
+    store,
 )
 from deadlock_matches.config import (
     config_account_names,
@@ -32,6 +30,7 @@ from deadlock_matches.config import (
     config_exclude,
     config_players,
     config_timezone,
+    find_config,
 )
 
 if TYPE_CHECKING:
@@ -249,7 +248,9 @@ def list_accounts(args: argparse.Namespace, config: str | Path | None = None) ->
         print("\nconfig.toml already covers all of them")
         return
 
-    print("\nAdd the ones that are you to config.toml, the names are yours to change:\n")
+    print(
+        f"\nAdd the ones that are you to {_tilde(find_config())}, the names are yours to change:\n"
+    )
     print("[accounts]")
 
     suggested = _suggest_names(len(missing), config_account_names(config))
@@ -258,20 +259,33 @@ def list_accounts(args: argparse.Namespace, config: str | Path | None = None) ->
         print(f"{name} = {a.account_id}")
 
 
-def refresh_assets(_args: argparse.Namespace) -> None:
-    """Redownload the hero/item snapshots and report what changed."""
-    old_items = {i.name for i in items.item_map().values()}
-    old_heroes = {h.name for h in heroes.hero_map().values()}
+def refresh_assets(args: argparse.Namespace) -> None:
+    """Redownload the hero/item snapshots and report what changed.
 
-    n_heroes = snapshots.refresh_heroes()
-    n_items = snapshots.refresh_items()
-    n_abilities = snapshots.refresh_abilities()
-    n_tiers = snapshots.refresh_skill_rating()
-    n_accolades = snapshots.refresh_accolades()
-    n_statues = snapshots.refresh_statues()
+    Writes the user asset store by default, --seed writes the bundled seed for a
+    maintainer to commit.
+    """
+    seed = getattr(args, "seed", False)
 
-    new_items = {i.name for i in items.item_map().values()}
-    new_heroes = {h.name for h in heroes.hero_map().values()}
+    if seed and not store.is_source_checkout():
+        print("--seed writes the bundled seed and needs a source checkout")
+        return
+
+    def target(name: str) -> Path | None:
+        return store.seed_path(name) if seed else None
+
+    old_items = {i.name for i in items.item_map(target("items.json")).values()}
+    old_heroes = {h.name for h in heroes.hero_map(target("heroes.json")).values()}
+
+    n_heroes = snapshots.refresh_heroes(target("heroes.json"))
+    n_items = snapshots.refresh_items(target("items.json"))
+    n_abilities = snapshots.refresh_abilities(target("abilities.json"))
+    n_tiers = snapshots.refresh_skill_rating(target("skill_rating.json"))
+    n_accolades = snapshots.refresh_accolades(target("accolades.json"))
+    n_statues = snapshots.refresh_statues(target("statues.json"))
+
+    new_items = {i.name for i in items.item_map(target("items.json")).values()}
+    new_heroes = {h.name for h in heroes.hero_map(target("heroes.json")).values()}
 
     print(f"heroes.json: {n_heroes} heroes")
     print(f"items.json: {n_items} upgrade items")
@@ -292,7 +306,7 @@ def refresh_assets(_args: argparse.Namespace) -> None:
     for name in sorted(old_items - new_items):
         print(f"  gone item: {name}")
 
-    lags = snapshots.history_lags()
+    lags = snapshots.history_lags(seed=seed)
 
     if lags:
         print()
@@ -300,56 +314,73 @@ def refresh_assets(_args: argparse.Namespace) -> None:
         for name, date, build in lags:
             print(f"  {name} history is behind the live patch (newest build {build}, {date})")
 
-        print("  run deadlock assets --backfill to capture the current patch")
+        hint = "deadlock assets --backfill --seed" if seed else "deadlock assets --backfill"
+        print(f"  run {hint} to capture the current patch")
 
 
 HISTORY_BUILDERS = (
-    ("items", items.ITEM_HISTORY_PARQUET, "build_item_history"),
-    ("heroes", heroes.HERO_HISTORY_PARQUET, "build_hero_history"),
-    ("abilities", abilities.ABILITY_HISTORY_PARQUET, "build_ability_history"),
-    ("ranks", skill_rating.RANK_HISTORY_PARQUET, "build_rank_history"),
-    ("statues", statues.STATUE_HISTORY_PARQUET, "build_statue_history"),
+    ("items", "item_history.parquet", "build_item_history"),
+    ("heroes", "hero_history.parquet", "build_hero_history"),
+    ("abilities", "ability_history.parquet", "build_ability_history"),
+    ("ranks", "rank_history.parquet", "build_rank_history"),
+    ("statues", "statue_history.parquet", "build_statue_history"),
 )
 
 
 def rebuild_history(args: argparse.Namespace) -> None:
-    """Rebuild the committed item, hero, ability, rank, and statue history from the assets API.
+    """Build the item, hero, ability, rank, and statue history from the assets API.
 
+    - writes the user asset store by default, resuming on top of the bundled seed,
+      so an install stays current without a maintainer
+    - --seed writes the bundled seed instead, for a maintainer to commit
     - refreshes the build list first so a backfill run right after a patch sees the
       new build instead of a day-old cached list
     - builder functions resolve by name at run time so tests can patch every entry
       of HISTORY_BUILDERS without knowing the names
     """
+    seed = getattr(args, "seed", False)
+
+    if seed and not store.is_source_checkout():
+        print("--seed writes the bundled seed and needs a source checkout")
+
+        return
+
     snapshots.client_version_dates(max_age=0)
 
     if not args.confirm:
-        print("Rebuilding the committed asset history tables:")
+        where = "the bundled seed" if seed else "your local asset store"
+        print(f"Building the asset history into {where}:")
 
-        for name, path, _ in HISTORY_BUILDERS:
-            print(f"  {name:<9} {len(history.eras(path))} eras at {_tilde(path)}")
+        for name, file, _ in HISTORY_BUILDERS:
+            target = store.seed_path(file) if seed else store.store_dir() / file
+            resume = store.seed_path(file) if seed else store.read_path(file)
+            print(f"  {name:<9} {len(history.eras(resume))} eras -> {_tilde(target)}")
 
-        builds = sum(d >= snapshots.HISTORY_START for d in snapshots.client_version_dates().values())
+        builds = sum(
+            d >= snapshots.HISTORY_START for d in snapshots.client_version_dates().values()
+        )
 
         if args.full:
             print(
                 f"\n--full rescans every client build since {snapshots.HISTORY_START} ({builds} "
-                f"builds per asset type) and overwrites those committed files."
+                f"builds per asset type) and overwrites the target."
             )
         else:
             print(
-                "\nThis scans only the builds newer than the last committed era and appends any "
+                "\nThis scans only the builds newer than the last stored era and appends any "
                 "new ones. Use --full to rescan every build after an old-build correction."
             )
 
         print("The API calls are cached after the first run, so a rerun is cheap.")
-        print("End users do not need it, they read the committed tables.")
-        print("Re-run with --confirm to proceed, then review and commit the result.")
+        print("Re-run with --confirm to proceed.")
 
         return
 
-    for name, path, builder in HISTORY_BUILDERS:
+    for name, file, builder in HISTORY_BUILDERS:
         build = getattr(snapshots, builder)
-        before = len(history.eras(path))
+        target = store.seed_path(file) if seed else store.write_path(file)
+        resume = store.seed_path(file) if seed else store.read_path(file)
+        before = len(history.eras(resume))
         api.fetch_counts.clear()
         missing: list[int] = []
 
@@ -369,16 +400,21 @@ def rebuild_history(args: argparse.Namespace) -> None:
             )
             print(f"\r{line:<76}", end="", flush=True)
 
-        eras = build(progress=show, full=args.full)
-        size = path.stat().st_size / 1024 if path.is_file() else 0.0
-        line = f"  {name:<9} {before} -> {eras} eras  {size:.0f} KB at {_tilde(path)}"
+        eras = build(path=target, resume_from=resume, progress=show, full=args.full)
+        size = target.stat().st_size / 1024 if target.is_file() else 0.0
+        line = f"  {name:<9} {before} -> {eras} eras  {size:.0f} KB at {_tilde(target)}"
         print(f"\r{line:<76}")
 
         if missing:
             builds = ", ".join(str(b) for b in missing)
             print(f"    no asset data for client build {builds}, skipped")
 
-    print("\nReview the diff and commit the updated tables.")
+    tail = (
+        "Review the diff and commit the updated tables."
+        if seed
+        else "Your local asset history is current."
+    )
+    print(f"\n{tail}")
 
 
 def no_pool_hint(hero: str, *, tracked_in_config: bool) -> str:

@@ -19,6 +19,7 @@ from deadlock_matches.assets import (
     items,
     skill_rating,
     statues,
+    store,
 )
 
 if TYPE_CHECKING:
@@ -259,7 +260,7 @@ def _damage_stat(css_class: str | None) -> str | None:
 
 
 def _damage_line(key: str, css: str | None, scale_class: str | None) -> str | None:
-    """Return the damage type of a real damage line, None for stat grants.
+    """Return the damage type of a real damage line, skipping stat grants.
 
     css only sets the color, so fire rate and slow stats share the damage
     colors. A real damage line either scales through a *_damage function or
@@ -514,13 +515,16 @@ def build_asset_history(
     start_date: str = HISTORY_START,
     progress: Callable[[int, int, list[int]], None] | None = None,
     *,
+    resume_from: Path | None = None,
     full: bool = False,
 ) -> int:
-    """Build a committed asset history by scanning client builds for change points.
+    """Build an asset history by scanning client builds for change points.
 
     - load(build) returns the {id: record} map at a client build
     - one era per patch that changed any stored record
-    - resumes from the last committed era, scanning only builds newer than it, so a
+    - writes to path, resuming from resume_from so the user store can grow on top
+      of the bundled seed, scanning only builds newer than its last era
+    - resumes from the last stored era, scanning only builds newer than it, so a
       run right after a patch appends the new era instead of rehashing every build
     - full rescans every build from start_date, needed when the API corrects an old
       build or start_date moves earlier
@@ -528,7 +532,7 @@ def build_asset_history(
       is still captured, which a bisection over the endpoints would miss
     - builds the API has no data for are skipped, the scan continues from the next one
     - refuses to write when a fresh table would be empty, so an unreachable endpoint
-      cannot blank a committed table
+      cannot blank a stored table
     - progress(done, total, skipped_builds) is called after every scanned build
     """
     dates = client_version_dates()
@@ -538,7 +542,7 @@ def build_asset_history(
         msg = f"no client builds on or after {start_date}"
         raise ValueError(msg)
 
-    existing = [] if full else history.read_states(path)
+    existing = [] if full else history.read_states(resume_from if resume_from is not None else path)
 
     if existing and existing[-1]["build"] in set(builds):
         prev: str | None = _digest(existing[-1]["records"])
@@ -597,22 +601,37 @@ def _endpoint_load(
     return load
 
 
+def _history_target(
+    path: Path | None, resume_from: Path | None, name: str
+) -> tuple[Path, Path | None]:
+    """Resolve the write target and resume source for a history build.
+
+    A None path writes the user store and resumes from the user-or-seed read
+    path, so a backfill grows on top of the bundled seed.
+    """
+    if path is not None:
+        return path, resume_from
+
+    return store.write_path(name), store.read_path(name) if resume_from is None else resume_from
+
+
 def build_item_history(
     start_date: str = HISTORY_START,
     path: Path | None = None,
     progress: Callable[[int, int, list[int]], None] | None = None,
     *,
+    resume_from: Path | None = None,
     full: bool = False,
 ) -> int:
-    """Build the committed item history from the assets API.
+    """Build the item history from the assets API.
 
     - one era per patch that changed any item field
-    - path defaults to the committed history table
+    - path defaults to the user asset store
     """
-    path = items.ITEM_HISTORY_PARQUET if path is None else path
+    target, resume = _history_target(path, resume_from, "item_history.parquet")
     load = _endpoint_load("v1/assets/items/by-type/upgrade", _item_snapshot, _by_id)
 
-    return build_asset_history(load, path, start_date, progress, full=full)
+    return build_asset_history(load, target, start_date, progress, resume_from=resume, full=full)
 
 
 def build_hero_history(
@@ -620,17 +639,18 @@ def build_hero_history(
     path: Path | None = None,
     progress: Callable[[int, int, list[int]], None] | None = None,
     *,
+    resume_from: Path | None = None,
     full: bool = False,
 ) -> int:
-    """Build the committed hero history from the assets API.
+    """Build the hero history from the assets API.
 
     - one era per patch that changed any hero field
-    - path defaults to the committed history table
+    - path defaults to the user asset store
     """
-    path = heroes.HERO_HISTORY_PARQUET if path is None else path
+    target, resume = _history_target(path, resume_from, "hero_history.parquet")
     load = _endpoint_load("v1/assets/heroes", _hero_snapshot, _by_id)
 
-    return build_asset_history(load, path, start_date, progress, full=full)
+    return build_asset_history(load, target, start_date, progress, resume_from=resume, full=full)
 
 
 def _ability_load(build: int) -> dict[str, Any]:
@@ -650,16 +670,19 @@ def build_ability_history(
     path: Path | None = None,
     progress: Callable[[int, int, list[int]], None] | None = None,
     *,
+    resume_from: Path | None = None,
     full: bool = False,
 ) -> int:
-    """Build the committed ability history from the assets API.
+    """Build the ability history from the assets API.
 
     - one era per patch that changed any ability or gun field
-    - path defaults to the committed history table
+    - path defaults to the user asset store
     """
-    path = abilities.ABILITY_HISTORY_PARQUET if path is None else path
+    target, resume = _history_target(path, resume_from, "ability_history.parquet")
 
-    return build_asset_history(_ability_load, path, start_date, progress, full=full)
+    return build_asset_history(
+        _ability_load, target, start_date, progress, resume_from=resume, full=full
+    )
 
 
 def _rank_record(record: dict[str, Any]) -> dict[str, Any]:
@@ -677,17 +700,18 @@ def build_rank_history(
     path: Path | None = None,
     progress: Callable[[int, int, list[int]], None] | None = None,
     *,
+    resume_from: Path | None = None,
     full: bool = False,
 ) -> int:
-    """Build the committed rank history from the assets API.
+    """Build the rank history from the assets API.
 
     - one era per patch that renamed or added a rank tier
-    - path defaults to the committed history table
+    - path defaults to the user asset store
     """
-    path = skill_rating.RANK_HISTORY_PARQUET if path is None else path
+    target, resume = _history_target(path, resume_from, "rank_history.parquet")
     load = _endpoint_load("v1/assets/ranks", _rank_record, _by_tier)
 
-    return build_asset_history(load, path, start_date, progress, full=full)
+    return build_asset_history(load, target, start_date, progress, resume_from=resume, full=full)
 
 
 def _statue_load(build: int) -> dict[str, Any]:
@@ -704,24 +728,27 @@ def build_statue_history(
     path: Path | None = None,
     progress: Callable[[int, int, list[int]], None] | None = None,
     *,
+    resume_from: Path | None = None,
     full: bool = False,
 ) -> int:
-    """Build the committed statue history from the assets API.
+    """Build the statue history from the assets API.
 
     - one era per patch that changed any statue magnitude
-    - path defaults to the committed history table
+    - path defaults to the user asset store
     """
-    path = statues.STATUE_HISTORY_PARQUET if path is None else path
+    target, resume = _history_target(path, resume_from, "statue_history.parquet")
 
-    return build_asset_history(_statue_load, path, start_date, progress, full=full)
+    return build_asset_history(
+        _statue_load, target, start_date, progress, resume_from=resume, full=full
+    )
 
 
 def refresh_abilities(path: Path | None = None) -> int:
     """Redownload abilities.json (hero abilities + guns) and clear the lookup cache.
 
-    path defaults to the bundled snapshot.
+    path defaults to the user asset store.
     """
-    path = abilities.ABILITIES_JSON if path is None else path
+    path = store.write_path("abilities.json") if path is None else path
     records = [
         _ability_snapshot(r, kind)
         for kind in ("ability", "weapon")
@@ -738,9 +765,9 @@ def refresh_abilities(path: Path | None = None) -> int:
 def refresh_heroes(path: Path | None = None) -> int:
     """Redownload heroes.json and clear the lookup cache.
 
-    path defaults to the bundled snapshot.
+    path defaults to the user asset store.
     """
-    path = heroes.HEROES_JSON if path is None else path
+    path = store.write_path("heroes.json") if path is None else path
     records = api.get_json("v1/assets/heroes", use_cache=False)
 
     path.write_text(json.dumps([_hero_snapshot(r) for r in records]), encoding="utf-8")
@@ -752,9 +779,9 @@ def refresh_heroes(path: Path | None = None) -> int:
 def refresh_skill_rating(path: Path | None = None) -> int:
     """Redownload skill_rating.json (badge tier names) and clear the lookup cache.
 
-    path defaults to the bundled snapshot.
+    path defaults to the user asset store.
     """
-    path = skill_rating.SKILL_RATING_JSON if path is None else path
+    path = store.write_path("skill_rating.json") if path is None else path
     records = api.get_json("v1/assets/ranks", use_cache=False)
 
     path.write_text(
@@ -768,9 +795,9 @@ def refresh_skill_rating(path: Path | None = None) -> int:
 def refresh_accolades(path: Path | None = None) -> int:
     """Redownload accolades.json (the end of match stat awards) and clear the lookup cache.
 
-    path defaults to the bundled snapshot.
+    path defaults to the user asset store.
     """
-    path = accolades.ACCOLADES_JSON if path is None else path
+    path = store.write_path("accolades.json") if path is None else path
     records = api.get_json("v1/assets/accolades", use_cache=False)
 
     path.write_text(
@@ -790,9 +817,9 @@ def refresh_accolades(path: Path | None = None) -> int:
 def refresh_statues(path: Path | None = None) -> int:
     """Redownload statues.json (the permanent buff statue pickups) and clear the lookup cache.
 
-    path defaults to the bundled snapshot.
+    path defaults to the user asset store.
     """
-    path = statues.STATUES_JSON if path is None else path
+    path = store.write_path("statues.json") if path is None else path
     records = api.get_json("v1/assets/misc-entities", use_cache=False)
     kept = [_statue_snapshot(r) for r in records if statues.is_statue(r.get("class_name") or "")]
 
@@ -805,9 +832,9 @@ def refresh_statues(path: Path | None = None) -> int:
 def refresh_items(path: Path | None = None) -> int:
     """Redownload items.json (upgrade items only) and clear the lookup caches.
 
-    path defaults to the bundled snapshot.
+    path defaults to the user asset store.
     """
-    path = items.ITEMS_JSON if path is None else path
+    path = store.write_path("items.json") if path is None else path
     records = api.get_json("v1/assets/items/by-type/upgrade", use_cache=False)
 
     path.write_text(json.dumps([_item_snapshot(r) for r in records]), encoding="utf-8")
@@ -819,31 +846,34 @@ def refresh_items(path: Path | None = None) -> int:
 
 
 LIVE_HISTORY_CHECKS = (
-    ("items", items.ITEMS_JSON, items.ITEM_HISTORY_PARQUET, "id"),
-    ("heroes", heroes.HEROES_JSON, heroes.HERO_HISTORY_PARQUET, "id"),
-    ("abilities", abilities.ABILITIES_JSON, abilities.ABILITY_HISTORY_PARQUET, "class_name"),
-    ("ranks", skill_rating.SKILL_RATING_JSON, skill_rating.RANK_HISTORY_PARQUET, "tier"),
-    ("statues", statues.STATUES_JSON, statues.STATUE_HISTORY_PARQUET, "class_name"),
+    ("items", "items.json", "item_history.parquet", "id"),
+    ("heroes", "heroes.json", "hero_history.parquet", "id"),
+    ("abilities", "abilities.json", "ability_history.parquet", "class_name"),
+    ("ranks", "skill_rating.json", "rank_history.parquet", "tier"),
+    ("statues", "statues.json", "statue_history.parquet", "class_name"),
 )
 
 
-def history_lags() -> list[tuple[str, str, int]]:
-    """Return (name, date, build) for each asset type whose committed history trails its live snapshot.
+def history_lags(*, seed: bool = False) -> list[tuple[str, str, int]]:
+    """Return (name, date, build) for each asset type whose history trails its live snapshot.
 
-    - compares the live snapshot the refresh just wrote against the newest committed
+    - compares the live snapshot the refresh just wrote against the newest stored
       record, so a live patch already captured stays quiet
-    - types with no committed history are skipped
+    - reads the seed when seed is set, matching where a seed refresh writes
+    - types with no stored history are skipped
     """
     now = dt.datetime.now(tz=dt.UTC)
+    resolve = store.seed_path if seed else store.read_path
     out = []
 
-    for name, json_path, hist_path, field in LIVE_HISTORY_CHECKS:
+    for name, json_file, hist_file, field in LIVE_HISTORY_CHECKS:
+        hist_path = resolve(hist_file)
         newest = history.records_asof(hist_path, now)
 
         if newest is None:
             continue
 
-        records = json.loads(json_path.read_text(encoding="utf-8"))
+        records = json.loads(resolve(json_file).read_text(encoding="utf-8"))
         live = {str(rec[field]): rec for rec in records}
 
         if _digest(live) == _digest(newest):
