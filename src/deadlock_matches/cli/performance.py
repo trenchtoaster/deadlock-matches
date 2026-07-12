@@ -707,20 +707,33 @@ def match_report(args: argparse.Namespace, config: str | Path | None = None) -> 
 
     tz = config_timezone(config)
 
+    if args.match_id is not None and args.ago:
+        print("Pass a match ID or --ago, not both")
+        return
+
+    if args.ago < 0:
+        print("--ago must be zero or a positive number of games back")
+        return
+
     if args.match_id is None:
-        latest = (
+        picked = (
             queries.my_games(args.parquet, accounts=args.account, tz=tz)
             .sort("start_time")
             .select("match_id")
-            .tail(1)
+            .reverse()
+            .slice(args.ago, 1)
             .collect()
         )
 
-        if latest.is_empty():
-            print("No games found for the configured accounts")
+        if picked.is_empty():
+            if args.ago:
+                print(f"Only fewer than {args.ago + 1} games for the configured accounts")
+            else:
+                print("No games found for the configured accounts")
+
             return
 
-        match_id = int(latest.item())
+        match_id = int(picked.item())
     else:
         match_id = args.match_id
 

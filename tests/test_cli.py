@@ -1040,6 +1040,37 @@ def test_match_defaults_to_most_recent(capsys, tmp_path):
     assert "Match 101" in capsys.readouterr().out
 
 
+def test_match_ago_steps_back_from_latest(capsys, tmp_path):
+    cache = tmp_path / "cache"
+    cache.mkdir()
+    write_cache_entry(cache, match_id=100, stats=[(300, 3000)])
+    write_cache_entry(cache, match_id=101, start_time=1783000000 + 86400, stats=[(300, 4000)])
+
+    run_main(tmp_path, "match", "--account", "42", "--ago", "1")
+
+    assert "Match 100" in capsys.readouterr().out
+
+
+def test_match_ago_past_history_reports_the_count(capsys, tmp_path):
+    cache = tmp_path / "cache"
+    cache.mkdir()
+    write_cache_entry(cache, match_id=100, stats=[(300, 3000)])
+
+    run_main(tmp_path, "match", "--account", "42", "--ago", "5")
+
+    assert "Only fewer than 6 games" in capsys.readouterr().out
+
+
+def test_match_ago_with_a_match_id_is_rejected(capsys, tmp_path):
+    cache = tmp_path / "cache"
+    cache.mkdir()
+    write_cache_entry(cache, match_id=100, stats=[(300, 3000)])
+
+    run_main(tmp_path, "match", "100", "--account", "42", "--ago", "1")
+
+    assert "not both" in capsys.readouterr().out
+
+
 def test_match_interval_flag(capsys, tmp_path):
     cache = tmp_path / "cache"
     cache.mkdir()

@@ -244,6 +244,12 @@ def build_parser(config: str | Path | None = None) -> argparse.ArgumentParser:
         help="show another player from the match instead of you, by hero name, like Wraith",
     )
     mt.add_argument("--interval", type=int, default=5, help="interval length in minutes")
+    mt.add_argument(
+        "--ago",
+        type=int,
+        default=0,
+        help="step back from your latest match, 0 is latest, 1 is the one before",
+    )
     view = mt.add_mutually_exclusive_group()
     view.add_argument(
         "--souls",
