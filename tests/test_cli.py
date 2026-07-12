@@ -3391,6 +3391,21 @@ def test_hero_card_as_of_shows_era_label(capsys, tmp_path):
     assert "as of 2026-02-01" in out
 
 
+def test_ability_card_as_of_shows_era_label(capsys, tmp_path):
+    main(["ability", "Fire Scarabs", "--as-of", "2026-03-01"], config=tmp_path / "none.json")
+
+    assert "as of 2026-03-01" in capsys.readouterr().out
+
+
+def test_item_on_hero_as_of_shows_era_label(capsys, tmp_path):
+    main(
+        ["item", "Healbane", "--hero", "Mirage", "--as-of", "2026-03-01"],
+        config=tmp_path / "none.json",
+    )
+
+    assert "as of 2026-03-01" in capsys.readouterr().out
+
+
 def test_hero_card_changes_lists_patches(capsys, tmp_path):
     main(["hero", "Mirage", "--changes"], config=tmp_path / "none.json")
 

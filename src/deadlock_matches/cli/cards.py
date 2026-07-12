@@ -475,7 +475,7 @@ def ability_report(args: argparse.Namespace) -> None:
 
     owner = f"{heroes.hero_name(ability.hero)} " if ability.hero else ""
     note = f" at {', '.join(where)}" if where and ability.kind == "ability" else ""
-    print(f"{ability.name}  ({owner}{ability.kind}{note})")
+    print(f"{ability.name}  ({owner}{ability.kind}{note}){_as_of_note(when)}")
 
     if ability.kind == "weapon":
         for stat, value in ability.weapon.items():

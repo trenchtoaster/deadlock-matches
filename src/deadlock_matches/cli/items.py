@@ -42,7 +42,10 @@ def item_report(args: argparse.Namespace, config: str | Path | None = None) -> N
         print(f"Unknown hero: {args.hero}")
         return
 
-    print(f"{item.name} ({item.slot} tier {item.tier}, {item.cost:,} souls) on {args.hero}\n")
+    print(
+        f"{item.name} ({item.slot} tier {item.tier}, {item.cost:,} souls) on {args.hero}"
+        f"{cards._as_of_note(when)}\n"
+    )
 
     if args.account:
         ids = format_accounts(args.account, config)
