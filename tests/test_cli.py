@@ -988,14 +988,14 @@ def test_history_without_account_prints_hint(capsys, tmp_path):
     assert "--account" in capsys.readouterr().out
 
 
-def test_history_defaults_to_last_ten_games(capsys, tmp_path):
+def test_default_command_lists_last_ten_games(capsys, tmp_path):
     cache = tmp_path / "cache"
     cache.mkdir()
 
     for n in range(12):
         write_cache_entry(cache, match_id=100 + n, start_time=1783000000 + n * 3600)
 
-    run_main(tmp_path, "history")
+    run_main(tmp_path)
 
     lines = [line.rstrip() for line in capsys.readouterr().out.splitlines()]
     listed = [line for line in lines if re.search(r"\d{3}$", line)]

@@ -138,6 +138,7 @@ def build_parser(config: str | Path | None = None) -> argparse.ArgumentParser:
     ap.add_argument(
         "--parquet", default=str(export.PARQUET_DIR), help="where the parquet tables are written"
     )
+    ap.set_defaults(account=accounts)
     sub = ap.add_subparsers(dest="cmd", metavar="<command>")
 
     def command(name: str) -> argparse.ArgumentParser:
@@ -651,6 +652,7 @@ def main(argv: Sequence[str] | None = None, config: str | Path | None = None) ->
                 )
 
     needs_account = args.cmd in (
+        None,
         "history",
         "compare",
         "winrate",
