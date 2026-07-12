@@ -1,4 +1,4 @@
-"""Read and create the gitignored config.toml, from a clone or an installed CLI."""
+"""Read and create the gitignored config.toml in the user config directory."""
 
 from __future__ import annotations
 
@@ -15,47 +15,9 @@ if TYPE_CHECKING:
     from collections.abc import Iterable
 
 
-def _source_root() -> Path | None:
-    """Repo root when running from a source checkout, None once installed."""
-    root = Path(__file__).resolve().parents[2]
-
-    return root if (root / "pyproject.toml").is_file() else None
-
-
-def _default_config() -> Path:
-    """Where a new config.toml gets written.
-
-    The repo root in a source checkout, the user config directory otherwise.
-    """
-    root = _source_root()
-
-    if root is not None:
-        return root / "config.toml"
-
-    return paths.config_dir() / "deadlock-matches" / "config.toml"
-
-
 def find_config() -> Path:
-    """Locate config.toml across clone, editable, and installed use.
-
-    Checks the current directory, then the source checkout, then the user
-    config directory, and returns the first that exists. Falls back to the
-    default write location when none is there yet.
-    """
-    candidates = [Path.cwd() / "config.toml"]
-
-    root = _source_root()
-
-    if root is not None:
-        candidates.append(root / "config.toml")
-
-    candidates.append(paths.config_dir() / "deadlock-matches" / "config.toml")
-
-    for candidate in candidates:
-        if candidate.exists():
-            return candidate
-
-    return _default_config()
+    """Return the config.toml path, ~/.config on Linux and %APPDATA% on Windows."""
+    return paths.config_dir() / "deadlock-matches" / "config.toml"
 
 
 def _config(path: str | Path | None = None) -> dict[str, Any]:
@@ -123,6 +85,17 @@ def config_players(hero: str, path: str | Path | None = None) -> dict[str, int]:
             return {player: int(a) for player, a in ids.items()}
 
     return {}
+
+
+def config_players_all(path: str | Path | None = None) -> dict[str, dict[str, int]]:
+    """Read every [players.<hero>] table as {hero: {player: id}}."""
+    by_hero = _config(path).get("players") or {}
+
+    return {
+        hero: {player: int(a) for player, a in ids.items()}
+        for hero, ids in by_hero.items()
+        if isinstance(ids, dict)
+    }
 
 
 def config_exclude(path: str | Path | None = None) -> set[str]:

@@ -46,6 +46,7 @@ COMMAND_HELP = {
     "meta": "public hero win rates and pick rates across all matches",
     "assets": "redownload heroes.json / items.json (run after a patch)",
     "accounts": "Steam accounts on this PC that have run Deadlock, for config.toml",
+    "config": "where config.toml lives and the settings it holds",
     "schema": "column docs for the parquet tables (the data dictionary)",
 }
 
@@ -56,7 +57,7 @@ SECTIONS = (
         ("leaderboard", "download", "compare", "movement", "builds", "item"),
     ),
     ("game knowledge", ("hero", "ability", "meta", "assets")),
-    ("setup", ("accounts", "schema")),
+    ("setup", ("accounts", "config", "schema")),
 )
 
 
@@ -127,17 +128,9 @@ def build_parser(config: str | Path | None = None) -> argparse.ArgumentParser:
         formatter_class=argparse.RawDescriptionHelpFormatter,
         description=_command_sections(),
     )
-    ap.add_argument(
-        "--cache",
-        default=str(extract.DEFAULT_CACHE),
-        help="Steam httpcache folder, detected automatically",
-    )
-    ap.add_argument(
-        "--archive", default=str(extract.ARCHIVE_DIR), help="where match protobufs are archived"
-    )
-    ap.add_argument(
-        "--parquet", default=str(export.PARQUET_DIR), help="where the parquet tables are written"
-    )
+    ap.add_argument("--cache", default=str(extract.DEFAULT_CACHE), help=argparse.SUPPRESS)
+    ap.add_argument("--archive", default=str(extract.ARCHIVE_DIR), help=argparse.SUPPRESS)
+    ap.add_argument("--parquet", default=str(export.PARQUET_DIR), help=argparse.SUPPRESS)
     ap.set_defaults(account=accounts)
     sub = ap.add_subparsers(dest="cmd", metavar="<command>")
 
@@ -555,6 +548,12 @@ def build_parser(config: str | Path | None = None) -> argparse.ArgumentParser:
     )
 
     command("accounts")
+    cf = command("config")
+    cf.add_argument(
+        "--edit",
+        action="store_true",
+        help="open config.toml in your editor ($EDITOR or the default app)",
+    )
 
     at = command("assets")
     at.add_argument(
@@ -701,6 +700,8 @@ def main(argv: Sequence[str] | None = None, config: str | Path | None = None) ->
         meta.meta_report(args)
     elif args.cmd == "accounts":
         data.list_accounts(args, config)
+    elif args.cmd == "config":
+        data.config_report(args, config)
     elif args.cmd == "assets" and args.backfill:
         data.rebuild_history(args)
     elif args.cmd == "assets":

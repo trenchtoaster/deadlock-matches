@@ -29,6 +29,7 @@ from deadlock_matches.config import (
     config_accounts,
     config_exclude,
     config_players,
+    config_players_all,
     config_timezone,
     find_config,
 )
@@ -257,6 +258,74 @@ def list_accounts(args: argparse.Namespace, config: str | Path | None = None) ->
 
     for name, a in zip(suggested, missing, strict=True):
         print(f"{name} = {a.account_id}")
+
+
+def _launch_editor(path: Path) -> None:
+    """Open a file in $VISUAL or $EDITOR, or the platform default app."""
+    import os
+    import shlex
+    import subprocess
+    import sys
+
+    editor = os.environ.get("VISUAL") or os.environ.get("EDITOR")
+
+    if editor:
+        subprocess.run([*shlex.split(editor), str(path)], check=False)
+    elif sys.platform == "win32":
+        os.startfile(str(path))  # type: ignore[attr-defined]
+    elif sys.platform == "darwin":
+        subprocess.run(["open", str(path)], check=False)
+    else:
+        subprocess.run(["xdg-open", str(path)], check=False)
+
+
+def config_report(args: argparse.Namespace, config: str | Path | None = None) -> None:
+    """Print where config.toml lives and the settings it holds, or open it with --edit."""
+    from deadlock_matches.config import ensure_config
+
+    path = Path(config) if config else find_config()
+
+    if getattr(args, "edit", False):
+        ensure_config(path)
+        _launch_editor(path)
+        print(f"Opened {path}")
+
+        return
+
+    if not path.exists():
+        print(f"Config: {path}  (not created yet)")
+        print("Run `deadlock accounts` to create it and add your account IDs")
+
+        return
+
+    print(f"Config: {path}\n")
+
+    print(f"Timezone: {config_timezone(config)}\n")
+
+    accounts = config_account_names(config)
+    print("Accounts:")
+
+    if accounts:
+        for name, account_id in accounts.items():
+            print(f"  {name:<16} {account_id}")
+    else:
+        print("  none set, run `deadlock accounts`")
+
+    players = config_players_all(config)
+
+    if players:
+        print("\nTracked players:")
+
+        for hero, who in players.items():
+            print(f"  {hero}")
+
+            for name, account_id in who.items():
+                print(f"    {name:<16} {account_id}")
+
+    exclude = config_exclude(config)
+
+    if exclude:
+        print(f"\nExcluded tables: {', '.join(sorted(exclude))}")
 
 
 def refresh_assets(args: argparse.Namespace) -> None:

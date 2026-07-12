@@ -32,7 +32,7 @@ Works on Linux and Windows, the cache path is detected automatically. Two ways t
 - `uv tool install deadlock-matches` installs the `deadlock` command on its own. [uv](https://docs.astral.sh/uv/) downloads a Python for it if you do not have one. `pip install deadlock-matches` works too on Python 3.12 or newer.
 - clone this repository and use `uv run deadlock` instead. Pick this if you want the marimo notebook, the Claude Code skill, or the source next to your queries.
 
-The examples in this README use the `uv run deadlock` form from a clone. With a tool or pip install the prefix goes away and the commands are just `deadlock history`, `deadlock sync`, and so on. A clone keeps `config.toml` at the repo root, an installed CLI keeps it in your user config directory (`~/.config/deadlock-matches/` on Linux), and every command prints the exact path when no account is set.
+The examples in this README use the `uv run deadlock` form from a clone. With a tool or pip install the prefix goes away and the commands are just `deadlock history`, `deadlock sync`, and so on. Either way `config.toml` lives in your user config directory (`~/.config/deadlock-matches/` on Linux, `%APPDATA%\deadlock-matches\` on Windows). `deadlock config` prints its exact path and your current settings, and `deadlock config --edit` opens it in your editor.
 
 - run `uv run deadlock accounts` to get set up. It writes a starter `config.toml` and lists the Steam accounts on your PC with their account IDs (the "Steam32" ID), so paste the ones that are you into the config.
   - the name is just a label so you can use your Steam account name, profile name, or just a nickname like "main" or "alt"
@@ -122,6 +122,15 @@ Add the ones that are you to config.toml, the names are yours to change:
 [accounts]
 alt1 = 123456789
 ```
+
+### Your config
+
+```
+uv run deadlock config
+```
+
+- prints where `config.toml` lives (the full path, ready to paste) and what it holds: timezone, accounts, tracked players, and any excluded tables
+- `deadlock config --edit` opens it in your editor (`$EDITOR`, or the default app on Windows and macOS), handy since the file sits in a hidden folder
 
 ### Sync new matches
 
@@ -1174,7 +1183,7 @@ On Windows both live under `%LOCALAPPDATA%\deadlock-matches`.
 
 - `matches/` inside the data directory is the one thing that cannot be rebuilt: Steam evicts its copies and the replay servers only keep match bodies for a few months. Copy it somewhere first if you might come back
 - the parquet tables, asset data, and cache all rebuild or redownload from the archive and the API
-- `config.toml` sits in the repo folder and goes with it
+- `config.toml` lives in your user config directory (`~/.config/deadlock-matches/`, `%APPDATA%\deadlock-matches\` on Windows), separate from the data directory, so resetting the data leaves it alone. `deadlock config` prints its path
 
 ## The parquet tables
 

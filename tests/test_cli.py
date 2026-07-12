@@ -988,6 +988,34 @@ def test_history_without_account_prints_hint(capsys, tmp_path):
     assert "--account" in capsys.readouterr().out
 
 
+def test_config_command_shows_path_and_settings(capsys, tmp_path):
+    run_main(tmp_path, "config", accounts="main = 42")
+
+    out = capsys.readouterr().out
+
+    assert "config.toml" in out
+    assert re.search(r"main\s+42", out)
+    assert "America/Chicago" in out
+
+
+def test_config_command_reports_missing_file(capsys):
+    main(["config"], config="none.json")
+
+    assert "not created yet" in capsys.readouterr().out
+
+
+def test_config_edit_creates_and_opens_the_file(capsys, tmp_path, monkeypatch):
+    opened = []
+    monkeypatch.setattr(data, "_launch_editor", opened.append)
+    cfg = tmp_path / "config.toml"
+
+    main(["config", "--edit"], config=cfg)
+
+    assert opened == [cfg]
+    assert cfg.exists()
+    assert "Opened" in capsys.readouterr().out
+
+
 def test_default_command_lists_last_ten_games(capsys, tmp_path):
     cache = tmp_path / "cache"
     cache.mkdir()
