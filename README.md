@@ -153,7 +153,7 @@ Archive: 814 matches (+1 new) at ~/.local/share/deadlock-matches/matches
 Decoded 1 new matches and skipped 813 already exported
 ```
 
-The API might not have every game an account played, so the sync grabs whatever it does have. The only way to guarantee every match is to click each one in the in-game match history, and the game lets you open roughly 50 before it makes you wait and try again.
+The API holds at least a subset of an account's matches, and it is possible to have it retrieve all of them, so the sync grabs whatever it has. To fill the gaps yourself you can click each game in the in-game match history, though the game only lets you open roughly 50 before making you wait and try again. Check out [deadlock-api.com](https://deadlock-api.com) for more details.
 
 ### Match history
 
@@ -180,7 +180,7 @@ uv run deadlock match
 ```
 
 - the final scoreboard of a single match and the per-5-minute interval data for your character by default
-- `deadlock match 12345678` reads that match from your tables, `deadlock match` your most recent one. `--hero Wraith` follows another player from the match instead (your games keep all 12 players), and `--interval 10` changes the bucket size
+- `deadlock match 12345678` reads that match from your tables, `deadlock match` your most recent one. `--ago 1` steps back to the game before that (`--ago 2` two back, and so on) without needing the ID. `--hero Wraith` follows another player from the match instead (your games keep all 12 players), and `--interval 10` changes the bucket size
 - the scoreboard shows the match screen numbers while the interval columns come from the minute snapshots, so the Last hits totals can differ slightly. Troopers and Neutrals split the interval Last hits column
 - a game that is not yours works too: `deadlock download --match <id>` pulls it into the players tables once, and `deadlock match <id> --hero Wraith` reads it from there automatically
 
@@ -531,7 +531,7 @@ Blue
 
 #### `--movement`: dashes, slides, and time in the air
 
-- how everyone moved through the match, from the per minute `movement_intervals` table, which always builds even with `movement` in the config exclude list. The Movement table sums the whole match for every player (allies first, most meters first), then your own game splits per interval. Meters covered and the pace while moving, then how much of the alive time went to standing still, sliding, being in the air, riding ziplines, and fighting players, plus dash counts. An interval you spent fully dead prints `-` for the percents
+- how everyone moved through the match, from the per minute `movement_intervals` table, which always builds even with `movement` in the config exclude list. The Movement table sums the whole match for every player (allies first, most meters first), then your own game splits per interval. Meters covered and the pace while moving, then how much of the alive time went to sliding, being in the air, riding ziplines, and fighting players, plus how much of the moving time was spent standing still and the dash counts. An interval you spent fully dead prints `-` for the percents
 
 ```
   Movement

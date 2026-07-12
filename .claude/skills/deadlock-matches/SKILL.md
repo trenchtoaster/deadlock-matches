@@ -27,7 +27,7 @@ uv run deadlock history [--days N] [--since 2026-07-01]
                                           # result, K/D/A, souls, damage, timestamp, and match id,
                                           # newest last, last 10 games by default. Run it to get
                                           # the match id that match/download take
-uv run deadlock match [12345678] [--hero Wraith] [--interval 10] [--souls|--damage|--healing|--teams|--laning [9]|--abilities|--items|--accolades|--buffs|--stacks|--combat|--movement|--deaths|--kills]
+uv run deadlock match [12345678] [--ago 1] [--hero Wraith] [--interval 10] [--souls|--damage|--healing|--teams|--laning [9]|--abilities|--items|--accolades|--buffs|--stacks|--combat|--movement|--deaths|--kills]
                                           # prints the 12-player final scoreboard (lobby average,
                                           # K/D/A, souls, damage, obj damage, healing, prevented,
                                           # last hits, denies, resolved player starred), then that
@@ -35,7 +35,9 @@ uv run deadlock match [12345678] [--hero Wraith] [--interval 10] [--souls|--dama
                                           # souls (+/min), K/D/A, damage dealt/taken, obj damage,
                                           # healing + prevented healing, last hits (troopers +
                                           # neutrals split out), and denies, with a Total row;
-                                          # no id = your most recent match, --hero picks any
+                                          # no id = your most recent match, --ago N steps back
+                                          # N games from latest without the id (0 is latest,
+                                          # rejects a match id alongside it), --hero picks any
                                           # player in the match instead of you (your games keep
                                           # all 12 players; a match none of your accounts played
                                           # never reaches your tables — download --match pulls it
@@ -57,7 +59,7 @@ The `match` view flags:
 - `--buffs` — the buffs table: permanent buffs per family and level plus the stat they added up to (per-pickup values resolved against statue_history at match time), bridge buffs, and a sources split (statues collected via PowerUp custom stats, sinner jackpots x4 via accolade 14, mid boss kills x2 team-wide, rest = urn runs and light melee jackpots). Counts have no timestamps, so no per-interval split
 - `--stacks` — stack counts from the stacks table for EVERY player in the match, from the abilities and items that track stacks (Sticky Bomb, Trophy Collector, Glass Cannon, Restorative Locket, Guided Owl / Assassinate / Combo kill counters). Final values only, no timestamps
 - `--combat` — the fight stats from the custom_stats table. First an Aim vs heroes table with every player in the lobby sorted by headshot rate: shots, hit/HS rates vs heroes, gun and headshot damage as the two DISJOINT bullet series from the damage graph (body vs `_crit` sources, they sum to the Bullet total; archive percentiles left the CLI, use `queries.aim_rates` for those). Then player-only lines: enemy fire at you (the whole team combined, no per-enemy data exists), lucky shots / immobilized hits / stun rates when nonzero, the familiar all-target accuracy so the vs-hero rate never reads as a bug (non-hero targets get hit at ~92% median and the wire has NO trooper/neutral/objective split, just heroes vs everything else), damage by range band with falloff splits, parries with melee damage taken (light/heavy melee only, ability melees land under their own source) and Counterspell/Rebuttal buy times, comeback souls (Unstable Rift called out), average unspent souls/AP, and per-hero counters (stack uptime tables). Whole-match totals, ignores --interval
-- `--movement` — a Movement table summing the whole match for every player in the lobby (allies then enemies, most meters first, resolved player starred), then the resolved player split per interval with a Total row. The columns both times: meters covered and the pace while moving, stationary/slide/in air/zipline/fighting percents of alive seconds, dash and air dash counts. Reads the per-minute movement_intervals table (built even when the raw movement table is excluded); intervals spent dead print "-"
+- `--movement` — a Movement table summing the whole match for every player in the lobby (allies then enemies, most meters first, resolved player starred), then the resolved player split per interval with a Total row. The columns both times: meters covered and the pace while moving, slide/in air/zipline/fighting percents of alive seconds, stationary as a percent of moving seconds, dash and air dash counts. Reads the per-minute movement_intervals table (built even when the raw movement table is excluded); intervals spent dead print "-"
 - `--deaths` — first the damage each enemy dealt to you per interval (one row per enemy, sorted by total, from the damage_targets table), then each death logged: killer, game time, fight length, killer distance in meters, respawn timer. `--kills` is the same from the killer side (damage you dealt per enemy, then the kill log). The death log reads the deaths table directly, no movement join
 
 ```bash
