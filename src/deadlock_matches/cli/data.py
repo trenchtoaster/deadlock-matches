@@ -326,6 +326,8 @@ def config_report(args: argparse.Namespace, config: str | Path | None = None) ->
 
     if exclude:
         print(f"\nExcluded tables: {', '.join(sorted(exclude))}")
+    else:
+        print("\nExcluded tables: none  (export writes every table)")
 
 
 def refresh_assets(args: argparse.Namespace) -> None:
@@ -705,8 +707,9 @@ def _sync_from_archive(
     _print_table_counts(result.counts)
 
     if result.skipped:
+        plural = "es" if result.decoded != 1 else ""
         print(
-            f"Decoded {result.decoded:,} new matches "
+            f"\nExported {result.decoded:,} new match{plural} "
             f"and skipped {result.skipped:,} already exported"
         )
 
@@ -742,21 +745,24 @@ def _sync_from_api(
 
         match_ids.update(r["match_id"] for r in kept)
         label = names.get(account_id, str(account_id))
-        print(f"  {label:<18} {len(kept):>5} games   {span}")
+        noun = "game" if len(kept) == 1 else "games"
+        print(f"  {label:<18} {len(kept):>5} {noun:<5}   {span}")
 
     archived = extract.archived_match_ids(args.archive)
     to_get = sorted(match_ids - archived)
     have = len(match_ids & archived)
 
+    noun = "game" if len(match_ids) == 1 else "games"
     print(
-        f"\n{len(match_ids)} games in the API: {have} already archived, {len(to_get)} to download"
+        f"\n{len(match_ids)} {noun} in the API: {have} already archived, {len(to_get)} to download"
     )
 
     if getattr(args, "dry_run", False) or not to_get:
         return
 
     written, missing = players.download_metadata(to_get, args.archive)
-    print(f"Downloaded {written} matches into the archive")
+    noun = "match" if written == 1 else "matches"
+    print(f"Downloaded {written} {noun} into the archive")
 
     if missing:
         print(f"{len(missing)} not available from the API")

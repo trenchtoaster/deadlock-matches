@@ -473,6 +473,33 @@ def test_sync_api_downloads_missing_matches_into_the_archive(tmp_path, monkeypat
     assert "2 to download" in out
 
 
+def test_sync_api_singular_counts_read_grammatically(tmp_path, monkeypatch, capsys):
+    cfg = _sync_config(tmp_path)
+    monkeypatch.setattr(
+        players,
+        "match_history",
+        lambda account_id: [{"match_id": 500, "start_time": 1_700_000_000}],
+    )
+    monkeypatch.setattr(extract, "archived_match_ids", lambda archive_dir: set())
+    monkeypatch.setattr(players, "download_metadata", lambda match_ids, archive_dir: (1, []))
+    monkeypatch.setattr(
+        export,
+        "export_new",
+        lambda archive_dir, out_dir, exclude, accounts: export.ExportResult(
+            counts={"matches": 1}, decoded=1, skipped=0
+        ),
+    )
+
+    main(["--parquet", str(tmp_path), "sync", "--source", "api"], config=cfg)
+
+    out = capsys.readouterr().out
+
+    assert "1 game in the API" in out
+    assert "Downloaded 1 match into the archive" in out
+    assert "1 games" not in out
+    assert "1 matches" not in out
+
+
 def test_sync_api_dry_run_skips_the_download(tmp_path, monkeypatch, capsys):
     cfg = _sync_config(tmp_path)
     seen = {}
@@ -502,6 +529,38 @@ def test_sync_local_exports_the_config_accounts(tmp_path, monkeypatch, capsys):
     main(["--parquet", str(tmp_path), "sync"], config=cfg)
 
     assert seen["accounts"] == [42, 43]
+
+
+def test_sync_local_reports_a_single_new_match(tmp_path, monkeypatch, capsys):
+    cfg = _sync_config(tmp_path)
+    monkeypatch.setattr(data, "sync_archive", lambda cache, archive: 0)
+    monkeypatch.setattr(
+        export,
+        "export_new",
+        lambda archive_dir, out_dir, exclude, accounts: export.ExportResult(
+            counts={"matches": 1}, decoded=1, skipped=813
+        ),
+    )
+
+    main(["--parquet", str(tmp_path), "sync"], config=cfg)
+
+    assert "Exported 1 new match and skipped 813 already exported" in capsys.readouterr().out
+
+
+def test_sync_local_pluralizes_several_new_matches(tmp_path, monkeypatch, capsys):
+    cfg = _sync_config(tmp_path)
+    monkeypatch.setattr(data, "sync_archive", lambda cache, archive: 0)
+    monkeypatch.setattr(
+        export,
+        "export_new",
+        lambda archive_dir, out_dir, exclude, accounts: export.ExportResult(
+            counts={"matches": 3}, decoded=3, skipped=800
+        ),
+    )
+
+    main(["--parquet", str(tmp_path), "sync"], config=cfg)
+
+    assert "Exported 3 new matches and skipped 800 already exported" in capsys.readouterr().out
 
 
 def test_sync_refuses_an_account_not_in_config(tmp_path, monkeypatch, capsys):
@@ -996,6 +1055,21 @@ def test_config_command_shows_path_and_settings(capsys, tmp_path):
     assert "config.toml" in out
     assert re.search(r"main\s+42", out)
     assert "America/Chicago" in out
+
+
+def test_config_command_shows_no_excluded_tables_when_empty(capsys, tmp_path):
+    run_main(tmp_path, "config")
+
+    assert "Excluded tables: none" in capsys.readouterr().out
+
+
+def test_config_command_lists_excluded_tables(capsys, tmp_path):
+    run_main(tmp_path, "config", accounts="", extra='exclude = ["movement"]')
+
+    out = capsys.readouterr().out
+
+    assert "Excluded tables: movement" in out
+    assert "none" not in out.split("Excluded tables:")[1]
 
 
 def test_config_command_reports_missing_file(capsys):
