@@ -1,6 +1,6 @@
 import datetime as dt
 
-from deadlock_matches import history, statues
+from deadlock_matches.assets import history, statues
 
 
 def statue_rec(value):

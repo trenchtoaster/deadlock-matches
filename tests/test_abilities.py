@@ -3,7 +3,7 @@ import re
 
 import pytest
 
-from deadlock_matches import abilities, history
+from deadlock_matches.assets import abilities, history
 
 
 def _ability_history(path, first, second):

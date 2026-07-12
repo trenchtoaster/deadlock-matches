@@ -3,7 +3,7 @@ import json
 
 import pytest
 
-from deadlock_matches import heroes
+from deadlock_matches.assets import heroes
 
 
 def test_hero_map_loads_real_file():

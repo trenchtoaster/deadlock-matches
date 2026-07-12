@@ -8,7 +8,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any
 
-from deadlock_matches import items
+from deadlock_matches.assets import items
 
 if TYPE_CHECKING:
     from deadlock_matches.extract import MatchInfo

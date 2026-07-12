@@ -4,7 +4,7 @@ import json
 
 import pytest
 
-from deadlock_matches import history, items
+from deadlock_matches.assets import history, items
 
 
 def _write_history(path):

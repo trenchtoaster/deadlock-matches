@@ -13,15 +13,17 @@ from typing import TYPE_CHECKING, Any
 import polars as pl
 
 from deadlock_matches import (
-    accolades,
     export,
     extract,
-    heroes,
-    items,
     meta,
     paths,
     players,
     queries,
+)
+from deadlock_matches.assets import (
+    accolades,
+    heroes,
+    items,
     skill_rating,
     statues,
 )
@@ -900,7 +902,7 @@ RIFT_ERA_START = dt.datetime(2026, 6, 30, 10, 7, 19, tzinfo=dt.UTC)
 """Release of client build 6601, the Unstable Rift rework in the deadlock-api version timeline.
 
 - earlier matches ran the old urn-KOTH rules with a different bounty
-- the build and its date come from assets.client_version_dates
+- the build and its date come from snapshots.client_version_dates
 """
 
 RIFT_SHARE_BASE = 247

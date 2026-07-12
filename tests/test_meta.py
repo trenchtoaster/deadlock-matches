@@ -1,6 +1,7 @@
 import pytest
 
-from deadlock_matches import items, meta
+from deadlock_matches import meta
+from deadlock_matches.assets import items
 
 EE = 3005970438
 

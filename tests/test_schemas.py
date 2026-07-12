@@ -3,7 +3,8 @@ import datetime as dt
 import polars as pl
 import pytest
 
-from deadlock_matches import assets, schemas
+from deadlock_matches import schemas
+from deadlock_matches.assets import snapshots
 
 MATCH_ROW = {
     "match_id": 1,
@@ -95,8 +96,8 @@ def test_weapon_history_columns_match_assets():
         if c not in ("ability_class", "era_from", "client_version")
     ]
 
-    assert tuple(cols) == assets.WEAPON_FIELDS
-    assert schemas.WEAPON_HISTORY_FIELDS == assets.WEAPON_FIELDS
+    assert tuple(cols) == snapshots.WEAPON_FIELDS
+    assert schemas.WEAPON_HISTORY_FIELDS == snapshots.WEAPON_FIELDS
 
 
 def test_table_path_routes_asset_tables(tmp_path):

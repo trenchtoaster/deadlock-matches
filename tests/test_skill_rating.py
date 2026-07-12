@@ -1,7 +1,7 @@
 import datetime as dt
 import json
 
-from deadlock_matches import assets, history, skill_rating
+from deadlock_matches.assets import history, skill_rating, snapshots
 
 
 def test_rank_asof_picks_the_era(tmp_path):
@@ -63,10 +63,10 @@ def test_tier_map_covers_all_tiers():
 
 
 def test_refresh_skill_rating_drops_images(tmp_path, monkeypatch):
-    monkeypatch.setattr(assets.api, "get_json", lambda path, **kw: [RANK_REC])
+    monkeypatch.setattr(snapshots.api, "get_json", lambda path, **kw: [RANK_REC])
     p = tmp_path / "skill_rating.json"
 
-    assert assets.refresh_skill_rating(p) == 1
+    assert snapshots.refresh_skill_rating(p) == 1
 
     rec = json.loads(p.read_text())[0]
 
@@ -79,7 +79,7 @@ def test_refresh_skill_rating_clears_cache(tmp_path, monkeypatch):
 
     assert skill_rating.label(76, p) == "Old 6"
 
-    monkeypatch.setattr(assets.api, "get_json", lambda path, **kw: [RANK_REC])
-    assets.refresh_skill_rating(p)
+    monkeypatch.setattr(snapshots.api, "get_json", lambda path, **kw: [RANK_REC])
+    snapshots.refresh_skill_rating(p)
 
     assert skill_rating.label(76, p) == "Archon 6"

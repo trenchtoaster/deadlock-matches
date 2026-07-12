@@ -10,7 +10,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-from deadlock_matches import history
+from deadlock_matches.assets import history
 
 STATUES_JSON = Path(__file__).parent / "data" / "statues.json"
 STATUE_HISTORY_PARQUET = Path(__file__).parent / "data" / "statue_history.parquet"

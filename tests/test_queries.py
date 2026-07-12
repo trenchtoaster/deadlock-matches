@@ -4,7 +4,8 @@ import zoneinfo
 import polars as pl
 import pytest
 
-from deadlock_matches import export, heroes, history, queries, schemas
+from deadlock_matches import export, queries, schemas
+from deadlock_matches.assets import heroes, history
 from deadlock_matches.extract import pb
 
 START = 1783000000

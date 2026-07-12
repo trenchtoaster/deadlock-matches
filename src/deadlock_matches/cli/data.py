@@ -10,18 +10,20 @@ from typing import TYPE_CHECKING, Any
 import polars as pl
 
 from deadlock_matches import (
-    abilities,
     api,
-    assets,
     export,
     extract,
-    heroes,
-    history,
-    items,
     paths,
     players,
     queries,
+)
+from deadlock_matches.assets import (
+    abilities,
+    heroes,
+    history,
+    items,
     skill_rating,
+    snapshots,
     statues,
 )
 from deadlock_matches.config import (
@@ -261,12 +263,12 @@ def refresh_assets(_args: argparse.Namespace) -> None:
     old_items = {i.name for i in items.item_map().values()}
     old_heroes = {h.name for h in heroes.hero_map().values()}
 
-    n_heroes = assets.refresh_heroes()
-    n_items = assets.refresh_items()
-    n_abilities = assets.refresh_abilities()
-    n_tiers = assets.refresh_skill_rating()
-    n_accolades = assets.refresh_accolades()
-    n_statues = assets.refresh_statues()
+    n_heroes = snapshots.refresh_heroes()
+    n_items = snapshots.refresh_items()
+    n_abilities = snapshots.refresh_abilities()
+    n_tiers = snapshots.refresh_skill_rating()
+    n_accolades = snapshots.refresh_accolades()
+    n_statues = snapshots.refresh_statues()
 
     new_items = {i.name for i in items.item_map().values()}
     new_heroes = {h.name for h in heroes.hero_map().values()}
@@ -290,7 +292,7 @@ def refresh_assets(_args: argparse.Namespace) -> None:
     for name in sorted(old_items - new_items):
         print(f"  gone item: {name}")
 
-    lags = assets.history_lags()
+    lags = snapshots.history_lags()
 
     if lags:
         print()
@@ -318,7 +320,7 @@ def rebuild_history(args: argparse.Namespace) -> None:
     - builder functions resolve by name at run time so tests can patch every entry
       of HISTORY_BUILDERS without knowing the names
     """
-    assets.client_version_dates(max_age=0)
+    snapshots.client_version_dates(max_age=0)
 
     if not args.confirm:
         print("Rebuilding the committed asset history tables:")
@@ -326,11 +328,11 @@ def rebuild_history(args: argparse.Namespace) -> None:
         for name, path, _ in HISTORY_BUILDERS:
             print(f"  {name:<9} {len(history.eras(path))} eras at {_tilde(path)}")
 
-        builds = sum(d >= assets.HISTORY_START for d in assets.client_version_dates().values())
+        builds = sum(d >= snapshots.HISTORY_START for d in snapshots.client_version_dates().values())
 
         if args.full:
             print(
-                f"\n--full rescans every client build since {assets.HISTORY_START} ({builds} "
+                f"\n--full rescans every client build since {snapshots.HISTORY_START} ({builds} "
                 f"builds per asset type) and overwrites those committed files."
             )
         else:
@@ -346,7 +348,7 @@ def rebuild_history(args: argparse.Namespace) -> None:
         return
 
     for name, path, builder in HISTORY_BUILDERS:
-        build = getattr(assets, builder)
+        build = getattr(snapshots, builder)
         before = len(history.eras(path))
         api.fetch_counts.clear()
         missing: list[int] = []

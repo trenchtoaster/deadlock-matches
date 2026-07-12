@@ -12,7 +12,7 @@ from typing import TYPE_CHECKING, Any
 if TYPE_CHECKING:
     from collections.abc import Iterator
 
-from deadlock_matches import heroes, history, items
+from deadlock_matches.assets import heroes, history, items
 
 ABILITIES_JSON = Path(__file__).parent / "data" / "abilities.json"
 ABILITY_HISTORY_PARQUET = Path(__file__).parent / "data" / "ability_history.parquet"

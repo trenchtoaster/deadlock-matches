@@ -1,6 +1,6 @@
 import datetime as dt
 
-from deadlock_matches import history
+from deadlock_matches.assets import history
 
 STATES = [
     {"from": "2026-01-01T00:00:00", "build": 1, "records": {"7": {"id": 7, "cost": 500}}},

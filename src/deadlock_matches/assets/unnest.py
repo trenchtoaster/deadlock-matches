@@ -12,8 +12,9 @@ from typing import TYPE_CHECKING, Any
 
 import polars as pl
 
-from deadlock_matches import abilities, assets, heroes, history, items, schemas, statues
-from deadlock_matches import skill_rating as sr
+from deadlock_matches import schemas
+from deadlock_matches.assets import abilities, heroes, history, items, snapshots, statues
+from deadlock_matches.assets import skill_rating as sr
 
 if TYPE_CHECKING:
     from collections.abc import Iterator
@@ -190,7 +191,7 @@ def ability_tables(path: Path | None = None) -> dict[str, pl.DataFrame]:
             weapons.append(
                 {
                     "ability_class": cls,
-                    **{f: weapon.get(f) for f in assets.WEAPON_FIELDS},
+                    **{f: weapon.get(f) for f in snapshots.WEAPON_FIELDS},
                     **grain,
                 }
             )

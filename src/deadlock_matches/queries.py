@@ -9,8 +9,9 @@ from typing import TYPE_CHECKING
 import polars as pl
 import polars.selectors as cs
 
-from deadlock_matches import abilities, config, export, heroes, history, items, schemas
-from deadlock_matches import skill_rating as sr
+from deadlock_matches import config, export, schemas
+from deadlock_matches.assets import abilities, heroes, history, items
+from deadlock_matches.assets import skill_rating as sr
 
 if TYPE_CHECKING:
     from collections.abc import Iterator, Sequence

@@ -18,15 +18,17 @@ from typing import TYPE_CHECKING, Any
 import polars as pl
 
 from deadlock_matches import (
-    abilities,
-    accolades,
-    asset_tables,
     extract,
-    heroes,
-    items,
     paths,
     schemas,
+)
+from deadlock_matches.assets import (
+    abilities,
+    accolades,
+    heroes,
+    items,
     statues,
+    unnest,
 )
 
 if TYPE_CHECKING:
@@ -1030,7 +1032,7 @@ def _write_asset_tables(out_dir: Path, counts: dict[str, int]) -> None:
     asset_dir = out_dir / "assets"
     asset_dir.mkdir(parents=True, exist_ok=True)
 
-    for name, df in asset_tables.all_asset_tables().items():
+    for name, df in unnest.all_asset_tables().items():
         df.write_parquet(asset_dir / f"{name}.parquet")
         counts[name] = len(df)
 

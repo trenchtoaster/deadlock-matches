@@ -7,7 +7,7 @@ import functools
 import json
 from pathlib import Path
 
-from deadlock_matches import history
+from deadlock_matches.assets import history
 
 SKILL_RATING_JSON = Path(__file__).parent / "data" / "skill_rating.json"
 RANK_HISTORY_PARQUET = Path(__file__).parent / "data" / "rank_history.parquet"

@@ -9,14 +9,16 @@ import polars as pl
 import pytest
 
 from deadlock_matches import (
-    abilities,
-    assets,
     export,
     extract,
-    heroes,
-    items,
     players,
     schemas,
+)
+from deadlock_matches.assets import (
+    abilities,
+    heroes,
+    items,
+    snapshots,
 )
 from deadlock_matches.cli import cards, data, performance
 from deadlock_matches.cli import items as cli_items
@@ -2432,8 +2434,8 @@ def test_winrate_no_games_for_account(capsys, tmp_path):
 
 
 def test_assets_subcommand_reports_counts(monkeypatch, capsys):
-    monkeypatch.setattr(assets, "refresh_heroes", lambda: 57)
-    monkeypatch.setattr(assets, "refresh_items", lambda: 251)
+    monkeypatch.setattr(snapshots, "refresh_heroes", lambda: 57)
+    monkeypatch.setattr(snapshots, "refresh_items", lambda: 251)
 
     data.refresh_assets(argparse.Namespace())
 
@@ -3241,10 +3243,10 @@ def test_accounts_command_suggests_main_when_config_empty(capsys, tmp_path):
 
 def test_backfill_without_confirm_only_warns(monkeypatch, capsys):
     called = []
-    monkeypatch.setattr(assets, "client_version_dates", lambda **kw: {1: "2026-01-05T00:00:00"})
+    monkeypatch.setattr(snapshots, "client_version_dates", lambda **kw: {1: "2026-01-05T00:00:00"})
 
     for _name, _path, fn in data.HISTORY_BUILDERS:
-        monkeypatch.setattr(assets, fn, lambda **kw: called.append(True))
+        monkeypatch.setattr(snapshots, fn, lambda **kw: called.append(True))
 
     main(["assets", "--backfill"], config="none.json")
 
@@ -3255,10 +3257,10 @@ def test_backfill_without_confirm_only_warns(monkeypatch, capsys):
 
 
 def test_backfill_confirm_runs_every_builder(monkeypatch, capsys):
-    monkeypatch.setattr(assets, "client_version_dates", lambda **kw: {1: "2026-01-05T00:00:00"})
+    monkeypatch.setattr(snapshots, "client_version_dates", lambda **kw: {1: "2026-01-05T00:00:00"})
 
     for n, (_name, _path, fn) in enumerate(data.HISTORY_BUILDERS, start=30):
-        monkeypatch.setattr(assets, fn, lambda n=n, **kw: n)
+        monkeypatch.setattr(snapshots, fn, lambda n=n, **kw: n)
 
     main(["assets", "--backfill", "--confirm"], config="none.json")
 
@@ -3271,14 +3273,14 @@ def test_backfill_confirm_runs_every_builder(monkeypatch, capsys):
 
 
 def test_history_builders_cover_every_build_function():
-    in_assets = {n for n in vars(assets) if n.startswith("build_") and n.endswith("_history")}
+    in_assets = {n for n in vars(snapshots) if n.startswith("build_") and n.endswith("_history")}
     listed = {fn for _name, _path, fn in data.HISTORY_BUILDERS}
 
     assert in_assets - {"build_asset_history"} == listed
 
 
 def test_live_history_checks_match_history_builders():
-    checks = {name for name, *_ in assets.LIVE_HISTORY_CHECKS}
+    checks = {name for name, *_ in snapshots.LIVE_HISTORY_CHECKS}
     builders = {name for name, _path, _fn in data.HISTORY_BUILDERS}
 
     assert checks == builders
@@ -3293,12 +3295,12 @@ def _stub_refreshes(monkeypatch):
         "refresh_accolades",
         "refresh_statues",
     ):
-        monkeypatch.setattr(assets, fn, lambda *a, **k: 0)
+        monkeypatch.setattr(snapshots, fn, lambda *a, **k: 0)
 
 
 def test_assets_warns_when_history_trails(monkeypatch, capsys):
     _stub_refreshes(monkeypatch)
-    monkeypatch.setattr(assets, "history_lags", lambda: [("items", "2026-06-30", 6601)])
+    monkeypatch.setattr(snapshots, "history_lags", lambda: [("items", "2026-06-30", 6601)])
 
     main(["assets"], config="none.json")
 
@@ -3311,7 +3313,7 @@ def test_assets_warns_when_history_trails(monkeypatch, capsys):
 
 def test_assets_quiet_when_history_current(monkeypatch, capsys):
     _stub_refreshes(monkeypatch)
-    monkeypatch.setattr(assets, "history_lags", list)
+    monkeypatch.setattr(snapshots, "history_lags", list)
 
     main(["assets"], config="none.json")
 

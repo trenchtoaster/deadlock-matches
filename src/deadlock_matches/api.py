@@ -14,12 +14,12 @@ Endpoints in use, one named wrapper each:
 - v1/analytics/item-stats?hero_id= -> meta.get_item_stats
 - v1/analytics/item-permutation-stats?hero_id=&comb=2 -> meta.get_item_pairs
 - v1/analytics/hero-stats -> meta.get_hero_stats
-- v1/assets/heroes -> assets.refresh_heroes
-- v1/assets/items/by-type/{kind} -> assets.refresh_items / refresh_abilities
-- v1/assets/ranks -> assets.refresh_skill_rating
-- v1/assets/accolades -> assets.refresh_accolades
-- v1/assets/misc-entities -> assets.refresh_statues
-- v1/assets/steam-info/all -> assets.client_version_dates
+- v1/assets/heroes -> snapshots.refresh_heroes
+- v1/assets/items/by-type/{kind} -> snapshots.refresh_items / refresh_abilities
+- v1/assets/ranks -> snapshots.refresh_skill_rating
+- v1/assets/accolades -> snapshots.refresh_accolades
+- v1/assets/misc-entities -> snapshots.refresh_statues
+- v1/assets/steam-info/all -> snapshots.client_version_dates
 - the assets endpoints above with ?client_version= -> assets backfill, permanent per build
 
 Full API surface: https://api.deadlock-api.com/docs

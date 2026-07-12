@@ -7,7 +7,8 @@ from typing import TYPE_CHECKING
 
 import polars as pl
 
-from deadlock_matches import heroes, items, meta, players, queries
+from deadlock_matches import meta, players, queries
+from deadlock_matches.assets import heroes, items
 from deadlock_matches.cli import cards
 from deadlock_matches.cli.data import no_pool_hint
 from deadlock_matches.config import config_players, format_accounts

@@ -5,7 +5,7 @@ import urllib.error
 
 import pytest
 
-from deadlock_matches import abilities, assets, heroes, history, items
+from deadlock_matches.assets import abilities, heroes, history, items, snapshots
 
 HERO_REC = {
     "id": 52,
@@ -126,10 +126,10 @@ ACCOLADE_REC = {
 
 
 def test_refresh_accolades_keeps_id_stat_and_flavor_name(tmp_path, monkeypatch):
-    monkeypatch.setattr(assets.api, "get_json", lambda path, **kw: [ACCOLADE_REC])
+    monkeypatch.setattr(snapshots.api, "get_json", lambda path, **kw: [ACCOLADE_REC])
     p = tmp_path / "accolades.json"
 
-    assert assets.refresh_accolades(p) == 1
+    assert snapshots.refresh_accolades(p) == 1
 
     rec = json.loads(p.read_text())[0]
 
@@ -155,10 +155,10 @@ CRATE_REC = {
 
 
 def test_refresh_statues_keeps_the_permanent_stat(tmp_path, monkeypatch):
-    monkeypatch.setattr(assets.api, "get_json", lambda path, **kw: [STATUE_REC, CRATE_REC])
+    monkeypatch.setattr(snapshots.api, "get_json", lambda path, **kw: [STATUE_REC, CRATE_REC])
     p = tmp_path / "statues.json"
 
-    assert assets.refresh_statues(p) == 1
+    assert snapshots.refresh_statues(p) == 1
 
     rec = json.loads(p.read_text())[0]
 
@@ -171,10 +171,10 @@ def test_refresh_statues_keeps_the_permanent_stat(tmp_path, monkeypatch):
 
 
 def test_refresh_heroes_flattens_stats(tmp_path, monkeypatch):
-    monkeypatch.setattr(assets.api, "get_json", lambda path, **kw: [HERO_REC])
+    monkeypatch.setattr(snapshots.api, "get_json", lambda path, **kw: [HERO_REC])
     p = tmp_path / "heroes.json"
 
-    assert assets.refresh_heroes(p) == 1
+    assert snapshots.refresh_heroes(p) == 1
 
     rec = json.loads(p.read_text())[0]
 
@@ -185,10 +185,10 @@ def test_refresh_heroes_flattens_stats(tmp_path, monkeypatch):
 
 
 def test_refresh_heroes_keeps_level_scaling(tmp_path, monkeypatch):
-    monkeypatch.setattr(assets.api, "get_json", lambda path, **kw: [HERO_REC])
+    monkeypatch.setattr(snapshots.api, "get_json", lambda path, **kw: [HERO_REC])
     p = tmp_path / "heroes.json"
 
-    assets.refresh_heroes(p)
+    snapshots.refresh_heroes(p)
 
     rec = json.loads(p.read_text())[0]
 
@@ -218,10 +218,10 @@ def test_refresh_heroes_keeps_level_scaling(tmp_path, monkeypatch):
 
 
 def test_item_properties_keep_stat_grants_only(tmp_path, monkeypatch):
-    monkeypatch.setattr(assets.api, "get_json", lambda path, **kw: [ITEM_REC])
+    monkeypatch.setattr(snapshots.api, "get_json", lambda path, **kw: [ITEM_REC])
     p = tmp_path / "items.json"
 
-    assets.refresh_items(p)
+    snapshots.refresh_items(p)
 
     rec = json.loads(p.read_text())[0]
 
@@ -235,10 +235,10 @@ def test_item_properties_keep_stat_grants_only(tmp_path, monkeypatch):
 
 
 def test_refresh_items_maps_api_field_names(tmp_path, monkeypatch):
-    monkeypatch.setattr(assets.api, "get_json", lambda path, **kw: [ITEM_REC])
+    monkeypatch.setattr(snapshots.api, "get_json", lambda path, **kw: [ITEM_REC])
     p = tmp_path / "items.json"
 
-    assert assets.refresh_items(p) == 1
+    assert snapshots.refresh_items(p) == 1
 
     rec = json.loads(p.read_text())[0]
 
@@ -250,10 +250,10 @@ def test_refresh_items_maps_api_field_names(tmp_path, monkeypatch):
 
 
 def test_refresh_items_keeps_labels_for_surviving_properties(tmp_path, monkeypatch):
-    monkeypatch.setattr(assets.api, "get_json", lambda path, **kw: [ITEM_REC])
+    monkeypatch.setattr(snapshots.api, "get_json", lambda path, **kw: [ITEM_REC])
     p = tmp_path / "items.json"
 
-    assets.refresh_items(p)
+    snapshots.refresh_items(p)
 
     rec = json.loads(p.read_text())[0]
 
@@ -265,10 +265,10 @@ def test_refresh_items_keeps_labels_for_surviving_properties(tmp_path, monkeypat
 
 
 def test_refresh_items_flattens_tooltip_sections(tmp_path, monkeypatch):
-    monkeypatch.setattr(assets.api, "get_json", lambda path, **kw: [ITEM_REC])
+    monkeypatch.setattr(snapshots.api, "get_json", lambda path, **kw: [ITEM_REC])
     p = tmp_path / "items.json"
 
-    assets.refresh_items(p)
+    snapshots.refresh_items(p)
 
     rec = json.loads(p.read_text())[0]
 
@@ -295,7 +295,7 @@ def test_scaling_and_types_reads_spirit_damage_scaling():
         }
     }
 
-    derived = assets._derive_properties(props, {"dot_health_percent"})
+    derived = snapshots._derive_properties(props, {"dot_health_percent"})
 
     assert derived["scaling"] == {"dot_health_percent": {"stat": "tech_power", "scale": 0.005}}
     assert derived["damage_types"] == {"dot_health_percent": "spirit"}
@@ -314,7 +314,7 @@ def test_scaling_and_types_recovers_missing_scale_type():
         }
     }
 
-    derived = assets._derive_properties(props, {"magic_damage_per_bullet"})
+    derived = snapshots._derive_properties(props, {"magic_damage_per_bullet"})
 
     assert derived["scaling"] == {"magic_damage_per_bullet": {"stat": "tech_power", "scale": 0.03}}
     assert derived["damage_types"] == {"magic_damage_per_bullet": "spirit"}
@@ -328,7 +328,7 @@ def test_scaling_and_types_skips_damage_colored_stat_grants():
     }
     kept = {"base_attack_damage_percent", "weapon_power_per_stack", "bonus_fire_rate_per_hero"}
 
-    derived = assets._derive_properties(props, kept)
+    derived = snapshots._derive_properties(props, kept)
 
     assert derived["scaling"] == {}
     assert derived["damage_types"] == {}
@@ -343,7 +343,7 @@ def test_scaling_and_types_keeps_named_damage_without_a_damage_function():
         }
     }
 
-    derived = assets._derive_properties(props, {"head_shot_bonus_damage"})
+    derived = snapshots._derive_properties(props, {"head_shot_bonus_damage"})
 
     assert derived["damage_types"] == {"head_shot_bonus_damage": "weapon"}
 
@@ -357,7 +357,7 @@ def test_scaling_and_types_skips_filtered_out_properties():
         }
     }
 
-    derived = assets._derive_properties(props, set())
+    derived = snapshots._derive_properties(props, set())
 
     assert derived["damage_types"] == {}
 
@@ -375,7 +375,7 @@ def test_scaling_flags_custom_nonlinear_functions():
         }
     }
 
-    derived = assets._derive_properties(props, {"max_bonus_bullet_damage"})
+    derived = snapshots._derive_properties(props, {"max_bonus_bullet_damage"})
 
     assert derived["scaling"]["max_bonus_bullet_damage"] == {
         "stat": "weapon_power",
@@ -397,7 +397,7 @@ def test_derive_properties_buckets_scale_types():
         },
     }
 
-    derived = assets._derive_properties(props, {"ability_cooldown", "ability_range"})
+    derived = snapshots._derive_properties(props, {"ability_cooldown", "ability_range"})
 
     assert derived["scale_types"] == {
         "ability_cooldown": "item_cooldown",
@@ -413,7 +413,7 @@ def test_derive_properties_marks_negatives_and_conditionals():
     }
     kept = {"outgoing_damage_penalty_percent", "non_player_bonus_weapon_power"}
 
-    derived = assets._derive_properties(props, kept)
+    derived = snapshots._derive_properties(props, kept)
 
     assert derived["negatives"] == ["outgoing_damage_penalty_percent"]
     assert derived["conditionals"] == {"non_player_bonus_weapon_power": "against NPCs"}
@@ -428,7 +428,7 @@ def test_derive_properties_limits_new_views_to_kept():
         "Downside": {"value": "0", "negative_attribute": True, "conditional": "vs NPCs"},
     }
 
-    derived = assets._derive_properties(props, set())
+    derived = snapshots._derive_properties(props, set())
 
     assert derived["scale_types"] == {}
     assert derived["negatives"] == []
@@ -458,7 +458,7 @@ def test_item_snapshot_keeps_card_fields():
         "upgrades": [{"property_upgrades": [{"name": "BonusClipSizePercent", "bonus": "30"}]}],
     }
 
-    snap = assets._item_snapshot(rec)
+    snap = snapshots._item_snapshot(rec)
 
     assert snap["activation"] == "passive"
     assert snap["imbue"] == "imbue_modifier_value"
@@ -486,7 +486,7 @@ def test_ability_snapshot_keeps_card_fields():
         },
     }
 
-    snap = assets._ability_snapshot(rec, "ability")
+    snap = snapshots._ability_snapshot(rec, "ability")
 
     assert snap["ability_type"] == "ultimate"
     assert snap["boss_damage_scale"] == 0.5
@@ -512,7 +512,7 @@ def test_ability_snapshot_captures_damage_types():
         },
     }
 
-    snap = assets._ability_snapshot(rec, "ability")
+    snap = snapshots._ability_snapshot(rec, "ability")
 
     assert snap["scaling"] == {"proc_damage_base": {"stat": "tech_power", "scale": 0.35}}
     assert snap["damage_types"] == {"proc_damage_base": "spirit"}
@@ -529,10 +529,10 @@ def test_loaded_item_defaults_without_display_fields(tmp_path):
 
 
 def test_description_markup_stripped(tmp_path, monkeypatch):
-    monkeypatch.setattr(assets.api, "get_json", lambda path, **kw: [ITEM_REC])
+    monkeypatch.setattr(snapshots.api, "get_json", lambda path, **kw: [ITEM_REC])
     p = tmp_path / "items.json"
 
-    assets.refresh_items(p)
+    snapshots.refresh_items(p)
 
     rec = json.loads(p.read_text())[0]
 
@@ -540,10 +540,10 @@ def test_description_markup_stripped(tmp_path, monkeypatch):
 
 
 def test_clean_text_handles_missing():
-    assert assets._clean_text(None) is None
-    assert assets._clean_text("") is None
-    assert assets._clean_text("<b></b>") is None
-    assert assets._clean_text("plain") == "plain"
+    assert snapshots._clean_text(None) is None
+    assert snapshots._clean_text("") is None
+    assert snapshots._clean_text("<b></b>") is None
+    assert snapshots._clean_text("plain") == "plain"
 
 
 def test_refresh_items_clears_lookup_caches(tmp_path, monkeypatch):
@@ -553,9 +553,9 @@ def test_refresh_items_clears_lookup_caches(tmp_path, monkeypatch):
     assert items.item_name(9, p) == "Old Name"
 
     monkeypatch.setattr(
-        assets.api, "get_json", lambda path, **kw: [dict(ITEM_REC, id=9, name="New Name")]
+        snapshots.api, "get_json", lambda path, **kw: [dict(ITEM_REC, id=9, name="New Name")]
     )
-    assets.refresh_items(p)
+    snapshots.refresh_items(p)
 
     assert items.item_name(9, p) == "New Name"
 
@@ -567,18 +567,18 @@ def test_refresh_heroes_clears_lookup_cache(tmp_path, monkeypatch):
     assert heroes.hero_name(5, p) == "Old"
 
     monkeypatch.setattr(
-        assets.api, "get_json", lambda path, **kw: [dict(HERO_REC, id=5, name="New")]
+        snapshots.api, "get_json", lambda path, **kw: [dict(HERO_REC, id=5, name="New")]
     )
-    assets.refresh_heroes(p)
+    snapshots.refresh_heroes(p)
 
     assert heroes.hero_name(5, p) == "New"
 
 
 def test_loaded_item_carries_description_and_components(tmp_path, monkeypatch):
-    monkeypatch.setattr(assets.api, "get_json", lambda path, **kw: [ITEM_REC])
+    monkeypatch.setattr(snapshots.api, "get_json", lambda path, **kw: [ITEM_REC])
     p = tmp_path / "items.json"
 
-    assets.refresh_items(p)
+    snapshots.refresh_items(p)
 
     it = items.item_map(p)[1]
 
@@ -613,10 +613,10 @@ def test_refresh_abilities_combines_kinds(tmp_path, monkeypatch):
             }
         ]
 
-    monkeypatch.setattr(assets.api, "get_json", fake)
+    monkeypatch.setattr(snapshots.api, "get_json", fake)
     p = tmp_path / "abilities.json"
 
-    assert assets.refresh_abilities(p) == 2
+    assert snapshots.refresh_abilities(p) == 2
 
     recs = json.loads(p.read_text())
 
@@ -633,20 +633,20 @@ def test_refresh_abilities_clears_cache(tmp_path, monkeypatch):
     assert abilities.ability_map(p)["x"].name == "Old"
 
     monkeypatch.setattr(
-        assets.api,
+        snapshots.api,
         "get_json",
         lambda path, **kw: [{"id": 1, "name": "New", "class_name": "x", "hero": 52}],
     )
-    assets.refresh_abilities(p)
+    snapshots.refresh_abilities(p)
 
     assert abilities.ability_map(p)["x"].name == "New"
 
 
 def test_loaded_hero_carries_stats(tmp_path, monkeypatch):
-    monkeypatch.setattr(assets.api, "get_json", lambda path, **kw: [HERO_REC])
+    monkeypatch.setattr(snapshots.api, "get_json", lambda path, **kw: [HERO_REC])
     p = tmp_path / "heroes.json"
 
-    assets.refresh_heroes(p)
+    snapshots.refresh_heroes(p)
 
     h = heroes.hero_map(p)[52]
 
@@ -694,22 +694,22 @@ ABILITY_REC = {
 
 
 def test_measure_parses_unit_strings():
-    assert assets._measure("20m") == 20
-    assert assets._measure("0.2s") == 0.2
-    assert assets._measure("-35m") == -35
-    assert assets._measure(".3m") == 0.3
-    assert assets._measure("1.28") == 1.28
-    assert assets._measure(36.0) == 36
-    assert assets._measure("whirlwind") == "whirlwind"
+    assert snapshots._measure("20m") == 20
+    assert snapshots._measure("0.2s") == 0.2
+    assert snapshots._measure("-35m") == -35
+    assert snapshots._measure(".3m") == 0.3
+    assert snapshots._measure("1.28") == 1.28
+    assert snapshots._measure(36.0) == 36
+    assert snapshots._measure("whirlwind") == "whirlwind"
 
 
 def test_refresh_abilities_keeps_tuning_numbers(tmp_path, monkeypatch):
     monkeypatch.setattr(
-        assets.api, "get_json", lambda path, **kw: [ABILITY_REC] if "ability" in path else []
+        snapshots.api, "get_json", lambda path, **kw: [ABILITY_REC] if "ability" in path else []
     )
     p = tmp_path / "abilities.json"
 
-    assets.refresh_abilities(p)
+    snapshots.refresh_abilities(p)
 
     rec = json.loads(p.read_text())[0]
 
@@ -737,11 +737,11 @@ def test_weapon_records_skip_ability_fields(tmp_path, monkeypatch):
         "properties": {"Damage": {"value": 10}},
     }
     monkeypatch.setattr(
-        assets.api, "get_json", lambda path, **kw: [weapon] if "weapon" in path else []
+        snapshots.api, "get_json", lambda path, **kw: [weapon] if "weapon" in path else []
     )
     p = tmp_path / "abilities.json"
 
-    assets.refresh_abilities(p)
+    snapshots.refresh_abilities(p)
 
     rec = json.loads(p.read_text())[0]
 
@@ -781,17 +781,17 @@ def _fake_assets(builds, items_at):
 
 def test_client_version_dates_maps_build_to_datetime(monkeypatch):
     monkeypatch.setattr(
-        assets.api,
+        snapshots.api,
         "get_json",
         lambda path, **kw: [{"client_version": 5, "version_datetime": "2026-01-05T00:00:00"}],
     )
 
-    assert assets.client_version_dates() == {5: "2026-01-05T00:00:00"}
+    assert snapshots.client_version_dates() == {5: "2026-01-05T00:00:00"}
 
 
 def test_build_item_history_finds_the_change_point(tmp_path, monkeypatch):
 
-    from deadlock_matches import items
+    from deadlock_matches.assets import items
 
     builds = {
         1: "2026-01-01T00:00:00",
@@ -801,10 +801,10 @@ def test_build_item_history_finds_the_change_point(tmp_path, monkeypatch):
         5: "2026-01-05T00:00:00",
     }
     items_at = {b: _item_recs(500 if b < 4 else 800) for b in builds}
-    monkeypatch.setattr(assets.api, "get_json", _fake_assets(builds, items_at))
+    monkeypatch.setattr(snapshots.api, "get_json", _fake_assets(builds, items_at))
 
     path = tmp_path / "item_history.parquet"
-    n = assets.build_item_history(start_date="2026-01-01", path=path)
+    n = snapshots.build_item_history(start_date="2026-01-01", path=path)
 
     early = items.item_asof(10, dt.datetime(2026, 1, 2), path)
     late = items.item_asof(10, dt.datetime(2026, 1, 5), path)
@@ -819,11 +819,11 @@ def test_build_item_history_finds_the_change_point(tmp_path, monkeypatch):
 def test_build_item_history_single_era_when_nothing_changes(tmp_path, monkeypatch):
     builds = {b: f"2026-01-0{b}T00:00:00" for b in (1, 2, 3)}
     monkeypatch.setattr(
-        assets.api, "get_json", _fake_assets(builds, {b: _item_recs(500) for b in builds})
+        snapshots.api, "get_json", _fake_assets(builds, {b: _item_recs(500) for b in builds})
     )
 
     path = tmp_path / "item_history.parquet"
-    n = assets.build_item_history(start_date="2026-01-01", path=path)
+    n = snapshots.build_item_history(start_date="2026-01-01", path=path)
 
     assert n == 1
 
@@ -831,12 +831,12 @@ def test_build_item_history_single_era_when_nothing_changes(tmp_path, monkeypatc
 def test_build_item_history_captures_a_revert(tmp_path, monkeypatch):
     builds = {b: f"2026-01-0{b}T00:00:00" for b in (1, 2, 3)}
     items_at = {1: _item_recs(500), 2: _item_recs(800), 3: _item_recs(500)}
-    monkeypatch.setattr(assets.api, "get_json", _fake_assets(builds, items_at))
+    monkeypatch.setattr(snapshots.api, "get_json", _fake_assets(builds, items_at))
 
-    from deadlock_matches import items
+    from deadlock_matches.assets import items
 
     path = tmp_path / "item_history.parquet"
-    n = assets.build_item_history(start_date="2026-01-01", path=path)
+    n = snapshots.build_item_history(start_date="2026-01-01", path=path)
 
     first = items.item_asof(10, dt.datetime(2026, 1, 1), path)
     second = items.item_asof(10, dt.datetime(2026, 1, 2), path)
@@ -852,7 +852,7 @@ def test_build_item_history_captures_a_revert(tmp_path, monkeypatch):
 
 
 def test_load_build_skips_a_persistent_failure(monkeypatch):
-    monkeypatch.setattr(assets.time, "sleep", lambda *_: None)
+    monkeypatch.setattr(snapshots.time, "sleep", lambda *_: None)
     calls = []
 
     def load(build):
@@ -861,25 +861,25 @@ def test_load_build_skips_a_persistent_failure(monkeypatch):
 
     cache = {}
 
-    assert assets._load_build(2, cache, load, tries=2) is None
+    assert snapshots._load_build(2, cache, load, tries=2) is None
     assert len(calls) == 2
     assert cache[2] is None
 
 
 def test_load_build_skips_a_404_without_retrying(monkeypatch):
-    monkeypatch.setattr(assets.time, "sleep", lambda *_: None)
+    monkeypatch.setattr(snapshots.time, "sleep", lambda *_: None)
     calls = []
 
     def load(build):
         calls.append(build)
         raise urllib.error.HTTPError("url", 404, "not found", email.message.Message(), None)
 
-    assert assets._load_build(2, {}, load, tries=4) is None
+    assert snapshots._load_build(2, {}, load, tries=4) is None
     assert len(calls) == 1
 
 
 def test_load_build_retries_a_transient_500(monkeypatch):
-    monkeypatch.setattr(assets.time, "sleep", lambda *_: None)
+    monkeypatch.setattr(snapshots.time, "sleep", lambda *_: None)
     calls = []
 
     def load(build):
@@ -890,12 +890,12 @@ def test_load_build_retries_a_transient_500(monkeypatch):
 
         return {"10": {"cost": 500}}
 
-    assert assets._load_build(2, {}, load, tries=4) == {"10": {"cost": 500}}
+    assert snapshots._load_build(2, {}, load, tries=4) == {"10": {"cost": 500}}
     assert len(calls) == 2
 
 
 def test_build_item_history_skips_a_build_the_api_cannot_serve(tmp_path, monkeypatch):
-    monkeypatch.setattr(assets.time, "sleep", lambda *_: None)
+    monkeypatch.setattr(snapshots.time, "sleep", lambda *_: None)
     builds = {b: f"2026-01-0{b}T00:00:00" for b in (1, 2, 3)}
     items_at = {1: _item_recs(500), 3: _item_recs(800)}
 
@@ -910,11 +910,11 @@ def test_build_item_history_skips_a_build_the_api_cannot_serve(tmp_path, monkeyp
 
         return items_at[build]
 
-    monkeypatch.setattr(assets.api, "get_json", get_json)
+    monkeypatch.setattr(snapshots.api, "get_json", get_json)
 
     seen = []
     path = tmp_path / "item_history.parquet"
-    n = assets.build_item_history(
+    n = snapshots.build_item_history(
         start_date="2026-01-01", path=path, progress=lambda *a: seen.append(a)
     )
 
@@ -930,10 +930,10 @@ def test_build_item_history_skips_a_build_the_api_cannot_serve(tmp_path, monkeyp
 
 
 def test_build_history_refuses_to_write_when_every_build_fails(tmp_path, monkeypatch):
-    monkeypatch.setattr(assets.time, "sleep", lambda *_: None)
+    monkeypatch.setattr(snapshots.time, "sleep", lambda *_: None)
     builds = {1: "2026-01-01T00:00:00", 2: "2026-01-02T00:00:00"}
     monkeypatch.setattr(
-        assets,
+        snapshots,
         "client_version_dates",
         lambda **kw: builds,
     )
@@ -944,7 +944,7 @@ def test_build_history_refuses_to_write_when_every_build_fails(tmp_path, monkeyp
     path = tmp_path / "history.parquet"
 
     with pytest.raises(RuntimeError, match="refusing to overwrite"):
-        assets.build_asset_history(dead, path)
+        snapshots.build_asset_history(dead, path)
 
     assert not path.exists()
 
@@ -952,11 +952,11 @@ def test_build_history_refuses_to_write_when_every_build_fails(tmp_path, monkeyp
 def test_build_item_history_reports_progress_per_build(tmp_path, monkeypatch):
     builds = {b: f"2026-01-0{b}T00:00:00" for b in (1, 2, 3)}
     monkeypatch.setattr(
-        assets.api, "get_json", _fake_assets(builds, {b: _item_recs(500) for b in builds})
+        snapshots.api, "get_json", _fake_assets(builds, {b: _item_recs(500) for b in builds})
     )
 
     seen = []
-    assets.build_item_history(
+    snapshots.build_item_history(
         start_date="2026-01-01",
         path=tmp_path / "item_history.parquet",
         progress=lambda *a: seen.append(a),
@@ -969,15 +969,15 @@ def test_build_item_history_resumes_from_the_last_era(tmp_path, monkeypatch):
     path = tmp_path / "item_history.parquet"
     builds = {b: f"2026-01-0{b}T00:00:00" for b in (1, 2, 3)}
     items_at = {1: _item_recs(500), 2: _item_recs(500), 3: _item_recs(800)}
-    monkeypatch.setattr(assets.api, "get_json", _fake_assets(builds, items_at))
-    first = assets.build_item_history(start_date="2026-01-01", path=path)
+    monkeypatch.setattr(snapshots.api, "get_json", _fake_assets(builds, items_at))
+    first = snapshots.build_item_history(start_date="2026-01-01", path=path)
 
     builds |= {4: "2026-01-04T00:00:00", 5: "2026-01-05T00:00:00"}
     items_at |= {4: _item_recs(800), 5: _item_recs(1000)}
-    monkeypatch.setattr(assets.api, "get_json", _fake_assets(builds, items_at))
+    monkeypatch.setattr(snapshots.api, "get_json", _fake_assets(builds, items_at))
 
     seen = []
-    n = assets.build_item_history(
+    n = snapshots.build_item_history(
         start_date="2026-01-01", path=path, progress=lambda *a: seen.append(a)
     )
 
@@ -999,16 +999,16 @@ def test_build_item_history_incremental_no_change_leaves_the_file(tmp_path, monk
     path = tmp_path / "item_history.parquet"
     builds = {b: f"2026-01-0{b}T00:00:00" for b in (1, 2, 3)}
     monkeypatch.setattr(
-        assets.api, "get_json", _fake_assets(builds, {b: _item_recs(500) for b in builds})
+        snapshots.api, "get_json", _fake_assets(builds, {b: _item_recs(500) for b in builds})
     )
-    assets.build_item_history(start_date="2026-01-01", path=path)
+    snapshots.build_item_history(start_date="2026-01-01", path=path)
     mtime = path.stat().st_mtime_ns
 
     builds |= {4: "2026-01-04T00:00:00"}
     monkeypatch.setattr(
-        assets.api, "get_json", _fake_assets(builds, {b: _item_recs(500) for b in builds})
+        snapshots.api, "get_json", _fake_assets(builds, {b: _item_recs(500) for b in builds})
     )
-    n = assets.build_item_history(start_date="2026-01-01", path=path)
+    n = snapshots.build_item_history(start_date="2026-01-01", path=path)
 
     assert n == 1
     assert path.stat().st_mtime_ns == mtime
@@ -1018,16 +1018,16 @@ def test_build_item_history_incremental_captures_a_revert_in_new_builds(tmp_path
     path = tmp_path / "item_history.parquet"
     builds = {b: f"2026-01-0{b}T00:00:00" for b in (1, 2, 3)}
     monkeypatch.setattr(
-        assets.api, "get_json", _fake_assets(builds, {b: _item_recs(500) for b in builds})
+        snapshots.api, "get_json", _fake_assets(builds, {b: _item_recs(500) for b in builds})
     )
-    assets.build_item_history(start_date="2026-01-01", path=path)
+    snapshots.build_item_history(start_date="2026-01-01", path=path)
 
     builds |= {4: "2026-01-04T00:00:00", 5: "2026-01-05T00:00:00"}
     items_at = {1: _item_recs(500), 2: _item_recs(500), 3: _item_recs(500)}
     items_at |= {4: _item_recs(800), 5: _item_recs(500)}
-    monkeypatch.setattr(assets.api, "get_json", _fake_assets(builds, items_at))
+    monkeypatch.setattr(snapshots.api, "get_json", _fake_assets(builds, items_at))
 
-    n = assets.build_item_history(start_date="2026-01-01", path=path)
+    n = snapshots.build_item_history(start_date="2026-01-01", path=path)
 
     fourth = items.item_asof(10, dt.datetime(2026, 1, 4), path)
     fifth = items.item_asof(10, dt.datetime(2026, 1, 5), path)
@@ -1043,14 +1043,14 @@ def test_build_item_history_full_rescans_an_old_build_correction(tmp_path, monke
     path = tmp_path / "item_history.parquet"
     builds = {b: f"2026-01-0{b}T00:00:00" for b in (1, 2, 3)}
     items_at = {1: _item_recs(500), 2: _item_recs(500), 3: _item_recs(800)}
-    monkeypatch.setattr(assets.api, "get_json", _fake_assets(builds, items_at))
-    assets.build_item_history(start_date="2026-01-01", path=path)
+    monkeypatch.setattr(snapshots.api, "get_json", _fake_assets(builds, items_at))
+    snapshots.build_item_history(start_date="2026-01-01", path=path)
 
     corrected = {1: _item_recs(500), 2: _item_recs(999), 3: _item_recs(800)}
-    monkeypatch.setattr(assets.api, "get_json", _fake_assets(builds, corrected))
+    monkeypatch.setattr(snapshots.api, "get_json", _fake_assets(builds, corrected))
 
-    incremental = assets.build_item_history(start_date="2026-01-01", path=path)
-    full = assets.build_item_history(start_date="2026-01-01", path=path, full=True)
+    incremental = snapshots.build_item_history(start_date="2026-01-01", path=path)
+    full = snapshots.build_item_history(start_date="2026-01-01", path=path, full=True)
 
     assert incremental == 2
     assert full == 3
@@ -1068,7 +1068,7 @@ def _stub_history(tmp_path, monkeypatch, live, stored):
             [{"from": "2026-06-30T10:07:00", "build": 6601, "records": stored}],
         )
 
-    monkeypatch.setattr(assets, "LIVE_HISTORY_CHECKS", (("items", json_path, hist_path, "id"),))
+    monkeypatch.setattr(snapshots, "LIVE_HISTORY_CHECKS", (("items", json_path, hist_path, "id"),))
 
 
 def test_history_lags_flags_a_trailing_type(tmp_path, monkeypatch):
@@ -1076,7 +1076,7 @@ def test_history_lags_flags_a_trailing_type(tmp_path, monkeypatch):
         tmp_path, monkeypatch, [{"id": 10, "cost": 500}], {"10": {"id": 10, "cost": 800}}
     )
 
-    assert assets.history_lags() == [("items", "2026-06-30", 6601)]
+    assert snapshots.history_lags() == [("items", "2026-06-30", 6601)]
 
 
 def test_history_lags_quiet_when_live_matches_history(tmp_path, monkeypatch):
@@ -1084,10 +1084,10 @@ def test_history_lags_quiet_when_live_matches_history(tmp_path, monkeypatch):
         tmp_path, monkeypatch, [{"id": 10, "cost": 800}], {"10": {"id": 10, "cost": 800}}
     )
 
-    assert assets.history_lags() == []
+    assert snapshots.history_lags() == []
 
 
 def test_history_lags_skips_a_type_without_history(tmp_path, monkeypatch):
     _stub_history(tmp_path, monkeypatch, [{"id": 10, "cost": 500}], None)
 
-    assert assets.history_lags() == []
+    assert snapshots.history_lags() == []

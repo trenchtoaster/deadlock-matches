@@ -6,7 +6,8 @@ import polars as pl
 import pytest
 from google.protobuf import json_format
 
-from deadlock_matches import export, extract, items, queries
+from deadlock_matches import export, extract, queries
+from deadlock_matches.assets import items
 from deadlock_matches.extract import pb
 
 EE = 3005970438

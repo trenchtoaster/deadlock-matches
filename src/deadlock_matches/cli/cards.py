@@ -5,7 +5,7 @@ from __future__ import annotations
 import datetime as dt
 from typing import TYPE_CHECKING, Any
 
-from deadlock_matches import abilities, heroes, history, items
+from deadlock_matches.assets import abilities, heroes, history, items
 
 if TYPE_CHECKING:
     import argparse

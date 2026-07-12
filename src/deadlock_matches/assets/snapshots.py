@@ -10,10 +10,10 @@ import time
 import urllib.error
 from typing import TYPE_CHECKING, Any
 
-from deadlock_matches import (
+from deadlock_matches import api
+from deadlock_matches.assets import (
     abilities,
     accolades,
-    api,
     heroes,
     history,
     items,

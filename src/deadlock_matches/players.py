@@ -10,7 +10,8 @@ from typing import TYPE_CHECKING, Any
 
 import polars as pl
 
-from deadlock_matches import api, config, export, extract, heroes, paths, queries, schemas
+from deadlock_matches import api, config, export, extract, paths, queries, schemas
+from deadlock_matches.assets import heroes
 
 if TYPE_CHECKING:
     from collections.abc import Collection, Iterator, Sequence

@@ -1,6 +1,7 @@
 import polars as pl
 
-from deadlock_matches import asset_tables, history, items, schemas
+from deadlock_matches import schemas
+from deadlock_matches.assets import history, items, unnest
 
 
 def item_rec(cost, components=()):
@@ -106,7 +107,7 @@ def test_item_tables_flatten_each_era(tmp_path):
     path = tmp_path / "item_history.parquet"
     history.write(path, ITEM_STATES)
 
-    tables = asset_tables.item_tables(path)
+    tables = unnest.item_tables(path)
     parents = tables["item_history"].sort("era_from")
 
     assert parents.height == 2
@@ -119,7 +120,7 @@ def test_item_parent_matches_item_asof(tmp_path):
     path = tmp_path / "item_history.parquet"
     history.write(path, ITEM_STATES)
 
-    parents = asset_tables.item_tables(path)["item_history"]
+    parents = unnest.item_tables(path)["item_history"]
 
     for row in parents.iter_rows(named=True):
         resolved = items.item_asof(7, row["era_from"], path=path)
@@ -133,7 +134,7 @@ def test_item_components_fan_out_per_era(tmp_path):
     path = tmp_path / "item_history.parquet"
     history.write(path, ITEM_STATES)
 
-    comps = asset_tables.item_tables(path)["item_component_history"]
+    comps = unnest.item_tables(path)["item_component_history"]
 
     assert comps.height == 3
     assert sorted(comps.filter(pl.col("client_version") == 200)["position"].to_list()) == [0, 1]
@@ -143,12 +144,12 @@ def test_hero_stat_history_tracks_change(tmp_path):
     path = tmp_path / "hero_history.parquet"
     history.write(path, HERO_STATES)
 
-    stats = asset_tables.hero_tables(path)["hero_stat_history"].sort("era_from")
+    stats = unnest.hero_tables(path)["hero_stat_history"].sort("era_from")
     health = stats.filter(pl.col("stat") == "max_health")
 
     assert health["value"].to_list() == [600.0, 650.0]
 
-    level_up = asset_tables.hero_tables(path)["hero_level_up_history"]
+    level_up = unnest.hero_tables(path)["hero_level_up_history"]
     assert level_up.filter(pl.col("stat") == "tech_power")["per_level_value"].to_list() == [
         1.5,
         1.5,
@@ -159,7 +160,7 @@ def test_ability_property_merges_value_and_scaling(tmp_path):
     path = tmp_path / "ability_history.parquet"
     history.write(path, ABILITY_STATES)
 
-    props = asset_tables.ability_tables(path)["ability_property_history"]
+    props = unnest.ability_tables(path)["ability_property_history"]
     row = props.filter(pl.col("ability_class") == "citadel_ability_x").row(0, named=True)
 
     assert row["value"] == 60.0
@@ -171,7 +172,7 @@ def test_ability_upgrade_tier_is_one_based(tmp_path):
     path = tmp_path / "ability_history.parquet"
     history.write(path, ABILITY_STATES)
 
-    upgrades = asset_tables.ability_tables(path)["ability_upgrade_history"]
+    upgrades = unnest.ability_tables(path)["ability_upgrade_history"]
 
     assert upgrades.height == 1
     assert upgrades["tier"].to_list() == [1]
@@ -182,7 +183,7 @@ def test_ability_weapon_only_for_guns(tmp_path):
     path = tmp_path / "ability_history.parquet"
     history.write(path, ABILITY_STATES)
 
-    weapons = asset_tables.ability_tables(path)["ability_weapon_history"]
+    weapons = unnest.ability_tables(path)["ability_weapon_history"]
 
     assert weapons.height == 1
     assert weapons["ability_class"].to_list() == ["citadel_weapon_x"]
@@ -195,7 +196,7 @@ def test_rank_table_flattens(tmp_path):
     path = tmp_path / "rank_history.parquet"
     history.write(path, RANK_STATES)
 
-    ranks = asset_tables.rank_tables(path)["rank_history"]
+    ranks = unnest.rank_tables(path)["rank_history"]
 
     assert ranks.to_dicts()[0]["name"] == "Initiate"
     assert ranks["tier"].to_list() == [1]
@@ -205,7 +206,7 @@ def test_statue_table_flattens_each_era(tmp_path):
     path = tmp_path / "statue_history.parquet"
     history.write(path, STATUE_STATES)
 
-    table = asset_tables.statue_tables(path)["statue_history"].sort("era_from")
+    table = unnest.statue_tables(path)["statue_history"].sort("era_from")
 
     assert list(table.columns) == list(schemas.TABLES["statue_history"])
     assert table["value"].to_list() == [25.0, 20.0]
@@ -216,7 +217,7 @@ def test_statue_table_flattens_each_era(tmp_path):
 
 def test_missing_history_gives_empty_typed_frames(tmp_path):
     missing = tmp_path / "none.parquet"
-    tables = asset_tables.item_tables(missing)
+    tables = unnest.item_tables(missing)
 
     for name in ("item_history", "item_component_history"):
         df = tables[name]

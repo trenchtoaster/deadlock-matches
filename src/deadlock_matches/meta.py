@@ -9,7 +9,8 @@ from __future__ import annotations
 import datetime as dt
 from typing import Any
 
-from deadlock_matches import api, items
+from deadlock_matches import api
+from deadlock_matches.assets import items
 
 RANKS = {
     "initiate": 1,
