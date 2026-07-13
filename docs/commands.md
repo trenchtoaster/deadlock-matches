@@ -114,7 +114,7 @@ Souls by source, 5-minute intervals
 
 #### `--damage`: damage by source and by enemy
 
-- the in-game damage graph, damage to heroes by source, then grouped into your gun, your abilities (melee counts as one), and item procs split into gun and spirit items, then the same damage split per enemy. The source data samples about every 3 minutes, so an interval can differ from the Damage column in the main view while the totals still match
+- the in-game damage graph, damage to heroes by source, then grouped into your gun, your abilities (melee counts as one), and item procs split into gun and spirit items, then the damage dealt to and taken from each enemy. The source data samples about every 3 minutes, so an interval can differ from the Damage column in the main view while the totals still match
 
 ```
 Damage to heroes by source, 5-minute intervals
@@ -148,6 +148,17 @@ Damage dealt to enemy, 5-minute intervals
   Pocket                       14    1,056      343      398        0      832    1,140      682    4,465    11%
   Vindicta                      0        0      693        0      288        5    1,916    1,432    4,334    11%
   Total                       877    2,550    4,482    1,804    6,353    8,674    8,598    6,807   40,145
+
+Damage taken by enemy, 5-minute intervals
+
+  Enemy                      0-5m    5-10m   10-15m   15-20m   20-25m   25-30m   30-35m   35-37m    Total      %
+  Vindicta                      0        0    2,017      146      601    1,911      942    3,017    8,634    25%
+  Pocket                      390    1,725    1,381      903    1,656    1,155        0      819    8,029    24%
+  Shiv                          0        0       13      692    1,038    1,075    3,332        0    6,150    18%
+  Warden                        0        0        0        0      543    3,094    1,283        0    4,920    14%
+  Ivy                         246      181       36      721      439    1,503      187      413    3,726    11%
+  Bebop                         0        0      581       67      108      982        0      868    2,606     8%
+  Total                       636    1,906    4,028    2,529    4,385    9,720    5,744    5,117   34,065
 ```
 
 #### `--healing`: healing and anti-heal
@@ -466,22 +477,18 @@ Blue
   Total      13,933    397        8.9%    4.0%    9.8%     5.7%     26.0%      71         4
 ```
 
-#### `--deaths`: damage from enemies and each death event
+#### `--deaths`: deaths per enemy and each death event
 
-- the damage each enemy dealt to you per interval, then each death with who killed you, how long the fight lasted, how far away the killer stood, and your respawn timer. A death to troopers or an objective shows `not a player`
+- how many times each enemy killed you per interval, then each death with who killed you, how long the fight lasted, how far away the killer stood, and your respawn timer. A death to troopers or an objective shows `not a player`. The damage each enemy dealt to you lives in `--damage`
 
 ```
-Damage taken by enemy, 5-minute intervals
+Deaths per enemy, 5-minute intervals
 
-  Enemy                0-5m    5-10m   10-15m   15-20m   20-25m   25-30m   30-35m   35-37m    Total      %
-  Vindicta                0        0    2,017      146      601    1,911      942    3,017    8,634    25%
-  Pocket                390    1,725    1,381      903    1,656    1,155        0      819    8,029    24%
-  Shiv                    0        0       13      692    1,038    1,075    3,332        0    6,150    18%
-  Warden                  0        0        0        0      543    3,094    1,283        0    4,920    14%
-  Ivy                   246      181       36      721      439    1,503      187      413    3,726    11%
-  Bebop                   0        0      581       67      108      982        0      868    2,606     8%
-  Total                 636    1,906    4,028    2,529    4,385    9,720    5,744    5,117   34,065
-
+  Enemy                0-5m    5-10m   10-15m   15-20m   20-25m   25-30m   30-35m   35-37m    Total
+  Bebop                   -        -        -        1        -        -        -        -        1
+  Pocket                  -        -        -        -        1        -        -        -        1
+  Vindicta                -        -        -        -        -        -        1        -        1
+  Total                   -        -        -        1        1        -        1        -        3
 
   Time    Killed by      Killed in  Distance  Respawn
   16:28   Bebop              15.8s        2m      29s
@@ -489,22 +496,21 @@ Damage taken by enemy, 5-minute intervals
   33:35   Vindicta           10.0s       32m      90s
 ```
 
-#### `--kills`: damage to enemies and each kill event
+#### `--kills`: kills per enemy and each kill event
 
-- the damage you dealt to each enemy per interval, then the same log from the killer side, each kill with the victim, the distance, and the respawn it cost them
+- your kills counted per enemy per interval, then the log from the killer side, each kill with the victim, the distance, and the respawn it cost them
 
 ```
-Damage dealt to enemy, 5-minute intervals
+Kills per enemy, 5-minute intervals
 
-  Enemy                0-5m    5-10m   10-15m   15-20m   20-25m   25-30m   30-35m   35-37m    Total      %
-  Ivy                   863    1,494    1,027      208    3,096      931    1,617      297    9,533    24%
-  Warden                  0        0        0      741      797    4,635    1,273    1,103    8,549    21%
-  Bebop                   0        0    2,207        0    1,105    1,978        0    3,197    8,487    21%
-  Shiv                    0        0      212      457    1,067      293    2,652       96    4,777    12%
-  Pocket                 14    1,056      343      398        0      832    1,140      682    4,465    11%
-  Vindicta                0        0      693        0      288        5    1,916    1,432    4,334    11%
-  Total                 877    2,550    4,482    1,804    6,353    8,674    8,598    6,807   40,145
-
+  Enemy                0-5m    5-10m   10-15m   15-20m   20-25m   25-30m   30-35m   35-37m    Total
+  Bebop                   -        -        2        -        -        -        -        1        3
+  Ivy                     -        -        1        -        -        -        -        1        2
+  Vindicta                -        -        1        -        -        -        1        -        2
+  Warden                  -        -        -        1        -        1        -        -        2
+  Pocket                  -        -        -        1        -        -        -        -        1
+  Shiv                    -        -        -        -        1        -        -        -        1
+  Total                   -        -        4        2        1        1        1        2       11
 
   Time    Kill           Killed in  Distance  Respawn
   10:26   Vindicta            9.0s       80m      25s

@@ -257,7 +257,7 @@ def build_parser(config: str | Path | None = None) -> argparse.ArgumentParser:
         "--damage",
         action="store_true",
         help="damage to heroes by source per interval, like the in game source graph, "
-        "plus the same damage split per enemy",
+        "plus the damage dealt to and taken from each enemy",
     )
     view.add_argument(
         "--healing",
@@ -273,14 +273,14 @@ def build_parser(config: str | Path | None = None) -> argparse.ArgumentParser:
     view.add_argument(
         "--deaths",
         action="store_true",
-        help="the damage each enemy dealt to you per interval, then each death with "
+        help="your deaths counted per enemy per interval, then each death with "
         "the killer, the game time, the fight length, the killer distance, and the "
         "respawn timer",
     )
     view.add_argument(
         "--kills",
         action="store_true",
-        help="the damage you dealt to each enemy per interval, then each kill with "
+        help="your kills counted per enemy per interval, then each kill with "
         "the victim, the game time, the distance, and the respawn it cost them",
     )
     view.add_argument(

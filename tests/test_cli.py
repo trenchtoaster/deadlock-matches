@@ -1290,6 +1290,32 @@ def test_match_damage_flag_prints_source_table(capsys, tmp_path):
     assert re.search(r"Abilities\s+0\s+800\s+800\s+40%", out)
     assert re.search(r"Gun\s+500\s+700\s+1,200\s+60%", out)
     assert "Bullet" not in out
+    assert "Damage taken by enemy" not in out
+    assert "has no damage taken from heroes" not in out
+
+
+def test_match_damage_flag_shows_damage_taken_per_enemy(capsys, tmp_path):
+    cache = tmp_path / "cache"
+    cache.mkdir()
+    write_cache_entry(
+        cache,
+        match_id=100,
+        stats=[(300, 3000), (600, 5000)],
+        damage=[
+            ("citadel_weapon_mirage_set", [500, 1200]),
+            ("citadel_weapon_hero1", [300, 700], 0, 2, 1),
+        ],
+    )
+
+    run_main(tmp_path, "match", "--account", "42", "--damage")
+
+    out = capsys.readouterr().out
+
+    assert "Damage dealt to enemy, 5-minute intervals" in out
+    assert "Damage taken by enemy, 5-minute intervals" in out
+    assert re.search(r"Infernus\s+500\s+700\s+1,200\s+100%", out)
+    assert re.search(r"Infernus\s+300\s+400\s+700\s+100%", out)
+    assert out.index("Damage dealt to enemy") < out.index("Damage taken by enemy")
 
 
 def test_match_damage_flag_without_damage_rows(capsys, tmp_path):
@@ -1881,10 +1907,16 @@ def test_match_deaths_lists_killers_in_time_order(capsys, tmp_path):
     out = capsys.readouterr().out
 
     assert "Match 100: Mirage, win," in out
+    assert "Deaths per enemy, 5-minute intervals" in out
+    assert re.search(r"Enemy\s+0-5m\s+5-10m\s+10-15m\s+15-20m\s+20-25m\s+25-30m\s+Total", out)
+    assert re.search(r"Infernus\s+-\s+-\s+1\s+-\s+-\s+-\s+1", out)
+    assert re.search(r"not a player\s+-\s+1\s+-\s+-\s+-\s+-\s+1", out)
+    assert re.search(r"Total\s+-\s+1\s+1\s+-\s+-\s+-\s+2", out)
+    assert "Damage taken by enemy" not in out
     assert re.search(r"Time\s+Killed by\s+Killed in\s+Distance\s+Respawn", out)
     assert re.search(r"5:10\s+not a player\s+2.5s\s+-\s+20s", out)
     assert re.search(r"15:00\s+Infernus\s+2.5s\s+10m\s+20s", out)
-    assert out.index("not a player") < out.index("Infernus")
+    assert out.index("5:10") < out.index("15:00")
 
 
 def test_match_kills_lists_victims(capsys, tmp_path):
@@ -1901,6 +1933,10 @@ def test_match_kills_lists_victims(capsys, tmp_path):
 
     out = capsys.readouterr().out
 
+    assert "Kills per enemy, 5-minute intervals" in out
+    assert re.search(r"Infernus\s+-\s+1\s+-\s+-\s+-\s+-\s+1", out)
+    assert re.search(r"Total\s+-\s+1\s+-\s+-\s+-\s+-\s+1", out)
+    assert "Damage dealt to enemy" not in out
     assert re.search(r"Time\s+Kill\s+Killed in\s+Distance\s+Respawn", out)
     assert re.search(r"6:40\s+Infernus\s+2.5s\s+10m\s+20s", out)
     assert "Killed by" not in out

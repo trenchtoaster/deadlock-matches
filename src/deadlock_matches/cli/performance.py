@@ -614,14 +614,18 @@ def _enemy_damage_table(
     *,
     dealt: bool,
     min_width: int | None = None,
+    required: bool = True,
 ) -> None:
     """Print the per enemy interval table of damage taken or dealt.
 
     - min_width matches the name column to a source table printed above it, so
       the interval columns of the two tables line up
+    - a direction with no rows prints the error only when required
     """
     if not queries.table_exists("damage_targets", args.parquet):
-        print("No damage_targets table yet, run `deadlock sync`")
+        if required:
+            print("No damage_targets table yet, run `deadlock sync`")
+
         return
 
     try:
@@ -629,7 +633,9 @@ def _enemy_damage_table(
             row["match_id"], row["account_id"], args.interval * 60, args.parquet, dealt=dealt
         )
     except ValueError as e:
-        print(e)
+        if required:
+            print(e)
+
         return
 
     title = "Damage dealt to enemy" if dealt else "Damage taken by enemy"
@@ -655,10 +661,48 @@ def _enemy_damage_table(
     print()
 
 
-def death_log_report(row: dict[str, Any], args: argparse.Namespace, *, kills: bool) -> None:
-    """Print each death in the match for one player, from the victim or the killer side."""
-    _enemy_damage_table(row, args, dealt=kills)
+def _kill_count_table(
+    row: dict[str, Any],
+    args: argparse.Namespace,
+    log: pl.DataFrame,
+    names: dict[int, str],
+    *,
+    kills: bool,
+) -> None:
+    """Print how many kills or deaths each enemy accounts for per interval."""
+    interval_s = args.interval * 60
+    last_s = max(int(row["duration_s"]), int(log.select(pl.col("game_time_s").max()).item()))
+    n = max(-(-last_s // interval_s), 1)
+    spans = [
+        {"start_s": i * interval_s, "end_s": min((i + 1) * interval_s, last_s)} for i in range(n)
+    ]
+    other = "account_id" if kills else "killer_account_id"
+    counts: dict[str, list[int]] = {}
 
+    for d in log.iter_rows(named=True):
+        cells = counts.setdefault(names.get(d[other], "not a player"), [0] * n)
+        cells[min(max((d["game_time_s"] - 1) // interval_s, 0), n - 1)] += 1
+
+    title = "Kills per enemy" if kills else "Deaths per enemy"
+    width = max(max(len(name) for name in counts), 14) + 2
+    header = "".join(f"{_span(s):>9}" for s in spans)
+
+    print(f"{title}, {args.interval}-minute intervals")
+    print(f"\n  {'Enemy':<{width}}{header}{'Total':>9}")
+
+    for name, cells in sorted(counts.items(), key=lambda kv: (-sum(kv[1]), kv[0])):
+        line = "".join(f"{c if c else '-':>9}" for c in cells)
+
+        print(f"  {name:<{width}}{line}{sum(cells):>9}")
+
+    sums = [sum(cells[i] for cells in counts.values()) for i in range(n)]
+    line = "".join(f"{c if c else '-':>9}" for c in sums)
+
+    print(f"  {'Total':<{width}}{line}{sum(sums):>9}")
+
+
+def death_log_report(row: dict[str, Any], args: argparse.Namespace, *, kills: bool) -> None:
+    """Print each death in the match for one player, counted per enemy and then listed in order."""
     if not queries.table_exists("deaths", args.parquet):
         print("No deaths table yet, run `deadlock sync --full`")
         return
@@ -683,6 +727,8 @@ def death_log_report(row: dict[str, Any], args: argparse.Namespace, *, kills: bo
     if log.is_empty():
         print("No kills in this match" if kills else "No deaths in this match")
         return
+
+    _kill_count_table(row, args, log, hero_names, kills=kills)
 
     who = "Kill" if kills else "Killed by"
     print(f"\n  {'Time':<7} {who:<14} {'Killed in':>9} {'Distance':>9} {'Respawn':>8}")
@@ -2135,6 +2181,7 @@ def damage_source_table(row: dict[str, Any], args: argparse.Namespace) -> None:
     else:
         width = _source_intervals(row, args, "damage", "Damage to heroes by source")
         _enemy_damage_table(row, args, dealt=True, min_width=width)
+        _enemy_damage_table(row, args, dealt=False, min_width=width, required=False)
 
 
 def _source_intervals(
