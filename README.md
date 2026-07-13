@@ -111,12 +111,19 @@ Then run:
 
 ```
 deadlock sync
-deadlock history
 ```
 
-`deadlock sync` pulls cached matches into the local archive and parquet tables. `deadlock history` confirms the games are readable and shows match IDs for the other commands.
+Old games fall out of the Steam cache, and clicking back through months of history one match at a time gets tedious. For those, download your match history from [deadlock-api.com](https://deadlock-api.com) instead, though the API may not have every game either (see [Sync new matches](docs/commands.md#sync-new-matches)):
 
-`deadlock sync --source api` skips the clicking and downloads your matches from [deadlock-api.com](https://deadlock-api.com) instead, but the API may not have every game (see [Sync new matches](docs/commands.md#sync-new-matches)).
+```
+deadlock sync --source api
+```
+
+Either way, `deadlock sync` pulls your matches into the local archive and parquet tables. Then confirm the games are readable and get match IDs for the other commands:
+
+```
+deadlock history
+```
 
 ### 4. Read a match
 
