@@ -41,12 +41,12 @@ test: install-uv
     @echo "-----------------------------------"
     uv run pytest tests
 
-sweep: install-uv
+sweep *args: install-uv
     @echo "-----------------------------------"
     @echo "- Running the live CLI sweep -"
     @echo "-----------------------------------"
     @test -f tests/cli_sweep.sh || (echo "tests/cli_sweep.sh is a local maintainer script, skip this recipe" && exit 1)
-    bash tests/cli_sweep.sh
+    bash tests/cli_sweep.sh {{args}}
 
 check: lint typecheck test
 
