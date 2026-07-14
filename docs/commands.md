@@ -189,7 +189,7 @@ Healing prevented, 5-minute intervals
 
 #### `--teams`: the soul lead and objectives
 
-- both teams per interval with the running lead, then every objective and Rejuvenator as it fell, mixed in with each Unstable Rift win (both teams, the souls each player got, noted when the winning team was behind) and each Soul Urn delivery (with the runner). Matches from before the June 30 objective rework carry no rift or urn line, the old modes worked differently
+- both teams per interval with the running lead, then every objective and Rejuvenator as it fell, mixed in with each Unstable Rift win (both teams, the souls each player got, noted when the winning team was behind) and each Soul Urn delivery (with the runner). A blank line splits the timeline at each 10 minute mark. Matches from before the June 30 objective rework carry no rift or urn line, the old modes worked differently
 
 ```
 Your team: The Hidden King
@@ -206,10 +206,12 @@ Your team: The Hidden King
 
   Objectives:
     9:08  enemy team destroys your Guardian (green)
+
    11:51  enemy team destroys your Guardian (blue)
    12:06  your team destroys the enemy Guardian (yellow)
    ...
    27:11  your team kills the mid boss and claims the Rejuvenator
+
    30:39  your team destroys the enemy Patron
    35:00  enemy team kills the mid boss and claims the Rejuvenator
    36:02  your team destroys the enemy Weakened Patron
@@ -217,38 +219,38 @@ Your team: The Hidden King
 
 #### `--laning`: who won each lane
 
-- one section per lane with your lane first, a Yours and Enemy summary row with the two laners under each side, a signed Net row, then the lane's kills and guardian falls in time order. Stat columns read the last snapshot inside the window (9 minutes by default, the samples land every 3 minutes), kills and guardians use exact event times. `--laning 12` widens the window
+- one section per lane with your lane first, a Team and Enemy summary row with the two laners under each side, a signed Net row, then the lane's kills and guardian falls in time order, each event signed + or - from your side. Stat columns read the last snapshot inside the window (9 minutes by default, the samples land every 3 minutes), kills and guardians use exact event times. `--laning 12` widens the window
 
 ```
 Laning phase through 9:00
 
 Yellow (your lane)
-  Lane               Souls  Kills  Deaths   Damage    Taken  Healing  Prevented  Last hits  Denies
-  Yours             12,340      2       0    7,218    6,721    4,854          0         70       1
-   * Mirage          5,511      0       0    3,427    2,542    1,213          0         25       0
-     Mo & Krill      6,829      2       0    3,791    4,179    3,641          0         45       1
-  Enemy             10,665      0       2    6,985    7,910    1,179          0         49       1
-     Pocket          5,522      0       1    5,274    3,270       28          0         23       1
-     Ivy             5,143      0       1    1,711    4,640    1,151          0         26       0
-  Net               +1,675     +2      -2     +233   -1,189   +3,675         +0        +21      +0
+  Lane               Souls  Kills  Deaths   Damage    Taken  Obj damage  Healing  Prevented  Last hits  Denies
+  Team              12,340      2       0    7,218    6,721       1,270    4,854          0         70       1
+   * Mirage          5,511      0       0    3,427    2,542         320    1,213          0         25       0
+     Mo & Krill      6,829      2       0    3,791    4,179         950    3,641          0         45       1
+  Enemy             10,665      0       2    6,985    7,910         480    1,179          0         49       1
+     Pocket          5,522      0       1    5,274    3,270         480       28          0         23       1
+     Ivy             5,143      0       1    1,711    4,640           0    1,151          0         26       0
+  Net               +1,675     +2      -2     +233   -1,189        +790   +3,675         +0        +21      +0
 
-  3:07    Mo & Krill kills Ivy
-  4:20    Mo & Krill kills Pocket
+  3:07    + Mo & Krill kills Ivy
+  4:20    + Mo & Krill kills Pocket
   both guardians up
 
 Blue
-  Lane               Souls  Kills  Deaths   Damage    Taken  Healing  Prevented  Last hits  Denies
-  Yours             14,669      6       2   10,641    7,972      561          0         55      11
-     Wraith          8,344      5       1    4,878    3,438      466          0         30       9
-     Drifter         6,325      1       1    5,763    4,534       95          0         25       2
-  Enemy             11,274      2       6    7,708    9,949      622          0         55      17
-     Shiv            5,853      1       3    3,748    5,396      622          0         21       0
-     Warden          5,421      1       3    3,960    4,553        0          0         34      17
-  Net               +3,395     +4      -4   +2,933   -1,977      -61         +0         +0      -6
+  Lane               Souls  Kills  Deaths   Damage    Taken  Obj damage  Healing  Prevented  Last hits  Denies
+  Team              14,669      6       2   10,641    7,972       2,145      561          0         55      11
+     Wraith          8,344      5       1    4,878    3,438       1,624      466          0         30       9
+     Drifter         6,325      1       1    5,763    4,534         521       95          0         25       2
+  Enemy             11,274      2       6    7,708    9,949         743      622          0         55      17
+     Shiv            5,853      1       3    3,748    5,396         743      622          0         21       0
+     Warden          5,421      1       3    3,960    4,553           0        0          0         34      17
+  Net               +3,395     +4      -4   +2,933   -1,977      +1,402      -61         +0         +0      -6
 
-  5:00    Warden kills Drifter
-  5:02    Wraith kills Warden
-  5:25    Wraith kills Shiv
+  5:00    - Warden kills Drifter
+  5:02    + Wraith kills Warden
+  5:25    + Wraith kills Shiv
   ...
   both guardians up
 
@@ -627,6 +629,48 @@ deadlock deaths --hero Mirage
   losses: 123 deaths, 33% solo, 45% outnumbered
 
 Killed most by: Infernus 21, Shiv 17, Mina 15, Graves 12, Haze 12
+```
+
+### Damage by source across your games
+
+```
+deadlock damage --hero Mirage
+```
+
+- every game of a hero rolled into one table: a row per gun, ability, or item source with the games it appeared in, its total, per minute, and share of your hero damage
+- the delivery block on top splits the total into gun, abilities, and item procs (procs that need a landed shot count as gun procs, spirit items with their own damage lines as spirit procs)
+- `/min` for gun and ability rows divides by the combined length of every listed game. Item rows divide by the minutes the item was owned, so a late buy is not diluted by the minutes before it existed
+- a per game table follows with the delivery shares per game, so a build shift shows up as drift. It always prints the last 10 games of the window, `--games N` prints more
+- the archive counterpart of `match --damage`, which shows the same sources for one game in intervals
+- `--days`, `--since`, and `--account` filter like `winrate`
+
+```
+Damage to heroes by source, 47 games of Mirage
+
+  Delivery                 Total     /min      %
+  Abilities              840,309    525.2    60%
+  Gun                    350,102    218.8    25%
+  Items (gun)            150,240     93.9    11%
+  Items (spirit)          60,177     37.6     4%
+  Total                1,400,828    875.5
+
+  Games  Source               Delivery             Total     /min      %
+     47  Fire Scarabs         Abilities          401,220    250.8  28.6%
+     47  Promises Kept        Gun                270,466    169.0  19.3%
+     47  Djinn's Mark         Abilities          260,118    162.6  18.6%
+     46  Dust Devil           Abilities          150,377     94.0  10.7%
+     21  Toxic Bullets        Items (gun)         60,242    148.3   4.3%
+     33  Escalating Exposure  Items (spirit)      55,101    155.6   3.9%
+
+  Item rows divide /min by the minutes the item was owned, not the whole game.
+  Gun, ability, and delivery /min divide by the combined length of every game.
+
+Per game, the last 10 of 47 (--games N lists more), newest last
+
+  Account    Day        Result  K/D/A      Gun %  Abil %  Items %    Damage  Match ID
+  main       2026-07-02 win     10/5/15     24.1    61.3     14.6    41,102  12345678
+  main       2026-07-03 loss    9/12/11     19.5    69.8     10.7    28,410  12345731
+  main       2026-07-03 win     7/3/16      22.8    55.1     22.1    35,006  12345802
 ```
 
 ## Heroes, abilities, and items

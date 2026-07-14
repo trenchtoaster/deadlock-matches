@@ -113,10 +113,13 @@ def write_cache_entry(
     for t, source, gold, orbs in team_gold_sources:
         team_sources_at.setdefault(t, []).append((source, gold, orbs))
 
-    for t, worth in stats:
+    for t, worth, *obj in stats:
         s = p.stats.add()
         s.time_stamp_s = t
         s.net_worth = worth
+
+        if obj:
+            s.boss_damage = obj[0]
 
         for source, gold, orbs in sources_at.get(t, ()):
             gs = s.gold_sources.add()
@@ -1948,7 +1951,7 @@ def test_match_laning_lane_blocks(capsys, tmp_path):
     write_cache_entry(
         cache,
         match_id=100,
-        stats=[(300, 3000), (600, 5000)],
+        stats=[(300, 3000, 400), (600, 5000, 900)],
         death_log=((1, 2, 310), (2, 1, 700)),
         objectives=True,
         lanes=True,
@@ -1960,15 +1963,18 @@ def test_match_laning_lane_blocks(capsys, tmp_path):
 
     assert "Laning phase through 9:00 (stat columns read at the 5:00 snapshot)" in out
     assert re.search(
-        r"Yellow \(your lane\)\n\s+Lane\s+Souls\s+Kills\s+Deaths\s+Damage\s+Taken", out
+        r"Yellow \(your lane\)\n\s+Lane\s+Souls\s+Kills\s+Deaths\s+Damage\s+Taken"
+        r"\s+Obj damage\s+Healing",
+        out,
     )
-    assert re.search(r"Yours\s+3,000", out)
-    assert re.search(r"\* Mirage\s+3,000\s+0\s+1", out)
-    assert re.search(r"Infernus\s+1,500\s+1\s+0", out)
-    assert re.search(r"Net\s+\+1,500\s+-1\s+\+1", out)
-    assert re.search(r"5:10\s+Infernus kills Mirage", out)
+    assert re.search(r"Team\s+3,000", out)
+    assert "Yours" not in out
+    assert re.search(r"\* Mirage\s+3,000\s+0\s+1\s+0\s+0\s+400", out)
+    assert re.search(r"Infernus\s+1,500\s+1\s+0\s+0\s+0\s+0", out)
+    assert re.search(r"Net\s+\+1,500\s+-1\s+\+1\s+\+0\s+\+0\s+\+400", out)
+    assert re.search(r"5:10\s+- Infernus kills Mirage", out)
     assert "Mirage kills Infernus" not in out
-    assert re.search(r"6:40\s+enemy Guardian falls", out)
+    assert re.search(r"6:40\s+\+ enemy Guardian falls", out)
     assert out.index("Infernus kills Mirage") < out.index("enemy Guardian falls")
 
 
@@ -2145,6 +2151,23 @@ def test_match_teams_view(capsys, tmp_path):
     assert re.search(r"5-10m\s+2,000\s+1,000\s+\+2,500", out)
     assert "6:40  your team destroys the enemy Guardian (yellow)" in out
     assert "8:20  your team kills the mid boss, enemy team steals the Rejuvenator" in out
+
+
+def test_match_teams_timeline_splits_ten_minute_brackets(capsys, tmp_path, monkeypatch):
+    cache = tmp_path / "cache"
+    cache.mkdir()
+    write_cache_entry(cache, match_id=100, stats=[(300, 3000)], objectives=True)
+    monkeypatch.setattr(
+        performance,
+        "_objective_events",
+        lambda row, args: [(500, "a"), (580, "b"), (700, "c"), (1900, "d")],
+    )
+
+    run_main(tmp_path, "match", "--account", "42", "--teams")
+
+    out = capsys.readouterr().out
+
+    assert "    8:20  a\n    9:40  b\n\n   11:40  c\n\n   31:40  d" in out
 
 
 def test_match_teams_lists_rift_win_your_team(capsys, tmp_path):
@@ -2491,6 +2514,110 @@ def test_laning_command_minutes_widens_the_window(capsys, tmp_path):
 
 def test_laning_command_without_account_prints_hint(capsys, tmp_path):
     run_main(tmp_path, "laning", accounts=None)
+
+    out = capsys.readouterr().out
+
+    assert "No account set" in out
+
+
+def test_damage_command_prints_delivery_source_and_game_tables(capsys, tmp_path):
+    cache = tmp_path / "cache"
+    cache.mkdir()
+    write_cache_entry(
+        cache,
+        match_id=100,
+        stats=((300, 3000), (600, 6000)),
+        damage=(
+            ("citadel_weapon_mirage", [100, 250]),
+            ("mirage_tornado", [50, 100]),
+            ("upgrade_toxic_bullets", [40, 50]),
+        ),
+    )
+
+    run_main(tmp_path, "damage", "--hero", "Mirage", "--account", "42")
+
+    out = capsys.readouterr().out
+
+    assert "Damage to heroes by source, 1 games of Mirage" in out
+    assert "Delivery" in out
+    assert "Gun" in out
+    assert "Abilities" in out
+    assert "Items (gun)" in out
+    assert "Per game, newest last" in out
+    assert "win" in out
+    assert "5/2/8" in out
+    assert "62.5" in out
+    assert "25.0" in out
+    assert "12.5" in out
+
+
+def test_damage_command_caps_the_per_game_table(capsys, tmp_path):
+    cache = tmp_path / "cache"
+    cache.mkdir()
+
+    for i in range(11):
+        write_cache_entry(
+            cache,
+            match_id=100 + i,
+            start_time=1783000000 + i * 3600,
+            stats=((300, 3000),),
+            damage=(("citadel_weapon_mirage", [100, 250]),),
+        )
+
+    run_main(tmp_path, "damage", "--hero", "Mirage", "--account", "42")
+
+    out = capsys.readouterr().out
+
+    assert "Per game, the last 10 of 11 (--games N lists more), newest last" in out
+    assert "  110\n" in out
+    assert "  100\n" not in out
+
+    run_main(tmp_path, "damage", "--hero", "Mirage", "--account", "42", "--days", "30")
+
+    out = capsys.readouterr().out
+
+    assert "Per game, the last 10 of 11" in out
+    assert "  100\n" not in out
+
+    run_main(tmp_path, "damage", "--hero", "Mirage", "--account", "42", "--games", "11")
+
+    out = capsys.readouterr().out
+
+    assert "Per game, newest last" in out
+    assert "  100\n" in out
+
+
+def test_damage_command_resolves_fuzzy_hero_names(capsys, tmp_path):
+    cache = tmp_path / "cache"
+    cache.mkdir()
+    write_cache_entry(
+        cache,
+        match_id=100,
+        stats=((300, 3000),),
+        damage=(("citadel_weapon_mirage", [100, 250]),),
+    )
+
+    run_main(tmp_path, "damage", "--hero", "mirage", "--account", "42")
+
+    out = capsys.readouterr().out
+
+    assert "games of Mirage" in out
+
+
+def test_damage_command_unknown_hero_prints_error(capsys, tmp_path):
+    cache = tmp_path / "cache"
+    cache.mkdir()
+    write_cache_entry(cache, match_id=100, stats=((300, 3000),))
+
+    run_main(tmp_path, "damage", "--hero", "Nobody", "--account", "42")
+
+    out = capsys.readouterr().out
+
+    assert "Unknown hero 'Nobody'" in out
+
+
+def test_damage_command_without_account_prints_hint(capsys, tmp_path):
+    run_main(tmp_path, "damage", "--hero", "Mirage", accounts=None)
 
     out = capsys.readouterr().out
 

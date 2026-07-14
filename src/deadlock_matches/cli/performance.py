@@ -29,7 +29,12 @@ from deadlock_matches.assets import (
 )
 from deadlock_matches.cli.cards import UNITS_PER_METER
 from deadlock_matches.cli.data import MVP_LABELS, TEAMS, final_stats, no_pool_hint
-from deadlock_matches.config import config_players, config_timezone, format_accounts
+from deadlock_matches.config import (
+    config_account_names,
+    config_players,
+    config_timezone,
+    format_accounts,
+)
 
 if TYPE_CHECKING:
     import argparse
@@ -469,6 +474,7 @@ LANING_COLUMNS = (
     ("Deaths", "deaths", 8),
     ("Damage", "damage", 9),
     ("Taken", "damage_taken", 9),
+    ("Obj damage", "obj_damage", 12),
     ("Healing", "healing", 9),
     ("Prevented", "heal_prevented", 11),
     ("Last hits", "last_hits", 11),
@@ -503,9 +509,9 @@ def _guardian_falls(
     falls = []
 
     for o in fallen.iter_rows(named=True):
-        side = "your" if o["team"] == row["team"] else "enemy"
+        sign, side = ("-", "your") if o["team"] == row["team"] else ("+", "enemy")
 
-        falls.append((o["destroyed_time_s"], f"{side} Guardian falls"))
+        falls.append((o["destroyed_time_s"], f"{sign} {side} Guardian falls"))
 
     return falls
 
@@ -541,6 +547,7 @@ def laning_report(row: dict[str, Any], args: argparse.Namespace) -> None:
     print(f"Laning phase through {args.laning}:00{note}")
 
     names = dict(df.select("account_id", "hero").iter_rows())
+    teams = dict(df.select("account_id", "team").iter_rows())
     name_w = max(max(len(n) for n in names.values()), 11)
     label_w = name_w + 5
     kill_log = (
@@ -566,7 +573,7 @@ def laning_report(row: dict[str, Any], args: argparse.Namespace) -> None:
 
         side_sums = {}
 
-        for side, group in (("Yours", yours), ("Enemy", enemy)):
+        for side, group in (("Team", yours), ("Enemy", enemy)):
             sums = group.sum().row(0, named=True)
             side_sums[side] = sums
 
@@ -579,20 +586,20 @@ def laning_report(row: dict[str, Any], args: argparse.Namespace) -> None:
                 print(f"  {label:<{label_w}}{_laning_cells(p)}")
 
         diff = {
-            field: side_sums["Yours"][field] - side_sums["Enemy"][field]
+            field: side_sums["Team"][field] - side_sums["Enemy"][field]
             for _, field, _ in LANING_COLUMNS
         }
 
         print(f"  {'Net':<{label_w}}{_laning_cells(diff, signed=True)}")
 
         deaths_here = kill_log.filter(pl.col("account_id").is_in(here["account_id"].implode()))
-        events = [
-            (
-                e["game_time_s"],
-                f"{names.get(e['killer_account_id'], 'not a player')} kills {names[e['account_id']]}",
-            )
-            for e in deaths_here.iter_rows(named=True)
-        ]
+        events = []
+
+        for e in deaths_here.iter_rows(named=True):
+            sign = "-" if teams[e["account_id"]] == row["team"] else "+"
+            killer = names.get(e["killer_account_id"], "not a player")
+
+            events.append((e["game_time_s"], f"{sign} {killer} kills {names[e['account_id']]}"))
         falls = _guardian_falls(row, args, lane, mark_s)
         events = sorted(events + falls)
 
@@ -1145,8 +1152,13 @@ def teams_report(row: dict[str, Any], args: argparse.Namespace) -> None:
 
     if events:
         print("\n  Objectives:")
+        bracket = int(events[0][0]) // 600
 
         for t, line in events:
+            if int(t) // 600 != bracket:
+                bracket = int(t) // 600
+                print()
+
             mm, ss = divmod(int(t), 60)
             print(f"  {mm:>3}:{ss:02d}  {line}")
 
@@ -2503,6 +2515,103 @@ def laning_games_report(args: argparse.Namespace, config: str | Path | None = No
     wins = int(games.get_column("won").cast(pl.Int32).sum())
 
     print(f"\nOverall: {total} games, {wins}-{total - wins}, {wins / total * 100:.1f}% win rate.")
+
+
+def damage_games_report(args: argparse.Namespace, config: str | Path | None = None) -> None:
+    """Print damage to heroes by source across every game of a hero, then one line per game.
+
+    - the delivery block splits the total into gun, abilities, and item procs
+    - the source table is one row per gun, ability, or item source with the
+      games it appeared in
+    - the per game table shows the gun and gun plus items shares drifting
+      game to game
+    """
+    if not queries.table_exists("damage", args.parquet):
+        print("No damage table yet, run `deadlock sync`")
+        return
+
+    tz = config_timezone(config)
+
+    try:
+        games = queries.damage_game_records(
+            args.hero,
+            accounts=args.account,
+            parquet_dir=args.parquet,
+            tz=tz,
+            days=args.days,
+            since=args.since,
+        )
+        hero = games.item(0, "hero")
+        sources = queries.damage_by_source(
+            hero,
+            accounts=args.account,
+            matches=games.get_column("match_id").to_list(),
+            parquet_dir=args.parquet,
+        )
+    except ValueError as e:
+        print(e)
+        return
+
+    total = int(sources.get_column("total").sum())
+    minutes = games.get_column("duration_s").sum() / 60
+    width = max(int(sources.get_column("source_name").str.len_chars().max()), 14) + 2
+
+    print(f"Damage to heroes by source, {len(games)} games of {hero}\n")
+    print(f"  {'Delivery':<{width}}{'Total':>12}{'/min':>9}{'%':>7}")
+
+    groups = sources.group_by("delivery").agg(pl.col("total").sum()).sort("total", descending=True)
+
+    for r in groups.iter_rows(named=True):
+        label = DELIVERY_LABELS.get(r["delivery"], r["delivery"])
+        percent = f"{100 * r['total'] / total:.0f}%" if total else "-"
+
+        print(f"  {label:<{width}}{r['total']:>12,}{r['total'] / minutes:>9,.1f}{percent:>7}")
+
+    print(f"  {'Total':<{width}}{total:>12,}{total / minutes:>9,.1f}")
+
+    print(f"\n  {'Games':>5}  {'Source':<{width}}{'Delivery':<16}{'Total':>12}{'/min':>9}{'%':>7}")
+
+    for r in sources.iter_rows(named=True):
+        label = DELIVERY_LABELS.get(r["delivery"], r["delivery"])
+        rate = f"{r['per_min']:,.1f}" if r["per_min"] is not None else "-"
+        print(
+            f"  {r['games']:>5}  {r['source_name']:<{width}}{label:<16}"
+            f"{r['total']:>12,}{rate:>9}{r['percent']:>6.1f}%"
+        )
+
+    print(
+        "\n  Item rows divide /min by the minutes the item was owned, not the whole game."
+        "\n  Gun, ability, and delivery /min divide by the combined length of every game."
+    )
+
+    names = {a: name for name, a in config_account_names(config).items()}
+    shown = games.tail(max(args.games, 0))
+    header = "Per game, newest last"
+
+    if len(shown) < len(games):
+        header = (
+            f"Per game, the last {len(shown)} of {len(games)} (--games N lists more), newest last"
+        )
+
+    print(f"\n{header}\n")
+    print(
+        f"  {'Account':<10} {'Day':<10} {'Result':<7} {'K/D/A':<9} "
+        f"{'Gun %':>6} {'Abil %':>7} {'Items %':>8} {'Damage':>9}  Match ID"
+    )
+
+    for g in shown.iter_rows(named=True):
+        account = names.get(g["account_id"], str(g["account_id"]))
+        result = "win" if g["won"] else "loss"
+        kda = f"{g['kills']}/{g['deaths']}/{g['assists']}"
+        parts = [
+            f"{g[c]:.1f}" if g[c] is not None else "-"
+            for c in ("gun_pct", "abilities_pct", "items_pct")
+        ]
+
+        print(
+            f"  {account:<10} {g['day']!s:<10} {result:<7} {kda:<9} "
+            f"{parts[0]:>6} {parts[1]:>7} {parts[2]:>8} {g['total']:>9,}  {g['match_id']}"
+        )
 
 
 DEATH_PHASES = [(0, "0-10 min"), (600, "10-20 min"), (1200, "20-30 min"), (1800, "30+ min")]

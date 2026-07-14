@@ -567,8 +567,7 @@ def download_matches(args: argparse.Namespace, config: str | Path | None = None)
         rows, out_dir=args.out, exclude=config_exclude(config), archive_dir=args.archive
     )
 
-    for name, n in counts.items():
-        print(f"  {name:<14} {n:>7,} rows")
+    _print_table_counts(counts)
 
     print(f"Players parquet tables at {_tilde(args.out)}")
 
@@ -830,5 +829,7 @@ def _pending_archive(
 
 def _print_table_counts(counts: dict[str, int]) -> None:
     """Print the row count written to each table."""
+    width = max((len(name) for name in counts), default=0)
+
     for name, n in counts.items():
-        print(f"  {name:<16} {n:>8,} rows")
+        print(f"  {name:<{width}} {n:>8,} rows")

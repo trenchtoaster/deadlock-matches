@@ -270,6 +270,9 @@ def build_laning_match(match_id=800):
     info.players[0].assigned_lane = 1
     info.players[1].assigned_lane = 1
 
+    for s, obj in zip(info.players[0].stats, (150, 800), strict=True):
+        s.boss_damage = obj
+
     green = (
         (44, 3, pb.k_ECitadelLobbyTeam_Team1, 3),
         (45, 4, pb.k_ECitadelLobbyTeam_Team0, 4),
@@ -981,8 +984,20 @@ def test_damage_by_source_totals_share_and_rate(pq):
     assert df.columns[0] == "games"
     assert df["total"].to_list() == [150, 90]
     assert df["games"].to_list() == [1, 1]
-    assert df["per_min"].to_list() == [5.0, 3.0]
+    assert df["per_min"].to_list() == [5.0, 3.6]
     assert df["percent"].sum() == pytest.approx(100.0)
+
+
+def test_damage_by_source_item_rate_ends_at_the_sell(sold_pq):
+    df = queries.damage_by_source("Mirage", accounts=[42], parquet_dir=sold_pq)
+
+    assert df.filter(pl.col("source_name") == "Mystic Shot")["per_min"].to_list() == [9.0]
+
+
+def test_damage_by_source_item_rate_sums_rebuy_windows(rebuy_pq):
+    df = queries.damage_by_source("Mirage", accounts=[42], parquet_dir=rebuy_pq)
+
+    assert df.filter(pl.col("source_name") == "Mystic Shot")["per_min"].to_list() == [4.5]
 
 
 def test_damage_by_source_matches_filter(pq):
@@ -1000,6 +1015,51 @@ def test_damage_by_source_raises_without_games(pq):
 
     with pytest.raises(ValueError):
         queries.damage_by_source("Mirage", accounts=[], parquet_dir=pq)
+
+
+def test_damage_game_records_splits_deliveries(pq):
+    df = queries.damage_game_records("Mirage", accounts=[42], parquet_dir=pq, tz="America/Chicago")
+    row = df.row(0, named=True)
+
+    assert len(df) == 1
+    assert row["total"] == 240
+    assert row["gun"] == 150
+    assert row["abilities"] == 0
+    assert row["items"] == 90
+    assert row["gun_pct"] == 62.5
+    assert row["abilities_pct"] == 0.0
+    assert row["items_pct"] == 37.5
+    assert row["won"] is True
+    assert row["day"] == LOCAL_DAY
+
+
+def test_damage_game_records_resolves_fuzzy_hero_names(pq):
+    df = queries.damage_game_records("mirage", accounts=[42], parquet_dir=pq, tz="America/Chicago")
+
+    assert df["hero"].to_list() == ["Mirage"]
+
+
+def test_damage_game_records_day_filters(record_pq):
+    kwargs = {"accounts": [42], "parquet_dir": record_pq, "tz": "America/Chicago"}
+
+    all_games = queries.damage_game_records("Mirage", **kwargs)
+    last = queries.damage_game_records("Mirage", days=1, **kwargs)
+    since = queries.damage_game_records(
+        "Mirage", since=str(LOCAL_DAY + dt.timedelta(days=1)), **kwargs
+    )
+
+    assert len(all_games) == 5
+    assert all_games["match_id"].to_list()[-2:] == [4, 5]
+    assert last["match_id"].to_list() == [4, 5]
+    assert since["match_id"].to_list() == [4, 5]
+
+
+def test_damage_game_records_raises(pq):
+    with pytest.raises(ValueError, match="Unknown hero"):
+        queries.damage_game_records("Nobody", accounts=[42], parquet_dir=pq)
+
+    with pytest.raises(ValueError, match="no games"):
+        queries.damage_game_records("Haze", accounts=[42], parquet_dir=pq)
 
 
 def test_souls_by_source_sums_orbs(movement_pq):
@@ -1723,6 +1783,7 @@ def test_laning_stats_reads_the_last_snapshot_inside_the_window(laning_pq):
     assert df.height == 4
     assert me["souls"] == 1800
     assert me["damage"] == 200
+    assert me["obj_damage"] == 150
     assert me["snap_s"] == 180
     assert me["lane"] == "yellow"
 

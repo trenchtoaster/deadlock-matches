@@ -947,7 +947,10 @@ def damage_by_source(
     """Total damage to heroes by source across your games of a hero.
 
     - one row per source (gun, ability, item proc), summed over every game
-    - per_min divides by your minutes on the hero, percent is the share of that total
+    - per_min for gun and ability rows divides by your minutes on the hero,
+      item rows divide by the minutes the item was owned, so a late buy
+      is not diluted by the minutes before it existed
+    - an item source with no buy on record keeps a null per_min
     - matches limits to specific match ids, like scoping to one game
     """
     accounts = config.config_accounts() if accounts is None else list(accounts)
@@ -964,7 +967,7 @@ def damage_by_source(
     rows = (
         hero_damage(parquet_dir=parquet_dir)
         .filter(predicate)
-        .select("match_id", "source_name", "delivery", "damage")
+        .select("match_id", "source_name", "source_class", "delivery", "damage")
         .collect()
     )
 
@@ -972,29 +975,162 @@ def damage_by_source(
         msg = f"no damage rows for {hero} on accounts {accounts}"
         raise ValueError(msg)
 
+    match_ids = rows.get_column("match_id").unique()
     minutes = (
         scan("matches", parquet_dir)
-        .filter(pl.col("match_id").is_in(rows.get_column("match_id").unique().implode()))
+        .filter(pl.col("match_id").is_in(match_ids.implode()))
         .select(pl.col("duration_s").sum())
         .collect()
         .item()
         / 60
     )
     grand = rows.get_column("damage").sum()
+    owned = _owned_minutes(rows, accounts, match_ids, parquet_dir)
+    owned_min = (
+        pl.col("source_class").replace_strict(owned, default=None, return_dtype=pl.Float64)
+        if owned
+        else pl.lit(None, dtype=pl.Float64)
+    )
 
     return (
-        rows.group_by("source_name", "delivery")
+        rows.group_by("source_name", "source_class", "delivery")
         .agg(
             pl.col("damage").sum().alias("total"),
             pl.col("match_id").n_unique().alias("games"),
         )
         .with_columns(
-            (pl.col("total") / minutes).round(1).alias("per_min"),
+            pl.when(pl.col("delivery").str.ends_with("_proc"))
+            .then((pl.col("total") / owned_min).round(1))
+            .otherwise((pl.col("total") / minutes).round(1))
+            .alias("per_min"),
             (pl.col("total") / grand * 100).round(1).alias("percent"),
         )
         .select("games", "source_name", "delivery", "total", "per_min", "percent")
         .sort("total", descending=True)
     )
+
+
+def _owned_minutes(
+    rows: pl.DataFrame,
+    accounts: Sequence[int],
+    match_ids: pl.Series,
+    parquet_dir: str | Path | None,
+) -> dict[str, float]:
+    """Sum the minutes each item damage source was owned across the given games.
+
+    - keyed by source_class, only the item proc sources in rows appear
+    - ownership windows come from the buys, like the item command: a sold or
+      consumed buy ends at sold_time_s, a kept buy at the end of the match
+    - an item source whose class resolves to no known item is left out
+    """
+    classes = (
+        rows.filter(pl.col("delivery").str.ends_with("_proc"))
+        .get_column("source_class")
+        .unique()
+        .to_list()
+    )
+    ids = {}
+
+    for source_class in classes:
+        item = items.item_by_class_name(source_class)
+
+        if item is not None:
+            ids[item.id] = source_class
+
+    if not ids:
+        return {}
+
+    windows = (
+        _item_windows(
+            pl.col("item_id").is_in(list(ids))
+            & pl.col("match_id").is_in(match_ids.implode())
+            & pl.col("account_id").is_in(accounts),
+            parquet_dir,
+        )
+        .group_by("item_id")
+        .agg(((pl.col("end_s") - pl.col("game_time_s")).sum() / 60).alias("minutes"))
+        .filter(pl.col("minutes") > 0)
+        .collect()
+    )
+
+    return {ids[item_id]: minutes for item_id, minutes in windows.iter_rows()}
+
+
+def damage_game_records(
+    hero: str,
+    accounts: Sequence[int] | None = None,
+    parquet_dir: str | Path | None = None,
+    tz: str | None = None,
+    days: int | None = None,
+    since: str | dt.date | None = None,
+) -> pl.DataFrame:
+    """Take one row per game of a hero with the damage to heroes split by delivery.
+
+    - total sums every detail row, gun / abilities / items sum the matching
+      delivery rows, items counts gun and spirit procs together
+    - gun_pct, abilities_pct, and items_pct are shares of total, all null
+      in a game with no hero damage
+    - days and since filter on the local day, like lane_records
+    """
+    accounts = config.config_accounts() if accounts is None else list(accounts)
+    hero_id = heroes.hero_id_by_name(hero)
+
+    if hero_id is None:
+        msg = f"Unknown hero {hero!r}"
+        raise ValueError(msg)
+
+    mine = my_games(parquet_dir, accounts, tz).filter(pl.col("hero_id") == hero_id)
+
+    if since is not None:
+        since = dt.date.fromisoformat(since) if isinstance(since, str) else since
+        mine = mine.filter(pl.col("day") >= since)
+
+    if days is not None:
+        mine = mine.filter(pl.col("day").rank("dense", descending=True) <= days)
+
+    mine = mine.select(
+        "match_id",
+        "account_id",
+        "hero",
+        "day",
+        "start_local",
+        "won",
+        "kills",
+        "deaths",
+        "assists",
+        "duration_s",
+    )
+
+    split = (
+        hero_damage(parquet_dir=parquet_dir, tz=tz)
+        .select("match_id", pl.col("dealer_account_id").alias("account_id"), "delivery", "damage")
+        .group_by("match_id", "account_id")
+        .agg(
+            pl.col("damage").sum().alias("total"),
+            pl.col("damage").filter(pl.col("delivery") == "gun").sum().alias("gun"),
+            pl.col("damage").filter(pl.col("delivery") == "ability").sum().alias("abilities"),
+            pl.col("damage").filter(pl.col("delivery").str.ends_with("_proc")).sum().alias("items"),
+        )
+    )
+
+    games = (
+        mine.join(split, on=["match_id", "account_id"], how="left")
+        .with_columns(pl.col("total", "gun", "abilities", "items").fill_null(0))
+        .with_columns(
+            pl.when(pl.col("total") > 0)
+            .then((pl.col(part) / pl.col("total") * 100).round(1))
+            .alias(f"{part}_pct")
+            for part in ("gun", "abilities", "items")
+        )
+        .sort("start_local", "match_id")
+        .collect()
+    )
+
+    if games.is_empty():
+        msg = f"no games of {hero} on accounts {accounts}"
+        raise ValueError(msg)
+
+    return games
 
 
 def souls_by_source(
@@ -2001,6 +2137,7 @@ LANING_STATS = {
     "net_worth": "souls",
     "player_damage": "damage",
     "player_damage_taken": "damage_taken",
+    "boss_damage": "obj_damage",
     "player_healing": "healing",
     "heal_prevented": "heal_prevented",
     "creep_kills": "creeps",

@@ -184,6 +184,7 @@ A few flags repeat across commands:
 - `winrate` - wins and losses per day, with MVP and Key Player awards and a hero's public win rate
 - `laning` - every game bucketed by where your lane stood at 9:00, so you can read whether winning lane wins the game
 - `deaths` - deaths bucketed by game time, who kills you, and with movement exported whether you were alone
+- `damage` - your damage sources summed across every game of a hero, then the gun/ability/item split game by game
 
 **Heroes, abilities, and items** reads the bundled asset data and works offline. Full output in [docs/commands.md](docs/commands.md#heroes-abilities-and-items).
 
@@ -304,6 +305,7 @@ Lobby average: The Hidden King Ascendant 1, The Archmother Phantom 6
 
 ```
    28:02  your team destroys the enemy Walker (yellow)
+
    30:00  enemy team delivers the Soul Urn (Victor, +2,000 souls)
    30:00  your team wins an Unstable Rift (+728 souls each)
    31:32  your team destroys the enemy Walker (green)
