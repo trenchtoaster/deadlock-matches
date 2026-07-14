@@ -36,6 +36,7 @@ COMMAND_HELP = {
     "laning": "whether winning your lane or a feeding teammate decides your games",
     "deaths": "how you die: when, to whom, alone or ganked",
     "damage": "where your damage to heroes comes from: gun, abilities, item procs",
+    "healing": "where your healing comes from: abilities, item procs, self or teammates",
     "leaderboard": "the current top players of a hero, with paste-ready lines for config.toml",
     "download": "fetch recent games from your tracked players into their own tables",
     "compare": "your stats vs your tracked players, minute by minute",
@@ -53,7 +54,10 @@ COMMAND_HELP = {
 }
 
 SECTIONS = (
-    ("your matches", ("sync", "history", "match", "winrate", "laning", "deaths", "damage")),
+    (
+        "your matches",
+        ("sync", "history", "match", "winrate", "laning", "deaths", "damage", "healing"),
+    ),
     (
         "the players you track (config.toml [players], data via download)",
         ("leaderboard", "download", "compare", "movement", "builds", "item"),
@@ -496,26 +500,27 @@ def build_parser(config: str | Path | None = None) -> argparse.ArgumentParser:
         help="laning window in minutes, default 9 like match --laning",
     )
 
-    dg = command("damage")
-    dg.add_argument("--hero", required=True, help="hero display name, like Mirage")
-    dg.add_argument(
-        "--account",
-        type=account_list,
-        default=accounts,
-        help="your account IDs or names from config.toml, defaults to all accounts there",
-    )
-    dg.add_argument("--days", type=int, default=None, help="only your last N days of games")
-    dg.add_argument(
-        "--since",
-        default=None,
-        help="only days on or after this date (YYYY-MM-DD), like 2026-07-01",
-    )
-    dg.add_argument(
-        "--games",
-        type=int,
-        default=10,
-        help="per game lines to print, default the last 10 (the tables above always count every game in the window)",
-    )
+    for name in ("damage", "healing"):
+        dg = command(name)
+        dg.add_argument("--hero", required=True, help="hero display name, like Mirage")
+        dg.add_argument(
+            "--account",
+            type=account_list,
+            default=accounts,
+            help="your account IDs or names from config.toml, defaults to all accounts there",
+        )
+        dg.add_argument("--days", type=int, default=None, help="only your last N days of games")
+        dg.add_argument(
+            "--since",
+            default=None,
+            help="only days on or after this date (YYYY-MM-DD), like 2026-07-01",
+        )
+        dg.add_argument(
+            "--games",
+            type=int,
+            default=10,
+            help="per game lines to print, default the last 10 (the tables above always count every game in the window)",
+        )
 
     he = command("hero")
     he.add_argument("hero", help="hero display name, like Mirage")
@@ -702,6 +707,7 @@ def main(argv: Sequence[str] | None = None, config: str | Path | None = None) ->
             "laning",
             "deaths",
             "damage",
+            "healing",
             "movement",
             "match",
         )
@@ -725,6 +731,7 @@ def main(argv: Sequence[str] | None = None, config: str | Path | None = None) ->
         "laning",
         "deaths",
         "damage",
+        "healing",
         "movement",
     ) or (args.cmd == "match" and (args.match_id is None or args.hero is None))
 
@@ -760,6 +767,8 @@ def main(argv: Sequence[str] | None = None, config: str | Path | None = None) ->
         performance.deaths_report(args, config)
     elif args.cmd == "damage":
         performance.damage_games_report(args, config)
+    elif args.cmd == "healing":
+        performance.healing_games_report(args, config)
     elif args.cmd == "movement":
         performance.movement_report(args, config)
     elif args.cmd == "hero":

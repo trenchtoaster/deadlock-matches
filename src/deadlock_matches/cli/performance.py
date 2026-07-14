@@ -2517,6 +2517,98 @@ def laning_games_report(args: argparse.Namespace, config: str | Path | None = No
     print(f"\nOverall: {total} games, {wins}-{total - wins}, {wins / total * 100:.1f}% win rate.")
 
 
+DAMAGE_SHARES = (
+    ("Gun %", "gun_pct", 6),
+    ("Abil %", "abilities_pct", 7),
+    ("Items %", "items_pct", 8),
+)
+
+HEALING_SHARES = (
+    ("Abil %", "abilities_pct", 7),
+    ("Items %", "items_pct", 8),
+    ("Self %", "self_pct", 7),
+)
+
+
+def _source_tables(games: pl.DataFrame, sources: pl.DataFrame) -> None:
+    """Print the delivery block and the per source table with their rate notes."""
+    total = int(sources.get_column("total").sum())
+    minutes = games.get_column("duration_s").sum() / 60
+    width = max(max(len(n) for n in sources.get_column("source_name")), 14) + 2
+
+    print(f"  {'Delivery':<{width}}{'Total':>12}{'/min':>9}{'%':>7}")
+
+    groups = sources.group_by("delivery").agg(pl.col("total").sum()).sort("total", descending=True)
+
+    for r in groups.iter_rows(named=True):
+        label = DELIVERY_LABELS.get(r["delivery"], r["delivery"])
+        percent = f"{100 * r['total'] / total:.0f}%" if total else "-"
+
+        print(f"  {label:<{width}}{r['total']:>12,}{r['total'] / minutes:>9,.1f}{percent:>7}")
+
+    print(f"  {'Total':<{width}}{total:>12,}{total / minutes:>9,.1f}")
+
+    print(f"\n  {'Games':>5}  {'Source':<{width}}{'Delivery':<16}{'Total':>12}{'/min':>9}{'%':>7}")
+
+    for r in sources.iter_rows(named=True):
+        label = DELIVERY_LABELS.get(r["delivery"], r["delivery"])
+        rate = f"{r['per_min']:,.1f}" if r["per_min"] is not None else "-"
+        print(
+            f"  {r['games']:>5}  {r['source_name']:<{width}}{label:<16}"
+            f"{r['total']:>12,}{rate:>9}{r['percent']:>6.1f}%"
+        )
+
+    whole = (
+        "Gun, ability, and delivery"
+        if (sources.get_column("delivery") == "gun").any()
+        else "Ability and delivery"
+    )
+
+    print(
+        "\n  Item rows divide /min by the minutes the item was owned, not the whole game."
+        f"\n  {whole} /min divide by the combined length of every game."
+    )
+
+
+def _per_game_lines(
+    games: pl.DataFrame,
+    args: argparse.Namespace,
+    config: str | Path | None,
+    shares: tuple[tuple[str, str, int], ...],
+    value: str,
+) -> None:
+    """Print the newest games one per line with their delivery shares."""
+    names = {a: name for name, a in config_account_names(config).items()}
+    shown = games.tail(max(args.games, 0))
+    header = "Per game, newest last"
+
+    if len(shown) < len(games):
+        header = (
+            f"Per game, the last {len(shown)} of {len(games)} (--games N lists more), newest last"
+        )
+
+    share_heads = " ".join(f"{label:>{w}}" for label, _, w in shares)
+
+    print(f"\n{header}\n")
+    print(
+        f"  {'Account':<10} {'Day':<10} {'Result':<7} {'K/D/A':<9} "
+        f"{share_heads} {value:>9}  Match ID"
+    )
+
+    for g in shown.iter_rows(named=True):
+        account = names.get(g["account_id"], str(g["account_id"]))
+        result = "win" if g["won"] else "loss"
+        kda = f"{g['kills']}/{g['deaths']}/{g['assists']}"
+        cells = " ".join(
+            f"{g[col]:>{w}.1f}" if g[col] is not None else f"{'-':>{w}}" for _, col, w in shares
+        )
+
+        print(
+            f"  {account:<10} {g['day']!s:<10} {result:<7} {kda:<9} "
+            f"{cells} {g['total']:>9,}  {g['match_id']}"
+        )
+
+
 def damage_games_report(args: argparse.Namespace, config: str | Path | None = None) -> None:
     """Print damage to heroes by source across every game of a hero, then one line per game.
 
@@ -2552,66 +2644,50 @@ def damage_games_report(args: argparse.Namespace, config: str | Path | None = No
         print(e)
         return
 
-    total = int(sources.get_column("total").sum())
-    minutes = games.get_column("duration_s").sum() / 60
-    width = max(int(sources.get_column("source_name").str.len_chars().max()), 14) + 2
-
     print(f"Damage to heroes by source, {len(games)} games of {hero}\n")
-    print(f"  {'Delivery':<{width}}{'Total':>12}{'/min':>9}{'%':>7}")
+    _source_tables(games, sources)
+    _per_game_lines(games, args, config, DAMAGE_SHARES, "Damage")
 
-    groups = sources.group_by("delivery").agg(pl.col("total").sum()).sort("total", descending=True)
 
-    for r in groups.iter_rows(named=True):
-        label = DELIVERY_LABELS.get(r["delivery"], r["delivery"])
-        percent = f"{100 * r['total'] / total:.0f}%" if total else "-"
+def healing_games_report(args: argparse.Namespace, config: str | Path | None = None) -> None:
+    """Print healing by source across every game of a hero, then one line per game.
 
-        print(f"  {label:<{width}}{r['total']:>12,}{r['total'] / minutes:>9,.1f}{percent:>7}")
+    - the delivery block splits the total into abilities and item procs
+    - the source table is one row per ability or item source with the games
+      it appeared in
+    - the per game table adds the share that landed on the healer, so self
+      sustain and teammate support read differently
+    """
+    if not queries.table_exists("damage", args.parquet):
+        print("No damage table yet, run `deadlock sync`")
+        return
 
-    print(f"  {'Total':<{width}}{total:>12,}{total / minutes:>9,.1f}")
+    tz = config_timezone(config)
 
-    print(f"\n  {'Games':>5}  {'Source':<{width}}{'Delivery':<16}{'Total':>12}{'/min':>9}{'%':>7}")
-
-    for r in sources.iter_rows(named=True):
-        label = DELIVERY_LABELS.get(r["delivery"], r["delivery"])
-        rate = f"{r['per_min']:,.1f}" if r["per_min"] is not None else "-"
-        print(
-            f"  {r['games']:>5}  {r['source_name']:<{width}}{label:<16}"
-            f"{r['total']:>12,}{rate:>9}{r['percent']:>6.1f}%"
+    try:
+        games = queries.healing_game_records(
+            args.hero,
+            accounts=args.account,
+            parquet_dir=args.parquet,
+            tz=tz,
+            days=args.days,
+            since=args.since,
         )
-
-    print(
-        "\n  Item rows divide /min by the minutes the item was owned, not the whole game."
-        "\n  Gun, ability, and delivery /min divide by the combined length of every game."
-    )
-
-    names = {a: name for name, a in config_account_names(config).items()}
-    shown = games.tail(max(args.games, 0))
-    header = "Per game, newest last"
-
-    if len(shown) < len(games):
-        header = (
-            f"Per game, the last {len(shown)} of {len(games)} (--games N lists more), newest last"
+        hero = games.item(0, "hero")
+        sources = queries.damage_by_source(
+            hero,
+            accounts=args.account,
+            matches=games.get_column("match_id").to_list(),
+            parquet_dir=args.parquet,
+            stat="healing",
         )
+    except ValueError as e:
+        print(e)
+        return
 
-    print(f"\n{header}\n")
-    print(
-        f"  {'Account':<10} {'Day':<10} {'Result':<7} {'K/D/A':<9} "
-        f"{'Gun %':>6} {'Abil %':>7} {'Items %':>8} {'Damage':>9}  Match ID"
-    )
-
-    for g in shown.iter_rows(named=True):
-        account = names.get(g["account_id"], str(g["account_id"]))
-        result = "win" if g["won"] else "loss"
-        kda = f"{g['kills']}/{g['deaths']}/{g['assists']}"
-        parts = [
-            f"{g[c]:.1f}" if g[c] is not None else "-"
-            for c in ("gun_pct", "abilities_pct", "items_pct")
-        ]
-
-        print(
-            f"  {account:<10} {g['day']!s:<10} {result:<7} {kda:<9} "
-            f"{parts[0]:>6} {parts[1]:>7} {parts[2]:>8} {g['total']:>9,}  {g['match_id']}"
-        )
+    print(f"Healing by source, {len(games)} games of {hero}\n")
+    _source_tables(games, sources)
+    _per_game_lines(games, args, config, HEALING_SHARES, "Healing")
 
 
 DEATH_PHASES = [(0, "0-10 min"), (600, "10-20 min"), (1200, "20-30 min"), (1800, "30+ min")]

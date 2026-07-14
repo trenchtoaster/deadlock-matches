@@ -2624,6 +2624,84 @@ def test_damage_command_without_account_prints_hint(capsys, tmp_path):
     assert "No account set" in out
 
 
+def test_healing_command_prints_delivery_source_and_game_tables(capsys, tmp_path):
+    cache = tmp_path / "cache"
+    cache.mkdir()
+    write_cache_entry(
+        cache,
+        match_id=100,
+        stats=((300, 3000), (600, 6000)),
+        damage=(
+            ("mirage_tornado", [50, 100], 1),
+            ("upgrade_toxic_bullets", [40, 60], 1, 1, 1),
+        ),
+    )
+
+    run_main(tmp_path, "healing", "--hero", "Mirage", "--account", "42")
+
+    out = capsys.readouterr().out
+
+    assert "Healing by source, 1 games of Mirage" in out
+    assert "Abilities" in out
+    assert "Items (gun)" in out
+    assert "Ability and delivery /min" in out
+    assert "Self %" in out
+    assert "Per game, newest last" in out
+    assert "win" in out
+    assert "5/2/8" in out
+    assert "62.5" in out
+    assert "37.5" in out
+
+
+def test_healing_command_caps_the_per_game_table(capsys, tmp_path):
+    cache = tmp_path / "cache"
+    cache.mkdir()
+
+    for i in range(11):
+        write_cache_entry(
+            cache,
+            match_id=100 + i,
+            start_time=1783000000 + i * 3600,
+            stats=((300, 3000),),
+            damage=(("mirage_tornado", [50, 100], 1),),
+        )
+
+    run_main(tmp_path, "healing", "--hero", "Mirage", "--account", "42")
+
+    out = capsys.readouterr().out
+
+    assert "Per game, the last 10 of 11 (--games N lists more), newest last" in out
+    assert "  110\n" in out
+    assert "  100\n" not in out
+
+    run_main(tmp_path, "healing", "--hero", "Mirage", "--account", "42", "--games", "11")
+
+    out = capsys.readouterr().out
+
+    assert "Per game, newest last" in out
+    assert "  100\n" in out
+
+
+def test_healing_command_unknown_hero_prints_error(capsys, tmp_path):
+    cache = tmp_path / "cache"
+    cache.mkdir()
+    write_cache_entry(cache, match_id=100, stats=((300, 3000),))
+
+    run_main(tmp_path, "healing", "--hero", "Nobody", "--account", "42")
+
+    out = capsys.readouterr().out
+
+    assert "Unknown hero 'Nobody'" in out
+
+
+def test_healing_command_without_account_prints_hint(capsys, tmp_path):
+    run_main(tmp_path, "healing", "--hero", "Mirage", accounts=None)
+
+    out = capsys.readouterr().out
+
+    assert "No account set" in out
+
+
 def test_winrate_weekly_table(capsys, tmp_path):
     cache = tmp_path / "cache"
     cache.mkdir()

@@ -342,9 +342,33 @@ def build_sold_match(match_id=300, *, rebuy=False):
     return info
 
 
+def build_heal_match(match_id=100):
+    info = build_match(match_id=match_id)
+    dm = info.damage_matrix
+
+    dm.source_details.source_name.append("upgrade_toxic_bullets")
+    dm.source_details.stat_type.append(1)
+
+    src = dm.damage_dealers[0].damage_sources.add()
+    src.source_details_index = 4
+    t = src.damage_to_players.add()
+    t.target_player_slot = 1
+    t.damage.extend([20, 50])
+
+    return info
+
+
 @pytest.fixture
 def pq(tmp_path):
     for name, df in export.build_tables([build_match()], exclude=("movement",)).items():
+        df.write_parquet(tmp_path / f"{name}.parquet")
+
+    return tmp_path
+
+
+@pytest.fixture
+def heal_pq(tmp_path):
+    for name, df in export.build_tables([build_heal_match()], exclude=("movement",)).items():
         df.write_parquet(tmp_path / f"{name}.parquet")
 
     return tmp_path
@@ -1040,13 +1064,14 @@ def test_damage_game_records_resolves_fuzzy_hero_names(pq):
 
 
 def test_damage_game_records_day_filters(record_pq):
-    kwargs = {"accounts": [42], "parquet_dir": record_pq, "tz": "America/Chicago"}
+    def records(**kwargs):
+        return queries.damage_game_records(
+            "Mirage", accounts=[42], parquet_dir=record_pq, tz="America/Chicago", **kwargs
+        )
 
-    all_games = queries.damage_game_records("Mirage", **kwargs)
-    last = queries.damage_game_records("Mirage", days=1, **kwargs)
-    since = queries.damage_game_records(
-        "Mirage", since=str(LOCAL_DAY + dt.timedelta(days=1)), **kwargs
-    )
+    all_games = records()
+    last = records(days=1)
+    since = records(since=str(LOCAL_DAY + dt.timedelta(days=1)))
 
     assert len(all_games) == 5
     assert all_games["match_id"].to_list()[-2:] == [4, 5]
@@ -1060,6 +1085,61 @@ def test_damage_game_records_raises(pq):
 
     with pytest.raises(ValueError, match="no games"):
         queries.damage_game_records("Haze", accounts=[42], parquet_dir=pq)
+
+
+def test_damage_by_source_healing_stat(heal_pq):
+    df = queries.damage_by_source("Mirage", accounts=[42], parquet_dir=heal_pq, stat="healing")
+
+    assert df["source_name"].to_list() == ["Toxic Bullets", "Dust Devil"]
+    assert df["total"].to_list() == [50, 30]
+    assert df["per_min"].to_list() == [None, 1.0]
+    assert df["percent"].to_list() == [62.5, 37.5]
+
+
+def test_damage_by_source_healing_stat_raises_without_rows(pq):
+    with pytest.raises(ValueError, match="no mitigated rows"):
+        queries.damage_by_source("Mirage", accounts=[42], parquet_dir=pq, stat="mitigated")
+
+
+def test_healing_game_records_splits_delivery_and_recipient(heal_pq):
+    df = queries.healing_game_records(
+        "Mirage", accounts=[42], parquet_dir=heal_pq, tz="America/Chicago"
+    )
+    row = df.row(0, named=True)
+
+    assert len(df) == 1
+    assert row["total"] == 80
+    assert row["abilities"] == 30
+    assert row["items"] == 50
+    assert row["self"] == 50
+    assert row["abilities_pct"] == 37.5
+    assert row["items_pct"] == 62.5
+    assert row["self_pct"] == 62.5
+    assert row["won"] is True
+    assert row["day"] == LOCAL_DAY
+
+
+def test_healing_game_records_day_filters(record_pq):
+    def records(**kwargs):
+        return queries.healing_game_records(
+            "Mirage", accounts=[42], parquet_dir=record_pq, tz="America/Chicago", **kwargs
+        )
+
+    all_games = records()
+    last = records(days=1)
+    since = records(since=str(LOCAL_DAY + dt.timedelta(days=1)))
+
+    assert len(all_games) == 5
+    assert last["match_id"].to_list() == [4, 5]
+    assert since["match_id"].to_list() == [4, 5]
+
+
+def test_healing_game_records_raises(pq):
+    with pytest.raises(ValueError, match="Unknown hero"):
+        queries.healing_game_records("Nobody", accounts=[42], parquet_dir=pq)
+
+    with pytest.raises(ValueError, match="no games"):
+        queries.healing_game_records("Haze", accounts=[42], parquet_dir=pq)
 
 
 def test_souls_by_source_sums_orbs(movement_pq):

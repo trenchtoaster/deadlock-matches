@@ -943,6 +943,7 @@ def damage_by_source(
     accounts: Sequence[int] | None = None,
     matches: Sequence[int] | None = None,
     parquet_dir: str | Path | None = None,
+    stat: str = "damage",
 ) -> pl.DataFrame:
     """Total damage to heroes by source across your games of a hero.
 
@@ -952,6 +953,7 @@ def damage_by_source(
       is not diluted by the minutes before it existed
     - an item source with no buy on record keeps a null per_min
     - matches limits to specific match ids, like scoping to one game
+    - stat swaps the figure like hero_damage: damage, healing, mitigated, ...
     """
     accounts = config.config_accounts() if accounts is None else list(accounts)
 
@@ -965,14 +967,14 @@ def damage_by_source(
         predicate = predicate & pl.col("match_id").is_in(list(matches))
 
     rows = (
-        hero_damage(parquet_dir=parquet_dir)
+        hero_damage(stat=stat, parquet_dir=parquet_dir)
         .filter(predicate)
         .select("match_id", "source_name", "source_class", "delivery", "damage")
         .collect()
     )
 
     if rows.is_empty():
-        msg = f"no damage rows for {hero} on accounts {accounts}"
+        msg = f"no {stat} rows for {hero} on accounts {accounts}"
         raise ValueError(msg)
 
     match_ids = rows.get_column("match_id").unique()
@@ -1056,20 +1058,21 @@ def _owned_minutes(
     return {ids[item_id]: minutes for item_id, minutes in windows.iter_rows()}
 
 
-def damage_game_records(
+def _game_split_records(
     hero: str,
-    accounts: Sequence[int] | None = None,
-    parquet_dir: str | Path | None = None,
-    tz: str | None = None,
-    days: int | None = None,
-    since: str | dt.date | None = None,
+    split: pl.LazyFrame,
+    parts: Sequence[str],
+    accounts: Sequence[int] | None,
+    parquet_dir: str | Path | None,
+    tz: str | None,
+    days: int | None,
+    since: str | dt.date | None,
 ) -> pl.DataFrame:
-    """Take one row per game of a hero with the damage to heroes split by delivery.
+    """Join a per-game split onto one row per game of a hero.
 
-    - total sums every detail row, gun / abilities / items sum the matching
-      delivery rows, items counts gun and spirit procs together
-    - gun_pct, abilities_pct, and items_pct are shares of total, all null
-      in a game with no hero damage
+    - one row per game with day, result, K/D/A, and duration
+    - each part fills to 0 and gets a _pct share of total, null in a game
+      with no detail rows
     - days and since filter on the local day, like lane_records
     """
     accounts = config.config_accounts() if accounts is None else list(accounts)
@@ -1101,6 +1104,42 @@ def damage_game_records(
         "duration_s",
     )
 
+    games = (
+        mine.join(split, on=["match_id", "account_id"], how="left")
+        .with_columns(pl.col("total", *parts).fill_null(0))
+        .with_columns(
+            pl.when(pl.col("total") > 0)
+            .then((pl.col(part) / pl.col("total") * 100).round(1))
+            .alias(f"{part}_pct")
+            for part in parts
+        )
+        .sort("start_local", "match_id")
+        .collect()
+    )
+
+    if games.is_empty():
+        msg = f"no games of {hero} on accounts {accounts}"
+        raise ValueError(msg)
+
+    return games
+
+
+def damage_game_records(
+    hero: str,
+    accounts: Sequence[int] | None = None,
+    parquet_dir: str | Path | None = None,
+    tz: str | None = None,
+    days: int | None = None,
+    since: str | dt.date | None = None,
+) -> pl.DataFrame:
+    """Take one row per game of a hero with the damage to heroes split by delivery.
+
+    - total sums every detail row, gun / abilities / items sum the matching
+      delivery rows, items counts gun and spirit procs together
+    - gun_pct, abilities_pct, and items_pct are shares of total, all null
+      in a game with no hero damage
+    - days and since filter on the local day, like lane_records
+    """
     split = (
         hero_damage(parquet_dir=parquet_dir, tz=tz)
         .select("match_id", pl.col("dealer_account_id").alias("account_id"), "delivery", "damage")
@@ -1113,24 +1152,50 @@ def damage_game_records(
         )
     )
 
-    games = (
-        mine.join(split, on=["match_id", "account_id"], how="left")
-        .with_columns(pl.col("total", "gun", "abilities", "items").fill_null(0))
-        .with_columns(
-            pl.when(pl.col("total") > 0)
-            .then((pl.col(part) / pl.col("total") * 100).round(1))
-            .alias(f"{part}_pct")
-            for part in ("gun", "abilities", "items")
-        )
-        .sort("start_local", "match_id")
-        .collect()
+    return _game_split_records(
+        hero, split, ("gun", "abilities", "items"), accounts, parquet_dir, tz, days, since
     )
 
-    if games.is_empty():
-        msg = f"no games of {hero} on accounts {accounts}"
-        raise ValueError(msg)
 
-    return games
+def healing_game_records(
+    hero: str,
+    accounts: Sequence[int] | None = None,
+    parquet_dir: str | Path | None = None,
+    tz: str | None = None,
+    days: int | None = None,
+    since: str | dt.date | None = None,
+) -> pl.DataFrame:
+    """Take one row per game of a hero with the healing split by delivery and recipient.
+
+    - total sums every healing detail row, abilities / items sum the
+      matching delivery rows, self keeps the healing that landed on the
+      healer
+    - abilities_pct, items_pct, and self_pct are shares of total, all null
+      in a game with no healing
+    - days and since filter on the local day, like lane_records
+    """
+    split = (
+        hero_damage(stat="healing", parquet_dir=parquet_dir, tz=tz)
+        .select(
+            "match_id",
+            pl.col("dealer_account_id").alias("account_id"),
+            "target_account_id",
+            "delivery",
+            "damage",
+        )
+        .with_columns((pl.col("target_account_id") == pl.col("account_id")).alias("to_self"))
+        .group_by("match_id", "account_id")
+        .agg(
+            pl.col("damage").sum().alias("total"),
+            pl.col("damage").filter(pl.col("delivery") == "ability").sum().alias("abilities"),
+            pl.col("damage").filter(pl.col("delivery").str.ends_with("_proc")).sum().alias("items"),
+            pl.col("damage").filter(pl.col("to_self")).sum().alias("self"),
+        )
+    )
+
+    return _game_split_records(
+        hero, split, ("abilities", "items", "self"), accounts, parquet_dir, tz, days, since
+    )
 
 
 def souls_by_source(

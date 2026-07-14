@@ -673,6 +673,45 @@ Per game, the last 10 of 47 (--games N lists more), newest last
   main       2026-07-03 win     7/3/16      22.8    55.1     22.1    35,006  12345802
 ```
 
+### Healing by source across your games
+
+```
+deadlock healing --hero Mirage
+```
+
+- the same shape as `damage` for your healing: a row per ability or item source with the games it appeared in, its total, per minute, and share of your healing
+- the totals match the scoreboard healing number exactly, item lifesteal and regen included
+- the per game table swaps the gun share for `Self %`, the share of your healing that landed on you instead of a teammate, so a support game reads differently from a sustain build
+- `--days`, `--since`, `--account`, and `--games` filter like `damage`
+
+```
+Healing by source, 47 games of Mirage
+
+  Delivery                        Total     /min      %
+  Abilities                     310,376    187.6    55%
+  Items (spirit)                194,458    117.5    34%
+  Items (gun)                    61,068     36.9    11%
+  Total                         565,902    342.0
+
+  Games  Source                   Delivery               Total     /min      %
+     47  Fire Scarabs             Abilities            308,255    186.3  54.5%
+     43  Healbane                 Items (spirit)        76,078     67.8  13.4%
+     26  Mystic Regeneration      Items (spirit)        52,931     71.0   9.4%
+     29  Dispel Magic             Items (spirit)        37,977     84.6   6.7%
+     17  Headhunter               Items (gun)           27,452     61.8   4.9%
+     14  Siphon Bullets           Items (gun)           20,421    374.4   3.6%
+
+  Item rows divide /min by the minutes the item was owned, not the whole game.
+  Ability and delivery /min divide by the combined length of every game.
+
+Per game, the last 10 of 47 (--games N lists more), newest last
+
+  Account    Day        Result  K/D/A       Abil %  Items %  Self %   Healing  Match ID
+  main       2026-07-02 win     10/5/15       40.4     59.6   100.0     8,044  12345678
+  main       2026-07-03 loss    9/12/11       59.7     40.3    91.2    15,206  12345731
+  main       2026-07-03 win     7/3/16        50.0     50.0   100.0    16,558  12345802
+```
+
 ## Heroes, abilities, and items
 
 These commands read the included hero, ability, item, and rank data instead of your matches, so they need no games and work offline. Asset data from 2026-01-01 onward is included with the package.
