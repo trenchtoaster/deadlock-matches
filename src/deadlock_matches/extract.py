@@ -98,6 +98,37 @@ def _login_users(steam_root: Path) -> dict[int, dict[str, str]]:
     return users
 
 
+def installed_client_version(cache_dir: str | Path = DEFAULT_CACHE) -> int | None:
+    """Read the installed Deadlock client build from steam.inf, None without an install.
+
+    - the Steam root sits two levels above the httpcache
+    - checks the root plus every library folder listed in libraryfolders.vdf
+    - ClientVersion uses the same numbering as the asset history client_version
+    - Steam updates steam.inf before a post-patch match can be played
+    """
+    root = Path(cache_dir).parent.parent
+    libraries = [root]
+    vdf = root / "steamapps/libraryfolders.vdf"
+
+    if vdf.is_file():
+        listed = re.findall(
+            r'"path"\s+"([^"]+)"', vdf.read_text(encoding="utf-8", errors="replace")
+        )
+        libraries.extend(Path(p) for p in listed)
+
+    for library in libraries:
+        inf = library / "steamapps/common/Deadlock/game/citadel/steam.inf"
+
+        if not inf.is_file():
+            continue
+
+        for line in inf.read_text(encoding="utf-8", errors="replace").splitlines():
+            if line.startswith("ClientVersion="):
+                return int(line.removeprefix("ClientVersion=").strip())
+
+    return None
+
+
 def steam_accounts(cache_dir: str | Path = DEFAULT_CACHE) -> list[SteamAccount]:
     """List the Steam accounts on this PC that have run Deadlock, newest login first.
 

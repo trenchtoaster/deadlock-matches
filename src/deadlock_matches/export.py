@@ -26,8 +26,10 @@ from deadlock_matches.assets import (
     abilities,
     accolades,
     heroes,
+    history,
     items,
     statues,
+    store,
     unnest,
 )
 
@@ -37,6 +39,40 @@ if TYPE_CHECKING:
     from deadlock_matches.extract import MatchInfo
 
 PARQUET_DIR = paths.data_dir() / "deadlock-matches/parquet"
+
+EXPORT_LOGIC_VERSION = 1
+
+
+def read_stamp(out_dir: str | Path) -> dict[str, Any]:
+    """Read the export stamp, empty before the first stamped export."""
+    path = Path(out_dir) / "export_stamp.json"
+
+    if not path.is_file():
+        return {}
+
+    return json.loads(path.read_text(encoding="utf-8"))
+
+
+def update_stamp(out_dir: str | Path, **fields: Any) -> None:
+    """Merge fields into the export stamp file."""
+    path = Path(out_dir) / "export_stamp.json"
+    data = read_stamp(out_dir)
+    data.update(fields)
+    path.write_text(json.dumps(data), encoding="utf-8")
+
+
+def item_horizon() -> str | None:
+    """Return the newest committed item era start, None without history.
+
+    Matches that start past this time bake the newest known era instead of
+    their own, so they need a re-export once the history catches up.
+    """
+    eras = history.eras(store.read_path("item_history.parquet"))
+
+    if not eras:
+        return None
+
+    return eras[-1][0]
 
 
 class GoldSource(IntEnum):
@@ -219,67 +255,6 @@ def _movement_intervals_frame(frame: pl.DataFrame) -> pl.DataFrame:
     )
 
 
-TOTAL_RE = re.compile(r"^[A-Z][A-Za-z]*$")
-
-BULLET_PROC_OVERRIDES = {
-    "upgrade_ethereal_bullets",
-    "upgrade_quick_silver",
-    "upgrade_siphon_bullets",
-}
-
-
-def _damage_category(class_name: str) -> str:
-    """Bucket a damage source as gun, item, ability, or a match screen total.
-
-    The matrix carries both. "Bullet" duplicates the citadel_weapon_* gun row and
-    "Ability" overlaps the individual ability rows, so never sum totals with details.
-    """
-    if class_name.startswith("citadel_weapon"):
-        return "gun"
-
-    if class_name.startswith("upgrade_"):
-        return "item"
-
-    if TOTAL_RE.match(class_name):
-        return "total"
-
-    return "ability"
-
-
-def _delivery(class_name: str, by_class: dict[str, items.Item] | None = None) -> str | None:
-    """Damage group of a detail row, None for totals rows.
-
-    - gun = the gun itself (body shots + headshots)
-    - gun_proc = item procs that only fire when a shot lands (Mystic Shot,
-      Headhunter, Toxic), even when the damage counts as spirit
-    - ability = the kit itself
-    - spirit_proc = spirit items with their own damage lines (Scourge, Escalating Exposure)
-    - BULLET_PROC_OVERRIDES: bullet-proc items the shop files outside the weapon
-      slot (Magnum, Quicksilver, Siphon) still count as gun_proc
-    - by_class: item lookup to use, defaults to the bundled current snapshot
-    """
-    cat = _damage_category(class_name)
-
-    if cat == "total":
-        return None
-
-    if cat == "gun":
-        return "gun"
-
-    if cat == "item":
-        if class_name in BULLET_PROC_OVERRIDES:
-            return "gun_proc"
-
-        if by_class is None:
-            item = items.item_by_class_name(class_name)
-        else:
-            item = by_class.get(class_name)
-
-        return "gun_proc" if item and item.slot == "weapon" else "spirit_proc"
-
-    return "ability"
-
-
 def build_tables(
     infos: Iterable[MatchInfo],
     exclude: Collection[str] = (),
@@ -322,7 +297,6 @@ def build_tables(
     for info in infos:
         start_time = dt.datetime.fromtimestamp(info.start_time, dt.UTC)
         im = items.item_map_asof(start_time)
-        by_class = {i.class_name: i for i in im.values() if i.class_name}
 
         matches.append(
             {
@@ -541,8 +515,6 @@ def build_tables(
                             "target_player_slot": t.target_player_slot,
                             "source_name": abilities.label(details.source_name[i]),
                             "source_class": details.source_name[i],
-                            "category": _damage_category(details.source_name[i]),
-                            "delivery": _delivery(details.source_name[i], by_class),
                             "stat": STAT_NAMES.get(details.stat_type[i], str(details.stat_type[i])),
                             "damage": t.damage[-1],
                         }
@@ -575,8 +547,6 @@ def build_tables(
                     "dealer_account_id": slot_to_account.get(slot),
                     "source_name": abilities.label(source),
                     "source_class": source,
-                    "category": _damage_category(source),
-                    "delivery": _delivery(source, by_class),
                     "stat": STAT_NAMES.get(details.stat_type[i], str(details.stat_type[i])),
                     "vs_heroes": vs_heroes,
                     "time_stamp_s": ts,
@@ -595,8 +565,6 @@ def build_tables(
                     "target_account_id": slot_to_account.get(target_slot),
                     "source_name": abilities.label(source),
                     "source_class": source,
-                    "category": _damage_category(source),
-                    "delivery": _delivery(source, by_class),
                     "stat": STAT_NAMES.get(details.stat_type[i], str(details.stat_type[i])),
                     "time_stamp_s": ts,
                     "damage": v,
@@ -1027,6 +995,11 @@ def migrate_to_partitions(out_dir: Path, exclude: Collection[str] = ()) -> None:
         legacy.unlink()
 
 
+def refresh_asset_tables(out_dir: str | Path) -> None:
+    """Rewrite the exported asset tables from the committed history."""
+    _write_asset_tables(Path(out_dir), {})
+
+
 def _write_asset_tables(out_dir: Path, counts: dict[str, int]) -> None:
     """Flatten the committed asset history into out_dir/assets and record row counts per table."""
     asset_dir = out_dir / "assets"
@@ -1066,8 +1039,36 @@ def export_all(
 
     _write_skipped(out_dir, accounts, set(dropped))
     _write_asset_tables(out_dir, counts)
+    update_stamp(out_dir, logic_version=EXPORT_LOGIC_VERSION, asset_horizon=item_horizon())
 
     return ExportResult(counts=counts, decoded=counts.get("matches", 0), skipped=0)
+
+
+def reexport_matches(
+    match_ids: Collection[int],
+    archive_dir: str | Path | None = None,
+    out_dir: str | Path | None = None,
+    exclude: Collection[str] = (),
+    accounts: Collection[int] | None = None,
+) -> int:
+    """Re-decode specific archived matches and rewrite their table rows in place.
+
+    - write_partitioned replaces rows by match_id and leaves every other match alone
+    - matches no longer in the archive are skipped
+    """
+    archive_dir = extract.ARCHIVE_DIR if archive_dir is None else Path(archive_dir)
+    out_dir = PARQUET_DIR if out_dir is None else Path(out_dir)
+    wanted = set(match_ids)
+    paths_wanted = [p for p in _archive_paths(archive_dir) if int(p.name.split("_")[0]) in wanted]
+
+    if not paths_wanted:
+        return 0
+
+    dropped: list[int] = []
+    infos = _select_infos(_decode_matches(paths_wanted), accounts, dropped)
+    counts = export_infos(infos, out_dir, exclude)
+
+    return counts.get("matches", 0)
 
 
 def is_legacy_layout(out_dir: Path) -> bool:
@@ -1111,6 +1112,23 @@ def export_new(
         result.rebuilt = drift
 
         return result
+
+    stamp = read_stamp(out_dir)
+    logic = stamp.get("logic_version")
+
+    if logic is not None and logic != EXPORT_LOGIC_VERSION:
+        result = export_all(archive_dir, out_dir, exclude, accounts)
+        result.rebuilt = "the export logic changed"
+
+        return result
+
+    fresh_stamp = {"logic_version": EXPORT_LOGIC_VERSION}
+
+    if "asset_horizon" not in stamp and (horizon := item_horizon()):
+        fresh_stamp["asset_horizon"] = horizon
+
+    if logic is None or "asset_horizon" not in stamp:
+        update_stamp(out_dir, **fresh_stamp)
 
     skipped = skipped_match_ids(out_dir, accounts)
     paths = _new_archive_paths(archive_dir, exported | skipped)

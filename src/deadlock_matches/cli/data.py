@@ -142,6 +142,7 @@ def match_history(args: argparse.Namespace, config: str | Path | None = None) ->
     """Print one line per game of yours, newest last, with the match ID for the other commands.
 
     - shows the last 10 games unless --days or --since widen the window
+    - the day prints once per local day, later games that day show only the time
     """
     tz = config_timezone(config)
 
@@ -208,18 +209,24 @@ def match_history(args: argparse.Namespace, config: str | Path | None = None) ->
     names = {account_id: name for name, account_id in config_account_names(config).items()}
 
     print(
-        f"  {'Account':<10} {'Hero':<14} {'Result':<7} {'K/D/A':<9} {'Souls':>8} "
-        f"{'Damage':>8}  {'Timestamp':<16}  Match ID"
+        f"  {'Day':<10}  {'Time':<5}  {'Account':<10} {'Hero':<14} {'Result':<7} "
+        f"{'K/D/A':<9} {'Souls':>8} {'Damage':>8}  Match ID"
     )
+
+    last_day = ""
 
     for g in games.iter_rows(named=True):
         account = names.get(g["account_id"], str(g["account_id"]))
         result = "win" if g["won"] else "loss"
         kda = f"{g['kills']}/{g['deaths']}/{g['assists']}"
-        when = g["start_local"].strftime("%Y-%m-%d %H:%M")
+        day = g["start_local"].strftime("%Y-%m-%d")
+        time = g["start_local"].strftime("%H:%M")
+        day_cell = "" if day == last_day else day
+        last_day = day
+
         print(
-            f"  {account:<10} {g['hero']:<14} {result:<7} {kda:<9} {g['net_worth']:>8,} "
-            f"{g['player_damage']:>8,}  {when:<16}  {g['match_id']}"
+            f"  {day_cell:<10}  {time:<5}  {account:<10} {g['hero']:<14} {result:<7} "
+            f"{kda:<9} {g['net_worth']:>8,} {g['player_damage']:>8,}  {g['match_id']}"
         )
 
 
@@ -679,12 +686,79 @@ def leaderboard_report(args: argparse.Namespace, config: str | Path | None = Non
             print(f"{json.dumps(m['name'], ensure_ascii=False)} = {m['account_id']}")
 
 
+def _extend_asset_history() -> bool:
+    """Grow the local asset history from the assets API, True when a table gained an era."""
+    snapshots.client_version_dates(max_age=0)
+    grew = False
+
+    for _, file, builder in HISTORY_BUILDERS:
+        build = getattr(snapshots, builder)
+        before = len(history.eras(store.read_path(file)))
+        eras = build(path=store.write_path(file), resume_from=store.read_path(file), full=False)
+
+        if eras > before:
+            grew = True
+
+    return grew
+
+
+def heal_assets(args: argparse.Namespace, accounts: list[int], exclude: Collection[str]) -> None:
+    """Keep the asset history and the era-baked table columns current on plain sync.
+
+    - reads the installed client build from steam.inf and extends the asset
+      history once when the game is newer than both the newest committed era
+      and the last checked build
+    - skips quietly when the API is offline or failing and the next sync retries
+    - when the item horizon moved, re-exports the matches that were exported
+      past the old horizon and refreshes the exported asset tables
+    """
+    out_dir = Path(args.parquet)
+    stamp = export.read_stamp(out_dir)
+    installed = extract.installed_client_version(args.cache)
+    eras = history.eras(store.read_path("item_history.parquet"))
+    committed = eras[-1][1] if eras else 0
+    checked = stamp.get("checked_build", 0)
+
+    if installed is not None and installed > max(committed, checked):
+        try:
+            _extend_asset_history()
+        except Exception:
+            return
+
+        export.update_stamp(out_dir, checked_build=installed)
+
+    horizon = export.item_horizon()
+    stamped = stamp.get("asset_horizon")
+
+    if horizon is None or stamped is None or horizon <= stamped:
+        return
+
+    cutoff = dt.datetime.fromisoformat(stamped).replace(tzinfo=dt.UTC)
+    clamped = (
+        queries.scan("matches", out_dir)
+        .filter(pl.col("start_time") > cutoff)
+        .select("match_id")
+        .collect()
+        .to_series()
+        .to_list()
+    )
+
+    if clamped:
+        export.reexport_matches(clamped, args.archive, out_dir, exclude, accounts)
+
+    export.refresh_asset_tables(out_dir)
+    export.update_stamp(out_dir, asset_horizon=horizon)
+
+
 def sync_tables(args: argparse.Namespace, config: str | Path | None = None) -> None:
     """Pull matches into the parquet tables from the local archive or the match-history API."""
     accounts = _sync_accounts(args, config)
 
     if accounts is None:
         return
+
+    if not getattr(args, "dry_run", False):
+        heal_assets(args, accounts, config_exclude(config))
 
     if args.source == "api":
         _sync_from_api(args, config, accounts)

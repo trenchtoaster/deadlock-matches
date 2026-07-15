@@ -323,14 +323,6 @@ class Damage(Table):
     source_class = Column(
         pl.String, "Engine class_name, stable across patches unlike display names"
     )
-    category = Column(
-        pl.String,
-        "Row type, 'total' = the summary rows on the match screen (Bullet, Ability, ...), which just add up the gun/ability/item detail rows",
-    )
-    delivery = Column(
-        pl.String,
-        "How a detail row was delivered: gun, gun_proc (items that proc on hit, like Mystic Shot), ability, spirit_proc. Null on total rows",
-    )
     stat = Column(
         pl.String, "Which figure this row carries: damage/healing/mitigated/... (EStatType)"
     )
@@ -347,14 +339,6 @@ class DamageSources(Table):
     )
     source_class = Column(
         pl.String, "Engine class_name, stable across patches unlike display names"
-    )
-    category = Column(
-        pl.String,
-        "Row type, 'total' = the summary rows on the match screen (Bullet, Ability, ...), which just add up the gun/ability/item detail rows",
-    )
-    delivery = Column(
-        pl.String,
-        "How a detail row was delivered: gun, gun_proc (items that proc on hit, like Mystic Shot), ability, spirit_proc. Null on total rows",
     )
     stat = Column(
         pl.String, "Which figure this row carries: damage/healing/mitigated/... (EStatType)"
@@ -381,14 +365,6 @@ class DamageTargets(Table):
     )
     source_class = Column(
         pl.String, "Engine class_name, stable across patches unlike display names"
-    )
-    category = Column(
-        pl.String,
-        "Row type, 'total' = the summary rows on the match screen (Bullet, Ability, ...), which just add up the gun/ability/item detail rows",
-    )
-    delivery = Column(
-        pl.String,
-        "How a detail row was delivered: gun, gun_proc (items that proc on hit, like Mystic Shot), ability, spirit_proc. Null on total rows",
     )
     stat = Column(
         pl.String, "Which figure this row carries: damage/healing/mitigated/... (EStatType)"

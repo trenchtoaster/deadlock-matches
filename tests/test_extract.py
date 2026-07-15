@@ -351,3 +351,33 @@ def test_steam_accounts_without_loginusers(tmp_path):
     found = extract.steam_accounts(cache)
 
     assert found[0].login is None
+
+
+def _write_steam_inf(root, version):
+    inf = root / "steamapps/common/Deadlock/game/citadel/steam.inf"
+    inf.parent.mkdir(parents=True, exist_ok=True)
+    inf.write_text(f"ClientVersion={version}\nServerVersion={version}\nappID=1422450\n")
+
+    return inf
+
+
+def test_installed_client_version_reads_steam_inf(tmp_path):
+    cache = tmp_path / "appcache/httpcache"
+    _write_steam_inf(tmp_path, 6635)
+
+    assert extract.installed_client_version(cache) == 6635
+
+
+def test_installed_client_version_checks_library_folders(tmp_path):
+    cache = tmp_path / "appcache/httpcache"
+    library = tmp_path / "second-drive"
+    _write_steam_inf(library, 7000)
+    vdf = tmp_path / "steamapps/libraryfolders.vdf"
+    vdf.parent.mkdir(parents=True, exist_ok=True)
+    vdf.write_text(f'"libraryfolders"\n{{\n\t"1"\n\t{{\n\t\t"path"\t\t"{library}"\n\t}}\n}}\n')
+
+    assert extract.installed_client_version(cache) == 7000
+
+
+def test_installed_client_version_none_without_an_install(tmp_path):
+    assert extract.installed_client_version(tmp_path / "appcache/httpcache") is None

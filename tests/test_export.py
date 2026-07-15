@@ -217,18 +217,18 @@ def test_players_lane_columns():
     info.players[1].assigned_lane = 6
     players = export.build_tables([info])["players"]
 
-    assert players["assigned_lane"].to_list() == [1, 6]
-    assert players["lane"].to_list() == ["yellow", "green"]
+    assert players.get_column("assigned_lane").to_list() == [1, 6]
+    assert players.get_column("lane").to_list() == ["yellow", "green"]
 
 
 def test_damage_sources_cumulative_matches_damage_total():
     tables = export.build_tables([build_match()])
     ds = tables["damage_sources"]
 
-    assert ds["time_stamp_s"].to_list() == [600, 1200]
-    assert ds["damage"].to_list() == [100, 809]
-    assert ds["vs_heroes"].to_list() == [True, True]
-    assert ds["damage"][-1] == tables["damage"]["damage"][0]
+    assert ds.get_column("time_stamp_s").to_list() == [600, 1200]
+    assert ds.get_column("damage").to_list() == [100, 809]
+    assert ds.get_column("vs_heroes").to_list() == [True, True]
+    assert ds.get_column("damage")[-1] == tables["damage"].get_column("damage")[0]
 
 
 def test_damage_sources_right_aligns_short_arrays():
@@ -242,18 +242,18 @@ def test_damage_sources_right_aligns_short_arrays():
     ds = export.build_tables([info])["damage_sources"]
     hero_rows = ds.filter(pl.col("vs_heroes"))
 
-    assert hero_rows["damage"].to_list() == [100, 879]
+    assert hero_rows.get_column("damage").to_list() == [100, 879]
 
 
 def test_damage_targets_keeps_per_enemy_samples():
     tables = export.build_tables([build_match()])
     dt_rows = tables["damage_targets"]
 
-    assert dt_rows["time_stamp_s"].to_list() == [600, 1200]
-    assert dt_rows["damage"].to_list() == [100, 809]
-    assert dt_rows["dealer_account_id"].to_list() == [42, 42]
-    assert dt_rows["target_account_id"].to_list() == [43, 43]
-    assert dt_rows["damage"][-1] == tables["damage"]["damage"][0]
+    assert dt_rows.get_column("time_stamp_s").to_list() == [600, 1200]
+    assert dt_rows.get_column("damage").to_list() == [100, 809]
+    assert dt_rows.get_column("dealer_account_id").to_list() == [42, 42]
+    assert dt_rows.get_column("target_account_id").to_list() == [43, 43]
+    assert dt_rows.get_column("damage")[-1] == tables["damage"].get_column("damage")[0]
 
 
 def test_damage_targets_sums_split_arrays_per_target():
@@ -266,7 +266,7 @@ def test_damage_targets_sums_split_arrays_per_target():
 
     dt_rows = export.build_tables([info])["damage_targets"]
 
-    assert dt_rows["damage"].to_list() == [100, 879]
+    assert dt_rows.get_column("damage").to_list() == [100, 879]
 
 
 def test_damage_targets_excludes_non_player_targets():
@@ -279,8 +279,8 @@ def test_damage_targets_excludes_non_player_targets():
 
     dt_rows = export.build_tables([info])["damage_targets"]
 
-    assert dt_rows["damage"].to_list() == [100, 809]
-    assert dt_rows["target_account_id"].null_count() == 0
+    assert dt_rows.get_column("damage").to_list() == [100, 809]
+    assert dt_rows.get_column("target_account_id").null_count() == 0
 
 
 def test_damage_sources_splits_creep_from_hero_damage():
@@ -294,8 +294,8 @@ def test_damage_sources_splits_creep_from_hero_damage():
     ds = export.build_tables([info])["damage_sources"]
     creep_rows = ds.filter(~pl.col("vs_heroes"))
 
-    assert creep_rows["time_stamp_s"].to_list() == [600, 1200]
-    assert creep_rows["damage"].to_list() == [500, 900]
+    assert creep_rows.get_column("time_stamp_s").to_list() == [600, 1200]
+    assert creep_rows.get_column("damage").to_list() == [500, 900]
 
 
 def test_damage_sources_empty_without_sample_times():
@@ -345,15 +345,15 @@ def test_matches_average_badges():
     info.average_badge_team1 = 83
     matches = export.build_tables([info])["matches"]
 
-    assert matches["average_badge_team0"][0] == 76
-    assert matches["average_badge_team1"][0] == 83
+    assert matches.get_column("average_badge_team0")[0] == 76
+    assert matches.get_column("average_badge_team1")[0] == 83
 
 
 def test_matches_average_badges_null_when_unset():
     matches = export.build_tables([build_match()])["matches"]
 
-    assert matches["average_badge_team0"][0] is None
-    assert matches["average_badge_team1"][0] is None
+    assert matches.get_column("average_badge_team0")[0] is None
+    assert matches.get_column("average_badge_team1")[0] is None
 
 
 def test_gold_fields_renamed_to_souls():
@@ -362,12 +362,12 @@ def test_gold_fields_renamed_to_souls():
     assert "souls_player" in stats.columns
     assert "souls_denied" in stats.columns
     assert not any(c.startswith("gold") for c in stats.columns)
-    assert stats["souls_player"][0] == 500
+    assert stats.get_column("souls_player")[0] == 500
 
 
 def test_soul_sources_named():
     src = export.build_tables([build_match()])["soul_sources"]
-    named = dict(zip(src["source_name"], src["souls"], strict=True))
+    named = dict(zip(src.get_column("source_name"), src.get_column("souls"), strict=True))
 
     assert named == {"troopers": 700, "breakables": 90}
 
@@ -376,14 +376,14 @@ def test_players_won_flag():
     players = export.build_tables([build_match(winning_team=pb.k_ECitadelLobbyTeam_Team1)])[
         "players"
     ]
-    won = dict(zip(players["account_id"], players["won"], strict=True))
+    won = dict(zip(players.get_column("account_id"), players.get_column("won"), strict=True))
 
     assert won == {42: True, 43: False}
 
 
 def test_players_mvp_rank():
     players = export.build_tables([build_match()])["players"]
-    ranks = dict(zip(players["account_id"], players["mvp_rank"], strict=True))
+    ranks = dict(zip(players.get_column("account_id"), players.get_column("mvp_rank"), strict=True))
 
     assert ranks == {42: 1, 43: 0}
 
@@ -394,13 +394,13 @@ def test_matches_not_scored_flag():
 
     matches = export.build_tables([info])["matches"]
 
-    assert matches["not_scored"].to_list() == [True]
+    assert matches.get_column("not_scored").to_list() == [True]
 
 
 def test_matches_not_scored_defaults_false():
     matches = export.build_tables([build_match()])["matches"]
 
-    assert matches["not_scored"].to_list() == [False]
+    assert matches.get_column("not_scored").to_list() == [False]
 
 
 def test_players_party_from_wire_field():
@@ -410,7 +410,7 @@ def test_players_party_from_wire_field():
     info.players[0].MergeFromString(raw)
 
     players = export.build_tables([info])["players"]
-    parties = dict(zip(players["account_id"], players["party"], strict=True))
+    parties = dict(zip(players.get_column("account_id"), players.get_column("party"), strict=True))
 
     assert parties == {42: 2, 43: None}
 
@@ -420,7 +420,9 @@ def test_players_abandon_time():
     info.players[1].abandon_match_time_s = 367
 
     players = export.build_tables([info])["players"]
-    abandons = dict(zip(players["account_id"], players["abandon_time_s"], strict=True))
+    abandons = dict(
+        zip(players.get_column("account_id"), players.get_column("abandon_time_s"), strict=True)
+    )
 
     assert abandons == {42: None, 43: 367}
 
@@ -430,17 +432,17 @@ def test_item_events_denormalized():
 
     ee = events.filter(pl.col("item_id") == EE)
 
-    assert ee["item"][0] == "Escalating Exposure"
-    assert ee["cost"][0] == 6400
-    assert ee["imbued_ability_id"][0] == 1336069669
-    assert ee["imbued_ability"][0] == "Dust Devil"
+    assert ee.get_column("item")[0] == "Escalating Exposure"
+    assert ee.get_column("cost")[0] == 6400
+    assert ee.get_column("imbued_ability_id")[0] == 1336069669
+    assert ee.get_column("imbued_ability")[0] == "Dust Devil"
 
     unknown = events.filter(pl.col("item_id") == 999999999)
 
-    assert unknown["item"][0] is None
-    assert unknown["flags"][0] == 1
-    assert unknown["imbued_ability_id"][0] is None
-    assert unknown["imbued_ability"][0] is None
+    assert unknown.get_column("item")[0] is None
+    assert unknown.get_column("flags")[0] == 1
+    assert unknown.get_column("imbued_ability_id")[0] is None
+    assert unknown.get_column("imbued_ability")[0] is None
 
 
 def test_item_events_priced_from_committed_history():
@@ -452,7 +454,7 @@ def test_item_events_priced_from_committed_history():
     priced = items.item_asof(EE, start)
 
     assert priced is not None
-    assert ee["cost"][0] == priced.cost
+    assert ee.get_column("cost")[0] == priced.cost
 
 
 def test_accolades_named_from_snapshot():
@@ -460,14 +462,14 @@ def test_accolades_named_from_snapshot():
 
     kills = acc.filter(pl.col("accolade_id") == 1)
 
-    assert kills["accolade"][0] == "kills"
-    assert kills["value"][0] == 7
-    assert kills["threshold"][0] == 1
+    assert kills.get_column("accolade")[0] == "kills"
+    assert kills.get_column("value")[0] == 7
+    assert kills.get_column("threshold")[0] == 1
 
     unknown = acc.filter(pl.col("accolade_id") == 999)
 
-    assert unknown["accolade"][0] is None
-    assert unknown["threshold"][0] == -1
+    assert unknown.get_column("accolade")[0] is None
+    assert unknown.get_column("threshold")[0] == -1
 
 
 def test_custom_stats_named_from_match_registry():
@@ -489,8 +491,8 @@ def test_custom_stats_keep_every_snapshot():
     df = export.build_tables([info])["custom_stats"]
     parry = df.filter(pl.col("stat") == "Parry Success").sort("time_stamp_s")
 
-    assert parry["time_stamp_s"].to_list() == [180, 600]
-    assert parry["value"].to_list() == [3, 5]
+    assert parry.get_column("time_stamp_s").to_list() == [180, 600]
+    assert parry.get_column("value").to_list() == [3, 5]
 
 
 def test_custom_stats_drop_unregistered_ids():
@@ -543,10 +545,10 @@ def test_buffs_keep_permanent_and_bridge_pickups():
 def test_damage_maps_slots_to_accounts():
     dmg = export.build_tables([build_match()])["damage"]
 
-    assert dmg["dealer_account_id"][0] == 42
-    assert dmg["target_account_id"][0] == 43
-    assert dmg["damage"][0] == 809
-    assert dmg["stat"][0] == "damage"
+    assert dmg.get_column("dealer_account_id")[0] == 42
+    assert dmg.get_column("target_account_id")[0] == 43
+    assert dmg.get_column("damage")[0] == 809
+    assert dmg.get_column("stat")[0] == "damage"
 
 
 def test_stat_names_from_proto_enum():
@@ -560,20 +562,8 @@ def test_stat_names_from_proto_enum():
 def test_damage_source_names_resolved():
     dmg = export.build_tables([build_match()])["damage"]
 
-    assert dmg["source_name"][0] == "Escalating Exposure"
-    assert dmg["source_class"][0] == "upgrade_escalating_exposure"
-    assert dmg["category"][0] == "item"
-
-
-def test_damage_categories():
-    assert export._damage_category("Bullet") == "total"
-    assert export._damage_category("Ability") == "total"
-    assert export._damage_category("Melee") == "total"
-    assert export._damage_category("UnknownAbility") == "total"
-    assert export._damage_category("citadel_weapon_mirage_set") == "gun"
-    assert export._damage_category("upgrade_escalating_exposure") == "item"
-    assert export._damage_category("mirage_tornado") == "ability"
-    assert export._damage_category("ability_blood_bomb_bloodspill") == "ability"
+    assert dmg.get_column("source_name")[0] == "Escalating Exposure"
+    assert dmg.get_column("source_class")[0] == "upgrade_escalating_exposure"
 
 
 def test_item_attribution(tmp_path):
@@ -584,72 +574,50 @@ def test_item_attribution(tmp_path):
 
     ee = events.filter(pl.col("item_id") == EE)
 
-    assert ee["attribution"][0] == "proc"
+    assert ee.get_column("attribution")[0] == "proc"
 
     unknown = events.filter(pl.col("item_id") == 999999999)
 
-    assert unknown["attribution"][0] == "stat"
-
-
-def test_damage_delivery():
-    assert export._delivery("Bullet") is None
-    assert export._delivery("Ability") is None
-    assert export._delivery("citadel_weapon_mirage_set") == "gun"
-    assert export._delivery("citadel_weapon_mirage_set_crit") == "gun"
-    assert export._delivery("upgrade_crackshot") == "gun_proc"
-    assert export._delivery("upgrade_headhunter") == "gun_proc"
-    assert export._delivery("upgrade_toxic_bullets") == "gun_proc"
-    assert export._delivery("upgrade_ethereal_bullets") == "gun_proc"
-    assert export._delivery("upgrade_quick_silver") == "gun_proc"
-    assert export._delivery("upgrade_siphon_bullets") == "gun_proc"
-    assert export._delivery("upgrade_escalating_exposure") == "spirit_proc"
-    assert export._delivery("mirage_tornado") == "ability"
-    assert export._delivery("upgrade_nonexistent_item") == "spirit_proc"
-
-
-def test_damage_delivery_column():
-    dmg = export.build_tables([build_match()])["damage"]
-
-    assert dmg["delivery"][0] == "spirit_proc"
+    assert unknown.get_column("attribution")[0] == "stat"
 
 
 def test_mid_boss_rows():
     mb = export.build_tables([build_match()])["mid_boss"]
 
-    assert mb["destroyed_time_s"].to_list() == [1300, 1700]
-    assert mb["team_killed"].to_list() == [1, 1]
-    assert mb["team_claimed"].to_list() == [0, 1]
-    assert mb["match_id"].to_list() == [100, 100]
+    assert mb.get_column("destroyed_time_s").to_list() == [1300, 1700]
+    assert mb.get_column("team_killed").to_list() == [1, 1]
+    assert mb.get_column("team_claimed").to_list() == [0, 1]
+    assert mb.get_column("match_id").to_list() == [100, 100]
 
 
 def test_objectives_rows():
     obj = export.build_tables([build_match()])["objectives"]
 
-    assert obj["objective"].to_list() == ["Guardian", "Patron"]
-    assert obj["lane"].to_list() == ["yellow", None]
-    assert obj["team"].to_list() == [0, 1]
-    assert obj["destroyed_time_s"].to_list() == [660, None]
-    assert obj["first_damage_time_s"].to_list() == [120, None]
-    assert obj["player_damage"].to_list() == [4000, 500]
-    assert obj["player_spirit_damage"].to_list() == [1500, 0]
-    assert obj["creep_damage"].to_list() == [800, 0]
+    assert obj.get_column("objective").to_list() == ["Guardian", "Patron"]
+    assert obj.get_column("lane").to_list() == ["yellow", None]
+    assert obj.get_column("team").to_list() == [0, 1]
+    assert obj.get_column("destroyed_time_s").to_list() == [660, None]
+    assert obj.get_column("first_damage_time_s").to_list() == [120, None]
+    assert obj.get_column("player_damage").to_list() == [4000, 500]
+    assert obj.get_column("player_spirit_damage").to_list() == [1500, 0]
+    assert obj.get_column("creep_damage").to_list() == [800, 0]
 
 
 def test_movement_positions_decoded():
     movement = export.build_tables([build_match()])["movement"]
 
-    assert movement["account_id"].to_list() == [42, 42, 42]
-    assert movement["game_time_s"].to_list() == [0, 1, 2]
-    assert movement["x"].to_list() == [-1000.0, 0.0, 1000.0]
-    assert movement["y"].to_list() == [0.0, 250.0, 500.0]
+    assert movement.get_column("account_id").to_list() == [42, 42, 42]
+    assert movement.get_column("game_time_s").to_list() == [0, 1, 2]
+    assert movement.get_column("x").to_list() == [-1000.0, 0.0, 1000.0]
+    assert movement.get_column("y").to_list() == [0.0, 250.0, 500.0]
 
 
 def test_movement_enum_names():
     movement = export.build_tables([build_match()])["movement"]
 
-    assert movement["health_percent"].to_list() == [100, 40, 0]
-    assert movement["combat_type"].to_list() == ["out", "player", "enemy_npc"]
-    assert movement["move_type"].to_list() == ["normal", "slide", "air_dash"]
+    assert movement.get_column("health_percent").to_list() == [100, 40, 0]
+    assert movement.get_column("combat_type").to_list() == ["out", "player", "enemy_npc"]
+    assert movement.get_column("move_type").to_list() == ["normal", "slide", "air_dash"]
 
 
 def test_movement_drops_samples_past_match_end():
@@ -657,7 +625,7 @@ def test_movement_drops_samples_past_match_end():
     info.duration_s = 1
     movement = export.build_tables([info])["movement"]
 
-    assert movement["game_time_s"].to_list() == [0, 1]
+    assert movement.get_column("game_time_s").to_list() == [0, 1]
 
 
 def test_move_names_from_proto_enum():
@@ -673,17 +641,17 @@ def test_move_names_from_proto_enum():
 def test_deaths_rows():
     deaths = export.build_tables([build_match()])["deaths"]
 
-    assert deaths["account_id"][0] == 42
-    assert deaths["game_time_s"][0] == 2
-    assert deaths["time_to_kill_s"][0] == 1.5
-    assert deaths["death_duration_s"][0] == 20
-    assert deaths["killer_account_id"][0] == 43
-    assert deaths["x"][0] == 1000.0
-    assert deaths["y"][0] == 500.0
-    assert deaths["z"][0] == 128.0
-    assert deaths["killer_x"][0] == 900.0
-    assert deaths["killer_y"][0] == 450.0
-    assert deaths["killer_z"][0] == 128.0
+    assert deaths.get_column("account_id")[0] == 42
+    assert deaths.get_column("game_time_s")[0] == 2
+    assert deaths.get_column("time_to_kill_s")[0] == 1.5
+    assert deaths.get_column("death_duration_s")[0] == 20
+    assert deaths.get_column("killer_account_id")[0] == 43
+    assert deaths.get_column("x")[0] == 1000.0
+    assert deaths.get_column("y")[0] == 500.0
+    assert deaths.get_column("z")[0] == 128.0
+    assert deaths.get_column("killer_x")[0] == 900.0
+    assert deaths.get_column("killer_y")[0] == 450.0
+    assert deaths.get_column("killer_z")[0] == 128.0
 
 
 def test_export_all_writes_parquet(tmp_path):
@@ -746,7 +714,7 @@ def test_export_all_keeps_only_matches_a_listed_account_played(tmp_path):
     assert kept.counts["matches"] == 1
 
     df = queries.scan("players", tmp_path / "keep").collect()
-    assert set(df["account_id"].to_list()) == {42, 43}
+    assert set(df.get_column("account_id").to_list()) == {42, 43}
 
     dropped = export.export_all(arc, tmp_path / "drop", accounts=[999])
     assert dropped.counts.get("matches", 0) == 0
@@ -1003,7 +971,7 @@ def test_export_partitions_by_month(tmp_path):
 
     matches = queries.scan("matches", out).collect()
 
-    assert sorted(matches["match_id"].to_list()) == [10, 11]
+    assert sorted(matches.get_column("match_id").to_list()) == [10, 11]
 
 
 def test_movement_export_round_trip(tmp_path):
@@ -1019,7 +987,7 @@ def test_movement_export_round_trip(tmp_path):
     movement = queries.scan("movement", out).collect()
 
     assert movement.height == 3
-    assert movement["match_id"].unique().to_list() == [10]
+    assert movement.get_column("match_id").unique().to_list() == [10]
 
 
 def test_incremental_decodes_only_new_matches(tmp_path):
@@ -1038,7 +1006,7 @@ def test_incremental_decodes_only_new_matches(tmp_path):
 
     matches = queries.scan("matches", out).collect()
 
-    assert sorted(matches["match_id"].to_list()) == [10, 11]
+    assert sorted(matches.get_column("match_id").to_list()) == [10, 11]
 
 
 def test_incremental_leaves_untouched_month_alone(tmp_path):
@@ -1082,7 +1050,7 @@ def test_incremental_is_idempotent(tmp_path):
 
     matches = queries.scan("matches", out).collect()
 
-    assert matches["match_id"].n_unique() == matches.height
+    assert matches.get_column("match_id").n_unique() == matches.height
 
 
 def test_write_partitioned_replaces_rather_than_duplicating(tmp_path):
@@ -1094,7 +1062,7 @@ def test_write_partitioned_replaces_rather_than_duplicating(tmp_path):
     got = pl.read_parquet(tmp_path / "matches" / "2026-06.parquet")
 
     assert got.height == 1
-    assert got["match_id"].to_list() == [5]
+    assert got.get_column("match_id").to_list() == [5]
 
 
 def test_write_partitioned_rejects_schema_drift(tmp_path):
@@ -1149,7 +1117,7 @@ def test_export_new_migrates_a_legacy_single_file_store(tmp_path):
 
     matches = queries.scan("matches", out).collect()
 
-    assert sorted(matches["match_id"].to_list()) == [10, 11]
+    assert sorted(matches.get_column("match_id").to_list()) == [10, 11]
     assert result.decoded == 0
     assert result.skipped == 2
 
@@ -1250,3 +1218,83 @@ def test_restore_backups_drops_a_backup_when_the_table_is_live(tmp_path):
 
     assert (tmp_path / "players").is_dir()
     assert not backup.exists()
+
+
+def test_export_stamp_roundtrip(tmp_path):
+    assert export.read_stamp(tmp_path) == {}
+
+    export.update_stamp(tmp_path, logic_version=3)
+    export.update_stamp(tmp_path, asset_horizon="2026-01-01T00:00:00")
+
+    assert export.read_stamp(tmp_path) == {
+        "logic_version": 3,
+        "asset_horizon": "2026-01-01T00:00:00",
+    }
+
+
+def test_export_all_writes_the_stamp(tmp_path):
+    arc = tmp_path / "arc"
+    arc.mkdir()
+    _archive_match(arc, 7, dt.datetime(2026, 6, 1, tzinfo=dt.UTC))
+
+    export.export_all(arc, tmp_path / "pq")
+    stamp = export.read_stamp(tmp_path / "pq")
+
+    assert stamp["logic_version"] == export.EXPORT_LOGIC_VERSION
+    assert stamp["asset_horizon"] == export.item_horizon()
+
+
+def test_export_new_rebuilds_when_the_logic_version_changes(tmp_path):
+    arc = tmp_path / "arc"
+    arc.mkdir()
+    out = tmp_path / "pq"
+    _archive_match(arc, 7, dt.datetime(2026, 6, 1, tzinfo=dt.UTC))
+    export.export_new(arc, out)
+    export.update_stamp(out, logic_version=export.EXPORT_LOGIC_VERSION - 1)
+
+    result = export.export_new(arc, out)
+
+    assert result.rebuilt == "the export logic changed"
+    assert export.read_stamp(out)["logic_version"] == export.EXPORT_LOGIC_VERSION
+
+
+def test_export_new_stamps_an_unstamped_store_without_rebuilding(tmp_path):
+    arc = tmp_path / "arc"
+    arc.mkdir()
+    out = tmp_path / "pq"
+    _archive_match(arc, 7, dt.datetime(2026, 6, 1, tzinfo=dt.UTC))
+    export.export_new(arc, out)
+    (out / "export_stamp.json").unlink()
+
+    result = export.export_new(arc, out)
+
+    assert result.rebuilt is None
+    stamp = export.read_stamp(out)
+    assert stamp["logic_version"] == export.EXPORT_LOGIC_VERSION
+    assert stamp["asset_horizon"] == export.item_horizon()
+
+
+def test_reexport_matches_rewrites_rows_in_place(tmp_path):
+    arc = tmp_path / "arc"
+    arc.mkdir()
+    out = tmp_path / "pq"
+    _archive_match(arc, 7, dt.datetime(2026, 6, 1, tzinfo=dt.UTC))
+    _archive_match(arc, 8, dt.datetime(2026, 6, 2, tzinfo=dt.UTC))
+    export.export_new(arc, out)
+    before = queries.scan("matches", out).collect().sort("match_id")
+
+    healed = export.reexport_matches([7], arc, out)
+    after = queries.scan("matches", out).collect().sort("match_id")
+
+    assert healed == 1
+    assert after.equals(before)
+
+
+def test_reexport_matches_skips_ids_not_in_the_archive(tmp_path):
+    arc = tmp_path / "arc"
+    arc.mkdir()
+    out = tmp_path / "pq"
+    _archive_match(arc, 7, dt.datetime(2026, 6, 1, tzinfo=dt.UTC))
+    export.export_new(arc, out)
+
+    assert export.reexport_matches([999], arc, out) == 0
