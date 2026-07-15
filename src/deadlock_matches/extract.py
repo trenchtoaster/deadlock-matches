@@ -242,7 +242,7 @@ def store_meta(
 def iter_matches(
     cache_dir: str | Path = DEFAULT_CACHE, archive_dir: str | Path = ARCHIVE_DIR
 ) -> Iterator[Path]:
-    """Sync the live cache into the archive, then yield every archived match in descending match_id order."""
+    """Sync the live cache into the archive and then yield every archived match in descending match_id order."""
     archive(cache_dir, archive_dir)
 
     yield from sorted(

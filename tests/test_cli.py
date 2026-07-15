@@ -932,6 +932,7 @@ def test_compare_unknown_stat_lists_options(capsys, tmp_path):
     assert "farm" in out
     assert "denies" in out
     assert "soul_sources" in out
+    assert "movement" in out
     assert "souls_player" not in out
     assert "ability_points" not in out
     assert "gold_player" not in out
@@ -946,7 +947,7 @@ def test_compare_without_account_prints_hint(capsys, tmp_path):
     assert "--account" in out
 
 
-def _pool_game(match_id):
+def _pool_game(match_id, paths=False):
     info = pb.CMsgMatchMetaDataContents().match_info
     info.match_id = match_id
     info.start_time = 1783000000
@@ -964,6 +965,22 @@ def _pool_game(match_id):
         s = tp.stats.add()
         s.time_stamp_s = t
         s.net_worth = worth
+
+    if paths:
+        mp = info.match_paths
+        mp.interval_s = 1.0
+        mp.x_resolution = 100
+        mp.y_resolution = 100
+
+        track = mp.paths.add()
+        track.player_slot = tp.player_slot
+        track.x_max = 10000.0
+        track.y_max = 10000.0
+        track.x_pos.extend(range(10))
+        track.y_pos.extend([0] * 10)
+        track.health.extend([100] * 10)
+        track.combat_type.extend([1] * 4 + [0] * 6)
+        track.move_type.extend([0, 4, 4, 3, 0, 7, 8, 7, 6, 0])
 
     return info
 
@@ -1010,6 +1027,53 @@ def test_compare_command_reads_the_downloaded_pool(tmp_path, monkeypatch, capsys
     assert re.search(r"10-15\s+0\s+0\s+\+0\s+-4,000\s+3/3", out)
     assert re.search(r"Total\s+67\s+200\s+-133", out)
     assert "Biggest souls gap: 0-5m, you 200/min vs tracked players 600/min" in out
+
+
+def test_compare_command_movement_stat(tmp_path, monkeypatch, capsys):
+    cache = tmp_path / "cache"
+    cache.mkdir()
+    write_cache_entry(cache, match_id=100, stats=[(180, 1000), (360, 2000)], paths=True)
+
+    monkeypatch.setattr(
+        players, "match_info", lambda mid, archive_dir=None: _pool_game(mid, paths=True)
+    )
+    store = tmp_path / "players-pq"
+    ledger = [
+        {
+            "match_id": match_id,
+            "account_id": 11,
+            "player": "pro",
+            "hero_id": 52,
+            "rank": 2,
+            "region": "Asia",
+            "downloaded_at": dt.datetime(2026, 7, 1, tzinfo=dt.UTC),
+        }
+        for match_id in (900, 901, 902)
+    ]
+    players.write_player_tables(ledger, out_dir=store)
+    monkeypatch.setattr(players, "PARQUET_DIR", store)
+
+    run_main(
+        tmp_path,
+        "compare",
+        "--hero",
+        "Mirage",
+        "--stat",
+        "movement",
+        extra="[players.Mirage]\npro = 11\n",
+    )
+
+    out = capsys.readouterr().out
+
+    assert "You (you, 1 games) vs 1 tracked Mirage players (3 games): movement" in out
+    assert "Last download" in out
+    assert re.search(r"pro\s+3\s+2\s+2026-07-01", out)
+    assert "meters /min" in out
+    assert "fighting players %" in out
+    assert re.search(r"Metric\s+You\s+Tracked\s+Gap", out)
+    assert re.search(r"m /min\s+Stationary\s+Slide", out)
+    assert re.search(r"you\s+-\s+1\s+-", out)
+    assert re.search(r"pro\s+11\s+3\s+2", out)
 
 
 def test_compare_command_shows_deaths_as_counts(tmp_path, monkeypatch, capsys):
@@ -1766,7 +1830,7 @@ def test_match_movement_flag_without_paths(capsys, tmp_path):
 
 def test_movement_by_player_table(capsys):
     metrics = {
-        "distance_min": 39.37 * 400.0,
+        "meters_min": 400.0,
         "stationary_percent": 7.0,
         "slide_percent": 8.0,
         "in_air_percent": 20.0,
@@ -1775,7 +1839,7 @@ def test_movement_by_player_table(capsys):
         "dashes_min": 2.0,
         "air_dashes_min": 0.5,
     }
-    you = pl.DataFrame([{**metrics, "distance_min": 39.37 * 350.0}])
+    you = pl.DataFrame([{**metrics, "meters_min": 350.0}])
     top = pl.DataFrame(
         [
             {"match_id": 900, "account_id": 11, **metrics},
@@ -1807,6 +1871,82 @@ def test_fit_name_counts_wide_characters_double():
     assert performance._fit_name("스노우맨", 14) == "스노우맨" + " " * 6
     assert performance._fit_name("스노우맨", 6) == "스노우"
     assert performance._fit_name("a-very-long-player-name", 14) == "a-very-long-pl"
+
+
+def test_movement_command_prints_metric_and_game_tables(capsys, tmp_path):
+    cache = tmp_path / "cache"
+    cache.mkdir()
+    write_cache_entry(cache, match_id=100, stats=[(300, 3000)], paths=True)
+
+    run_main(tmp_path, "movement", "--hero", "Mirage", "--account", "42")
+
+    out = capsys.readouterr().out
+
+    assert "Movement, 1 games of Mirage" in out
+    assert "meters /min" in out
+    assert "fighting players %" in out
+    assert "All (1)" in out
+    assert "Wins (" not in out
+    assert "Percents cover seconds alive" in out
+    assert "Per game, newest last" in out
+    assert "m /min" in out
+    assert "Stationary %" in out
+    assert "5/2/8" in out
+    assert "win" in out
+    assert "  100" in out
+
+
+def test_movement_command_splits_wins_and_losses(capsys, tmp_path):
+    cache = tmp_path / "cache"
+    cache.mkdir()
+    write_cache_entry(cache, match_id=100, stats=[(300, 3000)], paths=True)
+    write_cache_entry(
+        cache, match_id=101, start_time=1783003600, won=False, stats=[(300, 3000)], paths=True
+    )
+
+    run_main(tmp_path, "movement", "--hero", "Mirage", "--account", "42")
+
+    out = capsys.readouterr().out
+
+    assert "Movement, 2 games of Mirage" in out
+    assert "All (2)" in out
+    assert "Wins (1)" in out
+    assert "Losses (1)" in out
+    assert "loss" in out
+
+
+def test_movement_command_game_without_rows_prints_dashes(capsys, tmp_path):
+    cache = tmp_path / "cache"
+    cache.mkdir()
+    write_cache_entry(cache, match_id=100, stats=[(300, 3000)], paths=True)
+    write_cache_entry(cache, match_id=101, start_time=1783003600, stats=[(300, 3000)])
+
+    run_main(tmp_path, "movement", "--hero", "Mirage", "--account", "42")
+
+    out = capsys.readouterr().out
+
+    assert "Movement, 2 games of Mirage" in out
+    assert re.search(r"-\s+-\s+-\s+-\s+-\s+101", out)
+
+
+def test_movement_command_unknown_hero_prints_error(capsys, tmp_path):
+    cache = tmp_path / "cache"
+    cache.mkdir()
+    write_cache_entry(cache, match_id=100, stats=[(300, 3000)], paths=True)
+
+    run_main(tmp_path, "movement", "--hero", "Nobody", "--account", "42")
+
+    out = capsys.readouterr().out
+
+    assert "Unknown hero 'Nobody'" in out
+
+
+def test_movement_command_without_account_prints_hint(capsys, tmp_path):
+    run_main(tmp_path, "movement", "--hero", "Mirage", accounts=None)
+
+    out = capsys.readouterr().out
+
+    assert "No account set" in out
 
 
 COUNTERSPELL = 1414025773

@@ -796,7 +796,7 @@ def _sync_accounts(args: argparse.Namespace, config: str | Path | None) -> list[
 def _sync_from_archive(
     args: argparse.Namespace, config: str | Path | None, accounts: list[int]
 ) -> None:
-    """Snapshot the cache, then export the account matches from the local archive into the tables."""
+    """Snapshot the cache and then export the account matches from the local archive into the tables."""
     sync_archive(args.cache, args.archive)
     exclude = config_exclude(config)
 
@@ -829,7 +829,7 @@ def _sync_from_archive(
 def _sync_from_api(
     args: argparse.Namespace, config: str | Path | None, accounts: list[int]
 ) -> None:
-    """Download the raw metadata for the API match history into the archive, then export it."""
+    """Download the raw metadata for the API match history into the archive and then export it."""
     from zoneinfo import ZoneInfo
 
     tz = ZoneInfo(config_timezone(config))

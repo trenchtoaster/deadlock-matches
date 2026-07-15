@@ -3177,7 +3177,8 @@ def movement_intervals(
     """Split the movement for one player into intervals of distance and state counts.
 
     - sums the per minute movement_intervals rows into the requested buckets
-    - percents cover alive seconds, stationary and pace cover moving seconds
+    - percents cover alive seconds
+    - stationary and pace cover moving seconds
     - intervals spent fully dead keep zero counts and null percents
     - the last interval ends at the match end, so it can be shorter than the rest
     """
@@ -3256,20 +3257,17 @@ def movement_scoreboard(match_id: int, parquet_dir: str | Path | None = None) ->
     )
 
 
-def movement_profile(parquet_dir: str | Path | None = None) -> pl.LazyFrame:
-    """Movement metrics per player per match from the movement_intervals table.
+def movement_metrics(parquet_dir: str | Path | None = None) -> pl.LazyFrame:
+    """Sum the movement counts per player per match and derive the rates.
 
     - time sliding, in the air, ziplining, and fighting players as a percent
       of alive seconds
     - dashes and air dashes counted on the transition into the state
     - distance skips zipline seconds, respawn jumps, and other teleports
-    - farm souls (troopers, jungle, treasure, denies) for pace per minute and per distance
     """
-    grp = "match_id", "account_id"
-
-    metrics = (
+    return (
         scan("movement_intervals", parquet_dir)
-        .group_by(*grp)
+        .group_by("match_id", "account_id")
         .agg(pl.col(MOVEMENT_COUNTS).sum())
         .with_columns(_movement_percents())
         .with_columns(
@@ -3277,6 +3275,17 @@ def movement_profile(parquet_dir: str | Path | None = None) -> pl.LazyFrame:
             (pl.col("air_dashes") / (pl.col("alive_s") / 60)).alias("air_dashes_min"),
         )
     )
+
+
+def movement_profile(parquet_dir: str | Path | None = None) -> pl.LazyFrame:
+    """Join the farm pace onto the movement metrics per player per match.
+
+    - the movement_metrics columns
+    - farm souls (troopers, jungle, treasure, denies) for pace per minute and per distance
+    """
+    grp = "match_id", "account_id"
+
+    metrics = movement_metrics(parquet_dir)
 
     farm = (
         scan("soul_sources", parquet_dir)
@@ -3297,6 +3306,42 @@ def movement_profile(parquet_dir: str | Path | None = None) -> pl.LazyFrame:
             .alias("souls_per_1000_units"),
         )
     )
+
+
+def movement_game_records(
+    hero: str,
+    accounts: Sequence[int] | None = None,
+    parquet_dir: str | Path | None = None,
+    tz: str | None = None,
+    days: int | None = None,
+    since: str | dt.date | None = None,
+) -> pl.DataFrame:
+    """Take one row per game of a hero with the movement metrics.
+
+    - percents cover alive seconds
+    - stationary and the pace cover moving seconds
+    - distance skips zipline seconds, respawn jumps, and other teleports
+    - dashes count the transition into the state
+    - games without movement rows keep null metrics
+    - days and since filter on the local day
+    """
+    accounts = _resolved_accounts(accounts)
+    mine = _hero_game_rows(hero, accounts, parquet_dir, tz, days, since)
+    metrics = movement_metrics(parquet_dir).select(
+        "match_id",
+        "account_id",
+        "distance_min",
+        "stationary_percent",
+        "slide_percent",
+        "in_air_percent",
+        "zipline_percent",
+        "combat_percent",
+        "dashes_min",
+        "air_dashes_min",
+    )
+    games = mine.join(metrics, on=["match_id", "account_id"], how="left")
+
+    return _collect_game_records(games, hero, accounts)
 
 
 def _era_from(value: str) -> dt.datetime:

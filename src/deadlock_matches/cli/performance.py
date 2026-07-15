@@ -31,7 +31,6 @@ from deadlock_matches.cli.cards import UNITS_PER_METER
 from deadlock_matches.cli.data import MVP_LABELS, TEAMS, final_stats, no_pool_hint
 from deadlock_matches.config import (
     config_account_names,
-    config_players,
     config_timezone,
     format_accounts,
 )
@@ -159,9 +158,9 @@ def _gap(you: dict[int, float], them: dict[int, float], mark_s: int) -> float | 
 
 def compare_report(args: argparse.Namespace, config: str | Path | None = None) -> None:
     """Compare a stat between the player and the tracked players, interval by interval."""
-    if args.stat != "soul_sources" and args.stat not in queries.COMPARE_STATS:
+    if args.stat not in (*queries.COMPARE_STATS, "soul_sources", "movement"):
         print(f"Unknown stat: {args.stat}")
-        print("Stats: " + ", ".join(queries.COMPARE_STATS) + ", soul_sources")
+        print("Stats: " + ", ".join(queries.COMPARE_STATS) + ", soul_sources, movement")
         return
 
     if args.interval <= 0:
@@ -199,7 +198,7 @@ def compare_report(args: argparse.Namespace, config: str | Path | None = None) -
         f"{len(members)} tracked {args.hero} players ({len(pool)} games): {args.stat}"
     )
 
-    if args.stat == "soul_sources":
+    if args.stat in ("soul_sources", "movement"):
         print(f"\n  {'Player':<18} {'Games':>5} {'Rank':>5}  Last download")
 
         for m in members:
@@ -207,7 +206,11 @@ def compare_report(args: argparse.Namespace, config: str | Path | None = None) -
             when = f"{m['downloaded_at']:%Y-%m-%d}" if m["downloaded_at"] else "never"
             print(f"  {m['name']:<18} {m['games']:>5} {rank:>5}  {when}")
 
-        sources_report(mine.lazy(), pool.lazy(), args.parquet, players.PARQUET_DIR)
+        if args.stat == "movement":
+            _movement_compare(mine, pool, members, args)
+        else:
+            sources_report(mine.lazy(), pool.lazy(), args.parquet, players.PARQUET_DIR)
+
         return
 
     interval_s = args.interval * 60
@@ -1126,7 +1129,7 @@ def _comeback_by_window(
 
 
 def teams_report(row: dict[str, Any], args: argparse.Namespace) -> None:
-    """Print souls per interval for both teams, then the objectives that fell."""
+    """Print souls per interval for both teams and then the objectives that fell."""
     if not queries.table_exists("objectives", args.parquet):
         print("No objectives table yet, run `deadlock sync`")
         return
@@ -1662,7 +1665,7 @@ def _all_target_accuracy(row: dict[str, Any], args: argparse.Namespace) -> int |
 def _aim_section(
     row: dict[str, Any], args: argparse.Namespace, stats: dict[tuple[str | None, str], int]
 ) -> None:
-    """Print the lobby ranked by aim against heroes, then the counters only the player has."""
+    """Print the lobby ranked by aim against heroes and then the counters only the player has."""
     you = _take_group(stats, "Enemy Hero Accuracy")
     them = _take_group(stats, "Enemy Hero Accuracy - Incoming")
     rates = _take_group(stats, "Bullet Stats")
@@ -2093,7 +2096,7 @@ def _movement_cells(r: dict[str, Any]) -> str:
 
 
 def match_movement_report(row: dict[str, Any], args: argparse.Namespace) -> None:
-    """Print movement summed for every player in the match, then one player per interval.
+    """Print movement summed for every player in the match and then one player per interval.
 
     - percents cover alive seconds, stationary and the pace cover moving seconds
     - intervals spent fully dead print "-" for every percent
@@ -2138,7 +2141,7 @@ def match_movement_report(row: dict[str, Any], args: argparse.Namespace) -> None
 
 
 def souls_report(row: dict[str, Any], args: argparse.Namespace) -> None:
-    """Print the souls by source per interval for one player, then the farm grouping.
+    """Print the souls by source per interval for one player and then the farm grouping.
 
     - source rows use the in game souls-screen labels, ordered by match total
     - the group block splits souls into lane, roaming, combat, objectives,
@@ -2672,7 +2675,7 @@ def _per_game_lines(
 
 
 def damage_games_report(args: argparse.Namespace, config: str | Path | None = None) -> None:
-    """Print damage to heroes by source across every game of a hero, then one line per game.
+    """Print damage to heroes by source across every game of a hero and then one line per game.
 
     - the delivery block splits the total into gun, abilities, and item procs
     - the source table is one row per gun, ability, or item source with the
@@ -2712,7 +2715,7 @@ def damage_games_report(args: argparse.Namespace, config: str | Path | None = No
 
 
 def healing_games_report(args: argparse.Namespace, config: str | Path | None = None) -> None:
-    """Print healing by source across every game of a hero, then one line per game.
+    """Print healing by source across every game of a hero and then one line per game.
 
     - the delivery block splits the total into abilities and item procs
     - the source table is one row per ability or item source with the games
@@ -2816,7 +2819,7 @@ def _soul_tables(games: pl.DataFrame, sources: pl.DataFrame) -> None:
 
 
 def souls_games_report(args: argparse.Namespace, config: str | Path | None = None) -> None:
-    """Print souls by source group across every game of a hero, then one line per game.
+    """Print souls by source group across every game of a hero and then one line per game.
 
     - the group block splits gross souls into waves, roaming, combat,
       objectives, and catch up
@@ -2984,7 +2987,7 @@ def _combat_parry_lines(games: pl.DataFrame, stats: dict[tuple[str | None, str],
 
 
 def combat_games_report(args: argparse.Namespace, config: str | Path | None = None) -> None:
-    """Print the hidden fight counters across every game of a hero, then one line per game.
+    """Print the hidden fight counters across every game of a hero and then one line per game.
 
     - the aim tables total fire at enemy heroes and enemy fire at the player
     - damage by range and parries follow as whole window sums
@@ -3180,7 +3183,7 @@ def deaths_report(args: argparse.Namespace, config: str | Path | None = None) ->
 
 
 MOVEMENT_METRICS = [
-    ("meters /min", "distance_min"),
+    ("meters /min", "meters_min"),
     ("stationary %", "stationary_percent"),
     ("slide %", "slide_percent"),
     ("in air %", "in_air_percent"),
@@ -3190,87 +3193,127 @@ MOVEMENT_METRICS = [
     ("air dashes /min", "air_dashes_min"),
 ]
 
+MOVEMENT_SHARES = (
+    ("m /min", "meters_min", 7),
+    ("Stationary %", "stationary_percent", 12),
+    ("In air %", "in_air_percent", 9),
+    ("Fighting %", "combat_percent", 10),
+    ("Dash /min", "dashes_min", 9),
+)
 
-def movement_report(args: argparse.Namespace, config: str | Path | None = None) -> None:
-    """Compare movement metrics between the player and select other players."""
+
+def _movement_meters() -> pl.Expr:
+    """Convert the pace column from game units to meters per minute."""
+    return (pl.col("distance_min") / UNITS_PER_METER).alias("meters_min")
+
+
+def _movement_table(games: pl.DataFrame) -> None:
+    """Print each movement metric averaged per game and split by result.
+
+    - the wins and losses columns only appear when the window has both
+    - games without movement rows stay out of the averages
+    """
+    wins = games.filter(pl.col("won"))
+    losses = games.filter(~pl.col("won"))
+    buckets = [(f"All ({len(games)})", games)]
+
+    if not wins.is_empty() and not losses.is_empty():
+        buckets += [(f"Wins ({len(wins)})", wins), (f"Losses ({len(losses)})", losses)]
+
+    print(f"  {'Metric':<24}" + "".join(f"{label:>14}" for label, _ in buckets))
+
+    for label, col in MOVEMENT_METRICS:
+        cells = "".join(f"{_mean(df, col):>14,.1f}" for _, df in buckets)
+
+        print(f"  {label:<24}{cells}")
+
+    print(
+        "\n  Percents cover seconds alive. Stationary and the pace cover seconds moving."
+        "\n  Meters skip ziplines, respawns, and other teleports."
+    )
+
+
+def movement_games_report(args: argparse.Namespace, config: str | Path | None = None) -> None:
+    """Print the movement metrics across every game of a hero and then one line per game.
+
+    - the metric table averages each game with wins and losses as their own columns
+    - the per game table lists the newest games with pace, stationary time,
+      air time, fight time, and dashes
+    """
     if not queries.table_exists("movement_intervals", args.parquet):
         print("No movement_intervals table yet: run `deadlock sync`")
         return
 
-    hero_id = heroes.hero_id_by_name(args.hero)
-    if hero_id is None:
-        print(f"Unknown hero: {args.hero}")
-        return
+    tz = config_timezone(config)
 
-    hero = heroes.hero_name(hero_id)
-    metric_columns = [col for _, col in MOVEMENT_METRICS]
-    mine = (
-        queries.my_games(args.parquet, accounts=args.account)
-        .filter(pl.col("hero_id") == hero_id)
-        .select("match_id", "account_id")
-    )
-    you = (
-        queries.movement_profile(args.parquet)
-        .join(mine, on=["match_id", "account_id"])
-        .select(metric_columns)
-        .collect()
-    )
-
-    if you.is_empty():
-        print(f"No {hero} games in your tables")
-        return
-
-    labels = {a: name for name, a in config_players(hero, config).items()}
-    top = None
-    tracked = None
-
-    if labels and queries.table_exists("movement_intervals", players.PARQUET_DIR):
-        tracked = players.pool_games(hero, config_path=config).collect()
-        top = (
-            queries.movement_profile(players.PARQUET_DIR)
-            .join(tracked.lazy().select("match_id", "account_id"), on=["match_id", "account_id"])
-            .select("match_id", "account_id", *metric_columns)
-            .collect()
+    try:
+        games = queries.movement_game_records(
+            args.hero,
+            accounts=args.account,
+            parquet_dir=args.parquet,
+            tz=tz,
+            days=args.days,
+            since=args.since,
         )
-
-        if top.is_empty():
-            top = None
-
-    title = f"{hero} movement: you ({len(you)} games)"
-    if top is not None and tracked is not None:
-        newest = tracked.get_column("downloaded_at").max()
-        title += (
-            f" vs {tracked.get_column('account_id').n_unique()} tracked players "
-            f"({len(top)} games, last download {newest:%Y-%m-%d})"
-        )
-    print(title + "\n")
-
-    if args.by == "player":
-        if top is None or tracked is None:
-            print(no_pool_hint(hero, tracked_in_config=bool(labels)))
-            return
-
-        _movement_by_player(you, top, tracked, labels)
+    except ValueError as e:
+        print(e)
         return
 
-    header = f"  {'Metric':<24}{'You':>9}"
-    if top is not None:
-        header += f"{'Tracked':>9}{'Gap':>9}"
-    print(header)
+    hero = games.item(0, "hero")
+    games = games.with_columns(_movement_meters())
+
+    print(f"Movement, {len(games)} games of {hero}\n")
+    _movement_table(games)
+    _per_game_lines(games, args, config, MOVEMENT_SHARES, ())
+
+
+def _movement_compare(
+    mine: pl.DataFrame,
+    pool: pl.DataFrame,
+    members: list[dict[str, Any]],
+    args: argparse.Namespace,
+) -> None:
+    """Print the pooled movement gap table and then one row per tracked player.
+
+    - both tables average the per game metrics of each side
+    - the per player rows sort by pace and include a you row for contrast
+    """
+    if not queries.table_exists("movement_intervals", args.parquet):
+        print("\nNo movement_intervals table yet: run `deadlock sync`")
+        return
+
+    if not queries.table_exists("movement_intervals", players.PARQUET_DIR):
+        print("\nNo downloaded movement yet: run `deadlock download --hero " + args.hero + "`")
+        return
+
+    columns = [col for _, col in MOVEMENT_METRICS]
+    you, top = pl.collect_all(
+        [
+            queries.movement_metrics(args.parquet)
+            .join(mine.lazy().select("match_id", "account_id"), on=["match_id", "account_id"])
+            .with_columns(_movement_meters())
+            .select(columns),
+            queries.movement_metrics(players.PARQUET_DIR)
+            .join(pool.lazy().select("match_id", "account_id"), on=["match_id", "account_id"])
+            .with_columns(_movement_meters())
+            .select("match_id", "account_id", *columns),
+        ]
+    )
+
+    if you.is_empty() or top.is_empty():
+        print("\nNo movement rows for these games yet: run `deadlock sync`")
+        return
+
+    print(f"\n  {'Metric':<24}{'You':>9}{'Tracked':>9}{'Gap':>9}")
 
     for label, col in MOVEMENT_METRICS:
-        scale = UNITS_PER_METER if col == "distance_min" else 1.0
-        yours = _mean(you, col) / scale
-        line = f"  {label:<24}{yours:>9,.1f}"
+        yours = _mean(you, col)
+        theirs = _mean(top, col)
 
-        if top is not None:
-            theirs = _mean(top, col) / scale
-            line += f"{theirs:>9,.1f}{theirs - yours:>+9,.1f}"
+        print(f"  {label:<24}{yours:>9,.1f}{theirs:>9,.1f}{theirs - yours:>+9,.1f}")
 
-        print(line)
-
-    if top is None:
-        print("\n" + no_pool_hint(hero, tracked_in_config=bool(labels)))
+    print()
+    _movement_by_player(you, top, pool, {m["account_id"]: m["name"] for m in members})
 
 
 def _fit_name(name: str, width: int) -> str:
@@ -3315,7 +3358,7 @@ def _movement_by_player(
             pl.col("rank").min().alias("rank"),
             pl.col(columns).mean(),
         )
-        .sort("distance_min", descending=True)
+        .sort("meters_min", descending=True)
         .to_dicts()
     )
 
@@ -3328,7 +3371,7 @@ def _movement_by_player(
     def line(label: str, account: str, games: int, rank: str, r: dict[str, Any]) -> str:
         return (
             f"  {_fit_name(label, NAME_WIDTH)}{account:>11}{games:>7,}{rank:>8}"
-            f"{r['distance_min'] / UNITS_PER_METER:>9,.1f}"
+            f"{r['meters_min']:>9,.1f}"
             f"{r['stationary_percent']:>11,.1f}%{r['slide_percent']:>7,.1f}%"
             f"{r['in_air_percent']:>7,.1f}%{r['zipline_percent']:>8,.1f}%"
             f"{r['combat_percent']:>9,.1f}%{r['dashes_min']:>10,.1f}{r['air_dashes_min']:>10,.1f}"

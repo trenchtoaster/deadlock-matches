@@ -42,7 +42,7 @@ COMMAND_HELP = {
     "leaderboard": "the current top players of a hero, with paste-ready lines for config.toml",
     "download": "fetch recent games from your tracked players into their own tables",
     "compare": "your stats vs your tracked players, minute by minute",
-    "movement": "movement profile on one hero, you vs your tracked players",
+    "movement": "distance covered, dashes, and time sliding, airborne, or standing still",
     "builds": "the items your tracked players buy, in wins and in losses",
     "item": "item stat card, plus whether it is worth buying on a hero",
     "hero": "base stats and boon gains, or stats at a breakpoint",
@@ -69,11 +69,12 @@ SECTIONS = (
             "healing",
             "souls",
             "combat",
+            "movement",
         ),
     ),
     (
         "the players you track (config.toml [players], data via download)",
-        ("leaderboard", "download", "compare", "movement", "builds", "item"),
+        ("leaderboard", "download", "compare", "builds", "item"),
     ),
     ("game knowledge", ("hero", "ability", "meta", "assets")),
     ("setup", ("accounts", "config", "skill", "schema")),
@@ -228,7 +229,8 @@ def build_parser(config: str | Path | None = None) -> argparse.ArgumentParser:
         "--stat",
         default="souls",
         help=f"{', '.join(queries.COMPARE_STATS)}, "
-        "or soul_sources (every income source as one gap table)",
+        "soul_sources (every income source as one gap table), "
+        "or movement (pace, air and slide time, dashes)",
     )
     c.add_argument("--interval", type=int, default=5, help="interval length in minutes")
     c.add_argument(
@@ -449,22 +451,6 @@ def build_parser(config: str | Path | None = None) -> argparse.ArgumentParser:
         help="units counted as nearby for the ally/enemy context",
     )
 
-    mv = command("movement")
-    mv.add_argument("--hero", required=True, help="hero display name, like Mirage")
-    mv.add_argument(
-        "--by",
-        choices=("player",),
-        default=None,
-        help="one row per tracked player instead of the pooled Tracked column, with "
-        "their games, ladder rank at download time, and the same metrics",
-    )
-    mv.add_argument(
-        "--account",
-        type=account_list,
-        default=accounts,
-        help="your account IDs or names from config.toml, defaults to all accounts there",
-    )
-
     dy = command("winrate")
     dy.add_argument(
         "--account",
@@ -513,7 +499,7 @@ def build_parser(config: str | Path | None = None) -> argparse.ArgumentParser:
         help="laning window in minutes, default 9 like match --laning",
     )
 
-    for name in ("damage", "healing", "souls", "combat"):
+    for name in ("damage", "healing", "souls", "combat", "movement"):
         dg = command(name)
         dg.add_argument("--hero", required=True, help="hero display name, like Mirage")
         dg.add_argument(
@@ -791,7 +777,7 @@ def main(argv: Sequence[str] | None = None, config: str | Path | None = None) ->
     elif args.cmd == "combat":
         performance.combat_games_report(args, config)
     elif args.cmd == "movement":
-        performance.movement_report(args, config)
+        performance.movement_games_report(args, config)
     elif args.cmd == "hero":
         cards.hero_report(args)
     elif args.cmd == "ability":

@@ -825,6 +825,42 @@ Per game, the last 10 of 47 (--games N lists more), newest last
   main       2026-07-03 win     7/3/16       44.0   23.6    1,009      2  12345802
 ```
 
+### Movement across your games
+
+```
+deadlock movement --hero Mirage
+```
+
+- meters per minute, dashes, and the share of alive time sliding, airborne, on ziplines, or fighting, averaged across every game of a hero. The archive counterpart of `match --movement`
+- wins and losses get their own columns so a pace gap between them stands out
+- reads the per minute `movement_intervals` table, which always builds, so no config change is needed
+- a game without movement rows prints `-` in the per game table and stays out of the averages
+- `--days`, `--since`, `--account`, and `--games` filter like `damage`
+
+```
+Movement, 47 games of Mirage
+
+  Metric                        All (47)     Wins (26)   Losses (21)
+  meters /min                      380.1         386.4         372.3
+  stationary %                      10.5          10.1          11.0
+  slide %                            3.6           3.7           3.4
+  in air %                           8.1           8.4           7.7
+  zipline %                          6.6           6.4           6.8
+  fighting players %                24.7          25.2          24.1
+  ground dashes /min                 1.8           1.9           1.7
+  air dashes /min                    0.2           0.2           0.2
+
+  Percents cover seconds alive. Stationary and the pace cover seconds moving.
+  Meters skip ziplines, respawns, and other teleports.
+
+Per game, the last 10 of 47 (--games N lists more), newest last
+
+  Account    Day        Result  K/D/A      m /min Stationary %  In air % Fighting % Dash /min   Match ID
+  main       2026-07-02 win     10/5/15     391.4          9.8       7.6       25.1       1.9   12345678
+  main       2026-07-03 loss    9/12/11     356.2         12.4       6.9       23.0       1.6   12345731
+  main       2026-07-03 win     7/3/16      402.7          8.9       8.8       26.3       2.1   12345802
+```
+
 ## Heroes, abilities, and items
 
 These commands read the included hero, ability, item, and rank data instead of your matches, so they need no games and work offline. Asset data from 2026-01-01 onward is included with the package.
@@ -997,7 +1033,7 @@ The same history feeds the analysis queries, so the ability tuning that was live
 
 ## Tracked players and public stats
 
-The comparison commands (`compare`, `movement`, `builds`, and the top player part of `item`) all read the same pool: the players you track for a hero. Tracking a player takes three steps, and after the download every comparison runs offline from the downloaded games:
+The comparison commands (`compare`, `builds`, and the top player part of `item`) all read the same pool: the players you track for a hero. Tracking a player takes three steps, and after the download every comparison runs offline from the downloaded games:
 
 1. **Find candidates.** `deadlock leaderboard --hero Mirage` lists the current top players of the hero with their account IDs and ends with paste-ready config lines:
 
@@ -1019,7 +1055,7 @@ The comparison commands (`compare`, `movement`, `builds`, and the top player par
 
 3. **Download their games.** `deadlock download --hero Mirage` pulls recent ranked games from everyone tracked for the hero. Nothing is ever downloaded from the leaderboard on its own. Re-running adds new games without downloading old ones again.
 
-To stop comparing against someone, delete their line from `config.toml`. The downloaded matches stay on disk (they cost little space and a game can contain more than one tracked player), they just stop being read, and tracking the player again later needs no new downloads. `deadlock movement --hero Mirage --by player` shows who is in the pool with their games and account IDs.
+To stop comparing against someone, delete their line from `config.toml`. The downloaded matches stay on disk (they cost little space and a game can contain more than one tracked player), they just stop being read, and tracking the player again later needs no new downloads. `deadlock compare --hero Mirage --stat movement` shows who is in the pool with their games and account IDs.
 
 ### Hero meta by rating
 
@@ -1086,7 +1122,7 @@ deadlock compare --hero Mirage
 ```
 
 - your stats vs your tracked players, from their downloaded games, on the same 5-minute intervals the `match` command uses (`--interval 10` for wider rows). Only your ranked games count, matching the pool
-- `--stat souls` (default, net worth) takes the `match` column names — `kills`, `deaths`, `assists`, `damage`, `damage_taken`, `obj_damage`, `healing`, `heal_prevented`, `creeps`, `neutrals`, `denies` — and the soul source groups: `farm` (troopers + jungle + breakables + rift/urn souls + deny souls, kill and assist souls excluded), `troopers`, `jungle`, `breakables`, `combat`, `objectives`, `catch_up`, `other`, or `soul_sources` for every income source as one gap table (rift and urn souls show there as the `rift_urn` row)
+- `--stat souls` (default, net worth) takes the `match` column names — `kills`, `deaths`, `assists`, `damage`, `damage_taken`, `obj_damage`, `healing`, `heal_prevented`, `creeps`, `neutrals`, `denies` — and the soul source groups: `farm` (troopers + jungle + breakables + rift/urn souls + deny souls, kill and assist souls excluded), `troopers`, `jungle`, `breakables`, `combat`, `objectives`, `catch_up`, `other`, or `soul_sources` for every income source as one gap table (rift and urn souls show there as the `rift_urn` row). `--stat movement` prints whole-game movement averages and has its own section below
 - the summary table shows each player as one row with their whole-game rate (average and median per minute), you first for contrast. `kills` and `deaths` print as plain counts instead — per game in the summary, per interval in the table below it
 - every interval cell is the median of the per-game rates inside that window, so a game only counts while it lasts. The cumulative gap column keeps the running total of the gap column — positive means you are ahead by that point in a typical game, negative means you trail
 - late intervals are not shown once too few games reach them on either side, sparse records would skew the medians
@@ -1193,43 +1229,42 @@ Bought together (win rate of games with both, vs the item alone):
   Transcendent Cooldown       62.3%     +5.5    1,638
 ```
 
-### Movement comparison
+### Movement vs your tracked players
 
 ```
-deadlock movement --hero Mirage
+deadlock compare --hero Mirage --stat movement
 ```
 
-- movement profile on one hero: how much you slide, dash, and stay airborne, how far you move, and how often you stand still (small radius)
-- reads the per minute `movement_intervals` table, which always builds, so no config change is needed
-- the Tracked column comes from past `deadlock download` runs for the players you track on the hero, nothing is fetched by this command. Downloads add up over time, so the header says how many tracked players you are compared against and when the last download ran
+- whole-game movement averages instead of intervals: the tracked player list, the pooled gap table, and one row per tracked player
+- the Tracked column comes from past `deadlock download` runs for the players you track on the hero, nothing is fetched by this command
+- Rank is their hero ladder rank when they were downloaded, `-` for players who were never on the board
+- long or wide names (Korean, Cyrillic) are cut to a fixed width so the table stays aligned
+- the Tracked averages can blend playstyles: here every tracked player beats the you row on meters and stationary, while in air ranges from 13% to 31% because ground and air Mirages are both viable
 
 ```
-Mirage movement: you (50 games) vs 3 tracked players (34 games, last download 2026-07-01)
+You (111222333, 50 games) vs 3 tracked Mirage players (34 games): movement
+
+  Player             Games  Rank  Last download
+  proplayer1            14     1  2026-07-01
+  someplayer            10     -  2026-07-01
+  otherplayer           10    23  2026-07-01
 
   Metric                        You  Tracked      Gap
   meters /min                 388.3    430.0    +41.7
   stationary %                  9.9      7.1     -2.8
   slide %                       3.9      8.3     +4.4
   in air %                      8.1     21.2    +13.1
-  zipline %                     6.7      8.5     +1.9
+  zipline %                     6.7      8.5     +1.8
   fighting players %           24.3     26.7     +2.4
   ground dashes /min            1.7      2.4     +0.7
-  air dashes /min               0.2      0.8     +0.7
-```
+  air dashes /min               0.2      0.8     +0.6
 
-- `--by player` shows one row per tracked player instead of the single Tracked column, so you can see exactly who you are compared against and whether they even play alike
-- Rank is their hero ladder rank when they were downloaded, `-` for players who were never on the board
-- long or wide names (Korean, Cyrillic) are cut to a fixed width so the table stays aligned
-- the Tracked averages can blend playstyles: here every tracked player beats the you row on meters and stationary, while in air ranges from 13% to 31% because ground and air Mirages are both viable
-
-```
   Player            Account  Games    Rank   m /min  Stationary   Slide  In air  Zipline  Fighting  Dash/min  Air dash
   you                     -     50       -    388.3        9.9%    3.9%    8.1%     6.7%     24.3%       1.7       0.2
   proplayer1      111222333     14       1    453.2        5.4%    7.0%   13.3%     8.8%     26.4%       2.8       0.3
   someplayer      444555666     10       -    451.7        7.2%    9.2%   31.0%     8.2%     28.2%       1.8       1.8
   otherplayer     555666777     10      23    420.1        7.2%    7.4%   23.1%     8.6%     30.3%       1.9       1.9
 ```
-
 ## Setup and maintenance
 
 ### Sync new matches

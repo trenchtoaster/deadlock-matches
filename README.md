@@ -91,7 +91,7 @@ main = 111222333
 ```
 
 - the `movement` exclude is purely about size since it contains one row per player per second (330 KB per match)
-  - excluding it does not limit the movement commands. `deadlock match --movement` and `deadlock movement` read the per minute `movement_intervals` table, which always builds and stays around 5 KB per match
+  - excluding it does not limit the movement commands. `deadlock match --movement`, `deadlock movement`, and `deadlock compare --stat movement` read the per minute `movement_intervals` table, which always builds and stays around 5 KB per match
   - the per second rows only matter when a question needs exact positions or health at a specific second. `deadlock deaths` uses them to check who was nearby when you died, and custom queries like gank detection or route heatmaps need them too
   - to export them, delete `"movement"` from the list and run `deadlock sync`. The missing table triggers a full rebuild on its own
 - commands that read your matches archive the cache into `~/.local/share/deadlock-matches/matches/` (`%LOCALAPPDATA%\deadlock-matches\matches` on Windows)
@@ -188,6 +188,7 @@ A few flags repeat across commands:
 - `healing` - the same for your healing plus the healing your anti-heal denied, with the share that landed on you instead of a teammate
 - `souls` - the same for your souls, grouped into waves, roaming, combat, and objectives
 - `combat` - the hidden fight counters summed across every game of a hero: aim both directions, damage by range, parries
+- `movement` - meters per minute, dashes, and the time sliding, airborne, on ziplines, or standing still across every game of a hero
 
 **Heroes, abilities, and items** reads the bundled asset data and works offline. Full output in [docs/commands.md](docs/commands.md#heroes-abilities-and-items).
 
@@ -200,9 +201,8 @@ A few flags repeat across commands:
 
 - `leaderboard` - top players of a hero with paste-ready config lines
 - `download` - pull recent games from the players you track
-- `compare` - your farm and stats vs your tracked players, per interval
+- `compare` - your farm, stats, and movement vs your tracked players
 - `builds` - what your tracked players buy in wins vs losses
-- `movement` - your movement profile vs theirs
 - `meta` - public win and pick rates by rating or over time
 - `item --hero` - is an item worth buying, your games plus tracked players plus public meta
 

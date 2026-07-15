@@ -255,7 +255,7 @@ def _item_stat_line(item: items.Item, prop: str, indent: str) -> str | None:
 
 
 def item_card(item: items.Item, when: dt.date | None = None) -> None:
-    """Prints the shop card for an item, innate stats first, then each passive or active section."""
+    """Print the shop card for an item with the innate stats before the passive and active sections."""
     print(f"{item.name}  ({item.slot} tier {item.tier}, {item.cost:,} souls){_as_of_note(when)}")
 
     names = [c.name for c in map(items.item_by_class_name, item.components) if c]

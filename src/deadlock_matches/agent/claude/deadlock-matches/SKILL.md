@@ -13,7 +13,7 @@ Reads match metadata from Steam's HTTP cache and compares the user's games again
 - "your games" = union across all alt accounts; `--account` (comma-separated) overrides per-invocation and takes config names as well as ids (`--account main`), matched case-insensitively. Report headers print the names (`config.format_accounts`)
 - accounts empty? run `deadlock accounts` — it lists the Steam accounts on this PC that have run Deadlock (userdata/ folder names = Steam32 ids, account/profile names from loginusers.vdf, archived game counts) and prints a paste-ready `[accounts]` block with neutral main/altN names; offer to fill config.toml in from it. `extract.steam_accounts()` is the underlying reader. Suggested names are deliberately NOT the Steam account names — those are half of the login credentials and config names print in report headers (output columns use Steam's terms: Account name = private login, Profile name = public persona)
 - `--hero` is always explicit — take it from the question or the user's recent `history` output
-- `config.toml` also holds the tracked players per hero as `[players.<Hero>]` tables (top ladder accounts, friends, anyone) — this is THE comparison pool: `compare`, `movement`, `builds`, and the tracked part of `item` read only downloaded games whose account_id sits in this table, resolved at query time (`players.pool_members` / `pool_games` / `pool_builds`). Deleting a line removes the player from every comparison without touching data; there is no untrack command. A bare `deadlock download --hero X` downloads exactly these players — the leaderboard is never auto-downloaded, and old `--account` downloads stay in the ledger but never join comparisons. Read the table via `config.config_players("Mirage")` for ad-hoc analysis. Never hardcode or commit player names/ids; the config lives outside the repo for a reason
+- `config.toml` also holds the tracked players per hero as `[players.<Hero>]` tables (top ladder accounts, friends, anyone) — this is THE comparison pool: `compare`, `builds`, and the tracked part of `item` read only downloaded games whose account_id sits in this table, resolved at query time (`players.pool_members` / `pool_games` / `pool_builds`). Deleting a line removes the player from every comparison without touching data; there is no untrack command. A bare `deadlock download --hero X` downloads exactly these players — the leaderboard is never auto-downloaded, and old `--account` downloads stay in the ledger but never join comparisons. Read the table via `config.config_players("Mirage")` for ad-hoc analysis. Never hardcode or commit player names/ids; the config lives outside the repo for a reason
 - `config.config_timezone()` gives the zone for grouping matches into local days ("wins per day", "this week") — reads `timezone` from config.toml (the starter pins the detected zone at creation). Always `convert_time_zone()` with it before `.dt.date()`; `start_time` is UTC and late-night sessions split across days otherwise
 
 ## Common questions
@@ -97,6 +97,14 @@ uv run deadlock compare --hero Mirage [--stat farm] [--interval 10] [--since 202
                                           # pool is already whatever download fetched
 uv run deadlock compare --hero Mirage --stat soul_sources
                                           # the same gap split by income source
+uv run deadlock compare --hero Mirage --stat movement
+                                          # whole-game movement averages instead of intervals:
+                                          # the member list, the pooled gap table, and one row
+                                          # per tracked player (Rank = ladder rank at download
+                                          # or "-", a you row first for contrast, names padded
+                                          # by display width so CJK names keep the table
+                                          # aligned) — the audit view for who is in the pool
+                                          # and whether the Tracked averages blend playstyles
 uv run deadlock leaderboard --hero Mirage [--players 8] [--matches 5]
                                           # current top players from the per-hero leaderboard with
                                           # account_ids (config players too, marked tracked), then
@@ -206,21 +214,17 @@ uv run deadlock combat --hero Mirage [--days N] [--since 2026-07-01]
                                           # shots, and parries so an aim slump reads as
                                           # drift; same flags as damage. Archive percentiles
                                           # stay out of the CLI, queries.aim_rates has them
-uv run deadlock movement --hero Mirage [--by player]
-                                          # slide/dash/air movement profile vs tracked players,
-                                          # from movement_intervals (built by default, no
-                                          # config change needed); fully
-                                          # offline — the Tracked pool is the config players'
-                                          # downloaded games, and the header prints the
-                                          # tracked player count and the last download date;
-                                          # --by player = one row per tracked player (config
-                                          # label, account id, games, every metric, Rank =
-                                          # ladder rank at download or "-") with a you row for
-                                          # contrast — the audit view for who is in the pool
-                                          # and whether the Tracked averages blend playstyles
-                                          # (in air % splits 11-31 across viable Mirages);
-                                          # names are padded by display width and cut to 14
-                                          # columns so CJK/Cyrillic names keep the table aligned
+uv run deadlock movement --hero Mirage [--account main] [--days 30] [--since 2026-06-30] [--games 20]
+                                          # the archive twin for movement: meters /min,
+                                          # stationary/slide/in air/zipline/fighting percents
+                                          # of alive time, and dash rates averaged per game
+                                          # with wins and losses as their own columns, plus
+                                          # per game lines; reads movement_intervals (built
+                                          # by default, no config change needed); a game
+                                          # without movement rows prints "-" and stays out
+                                          # of the averages; same flags as damage; the
+                                          # tracked-player comparison moved to
+                                          # compare --stat movement
 uv run deadlock hero Mirage --souls 25000 # boon stats at a soul breakpoint (health, spirit,
                                           # melee, gun damage, AP), --level N works too,
                                           # no breakpoint = base card + per boon gains
@@ -265,7 +269,7 @@ uv run deadlock sync                      # rebuild parquet tables; --full from 
                                           # old patch era
 ```
 
-`compare --stat` accepts exactly `queries.COMPARE_STATS` plus `soul_sources` — the match command vocabulary (`kills`, `deaths`, `assists`, `damage`, `damage_taken`, `obj_damage`, `healing`, `heal_prevented`, `creeps`, `neutrals`, `denies`) and the soul source groups (`souls` = net worth and the default, `farm` = kill/assist souls excluded, `troopers`, `jungle`, `breakables`, `combat`, `objectives`, `catch_up`, `other`). Raw wire field names were removed on purpose — never suggest them. `kills` and `deaths` print counts (per game in the summary, per interval below), every other stat prints per minute. `soul_sources` prints the income gap table with extra breakdown-only rows not offered as top-level stats: `deny_souls` (TEAM-shared, every teammate gets ~9-10 souls per denied orb, verified zero only when the whole team never denies — a player with 0 scoreboard denies still earns these; the `denies` stat is the personal deny COUNT) and `rift_urn` (the Unstable Rift + Soul Urn income, the wire source `treasure` — the parquet `source_name` still says treasure, a data-only name never shown to users, folded into `farm`). The souls row runs ~1% over the others summed, the game credits sell refunds etc. to no source.
+`compare --stat` accepts exactly `queries.COMPARE_STATS` plus `soul_sources` and `movement` — the match command vocabulary (`kills`, `deaths`, `assists`, `damage`, `damage_taken`, `obj_damage`, `healing`, `heal_prevented`, `creeps`, `neutrals`, `denies`) and the soul source groups (`souls` = net worth and the default, `farm` = kill/assist souls excluded, `troopers`, `jungle`, `breakables`, `combat`, `objectives`, `catch_up`, `other`). Raw wire field names were removed on purpose — never suggest them. `kills` and `deaths` print counts (per game in the summary, per interval below), every other stat prints per minute. `soul_sources` prints the income gap table with extra breakdown-only rows not offered as top-level stats: `deny_souls` (TEAM-shared, every teammate gets ~9-10 souls per denied orb, verified zero only when the whole team never denies — a player with 0 scoreboard denies still earns these; the `denies` stat is the personal deny COUNT) and `rift_urn` (the Unstable Rift + Soul Urn income, the wire source `treasure` — the parquet `source_name` still says treasure, a data-only name never shown to users, folded into `farm`). The souls row runs ~1% over the others summed, the game credits sell refunds etc. to no source. `movement` prints whole-game movement averages (member list, gap table, one row per tracked player) instead of intervals.
 
 ## Aggregate questions → parquet + polars
 
@@ -319,6 +323,8 @@ Start ad-hoc polars from these instead of rewriting boilerplate. This is the can
 - `movement_intervals(match_id, account_id, interval_s=300)` — the movement of one player split into intervals: distance plus seconds alive/moving/stationary/sliding/in air/ziplining/fighting, dash counts, and derived percents (null while dead). Sums per minute rows from the movement_intervals table, so any interval that is a whole number of minutes is exact. Backs `deadlock match --movement`
 - `movement_scoreboard(match_id)` — the same movement counts and percents summed per player for everyone in one match, hero and team joined. Backs the lobby table of `deadlock match --movement`
 - `movement_profile()` — per-(match, player) movement metrics (slide/dash/air percents, distance, stationary percent, farm pace — hero-normalize before comparing players). Reads movement_intervals, so it works with the default config where raw movement is excluded
+- `movement_metrics()` — the same per-(match, player) metrics as a lazy frame without the farm and duration joins. movement_profile builds on it; prefer it when farm pace is not needed
+- `movement_game_records(hero, accounts=, days=, since=, tz=)` — one row per game of a hero with day, result, K/D/A, and the movement metrics (null in a game without movement rows). Backs `deadlock movement`
 
 ```python
 from deadlock_matches import queries

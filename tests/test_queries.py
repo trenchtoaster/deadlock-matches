@@ -2029,6 +2029,40 @@ def test_movement_intervals_unknown_match(movement_pq):
         queries.movement_intervals(999, 42, parquet_dir=movement_pq)
 
 
+def test_movement_game_records_matches_profile(movement_pq):
+    df = queries.movement_game_records(
+        "Mirage", accounts=[42], parquet_dir=movement_pq, tz="America/Chicago"
+    )
+    me = queries.movement_profile(movement_pq).collect().filter(pl.col("account_id") == 42)
+
+    assert len(df) == 1
+    assert df.get_column("won").to_list() == [True]
+    assert df.get_column("day").to_list() == [LOCAL_DAY]
+    assert df.get_column("distance_min")[0] == pytest.approx(me.get_column("distance_min")[0])
+    assert df.get_column("slide_percent")[0] == pytest.approx(20.0)
+    assert df.get_column("combat_percent")[0] == pytest.approx(40.0)
+    assert df.get_column("dashes_min")[0] == pytest.approx(6.0)
+
+
+def test_movement_game_records_without_rows_keeps_nulls(tmp_path):
+    infos = [build_movement_match(100), build_match(match_id=200)]
+
+    for name, df in export.build_tables(infos).items():
+        df.write_parquet(tmp_path / f"{name}.parquet")
+
+    df = queries.movement_game_records("Mirage", accounts=[42], parquet_dir=tmp_path)
+    bare = df.filter(pl.col("match_id") == 200)
+
+    assert len(df) == 2
+    assert bare.get_column("distance_min")[0] is None
+    assert bare.get_column("stationary_percent")[0] is None
+
+
+def test_movement_game_records_unknown_hero(movement_pq):
+    with pytest.raises(ValueError, match="Unknown hero"):
+        queries.movement_game_records("Nobody", accounts=[42], parquet_dir=movement_pq)
+
+
 def test_movement_intervals_account_without_rows(movement_pq):
     with pytest.raises(ValueError, match="no movement rows"):
         queries.movement_intervals(100, 99999, parquet_dir=movement_pq)
