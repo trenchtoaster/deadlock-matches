@@ -341,12 +341,12 @@ def test_write_player_tables(tmp_path, monkeypatch):
 
     downloads = pl.read_parquet(tmp_path / "pq" / "downloads.parquet")
 
-    assert downloads["player"][0] == "someone"
-    assert downloads["region"][0] == "Asia"
+    assert downloads.get_column("player")[0] == "someone"
+    assert downloads.get_column("region")[0] == "Asia"
 
     matches = queries.scan("matches", tmp_path / "pq").collect()
 
-    assert matches["match_id"][0] == 900
+    assert matches.get_column("match_id")[0] == 900
 
 
 def test_write_player_tables_rebuilds_drifted_tables(tmp_path, monkeypatch):
@@ -416,7 +416,7 @@ def test_write_player_tables_carries_forward_undecodable_matches(tmp_path, monke
 
     matches = queries.scan("matches", out).collect()
 
-    assert matches["match_id"].to_list() == [900]
+    assert matches.get_column("match_id").to_list() == [900]
     assert "party" in pl.read_parquet_schema(next((out / "players").glob("*.parquet")))
 
 
@@ -484,8 +484,8 @@ def test_write_player_tables_keeps_earliest_download(tmp_path, monkeypatch):
 
     downloads = pl.read_parquet(out / "downloads.parquet").sort("match_id")
 
-    assert downloads["downloaded_at"].to_list() == [t0, t0 + dt.timedelta(days=1)]
-    assert downloads["rank"].to_list() == [3, 1]
+    assert downloads.get_column("downloaded_at").to_list() == [t0, t0 + dt.timedelta(days=1)]
+    assert downloads.get_column("rank").to_list() == [3, 1]
 
 
 FIRST_GAME_DAY = dt.datetime.fromtimestamp(1783000000, dt.UTC).date()
@@ -564,9 +564,9 @@ def test_pool_games_filters_to_config_accounts_per_hero(tracked_pq, tmp_path):
     mirage = players.pool_games("Mirage", parquet_dir=tracked_pq, config_path=cfg).collect()
     infernus = players.pool_games("Infernus", parquet_dir=tracked_pq, config_path=cfg).collect()
 
-    assert mirage["match_id"].to_list() == [900]
-    assert mirage["account_id"].to_list() == [11]
-    assert infernus["match_id"].to_list() == [901]
+    assert mirage.get_column("match_id").to_list() == [900]
+    assert mirage.get_column("account_id").to_list() == [11]
+    assert infernus.get_column("match_id").to_list() == [901]
 
 
 def test_pool_games_ignores_untracked_ledger_rows(tracked_pq, tmp_path):
@@ -641,29 +641,29 @@ def test_pool_builds_empty_without_tables(tmp_path):
 def test_tracked_player_games(tracked_pq):
     df = players.tracked_player_games(parquet_dir=tracked_pq, tz="UTC").collect().sort("match_id")
 
-    assert df["player"].to_list() == ["Someone", "other"]
-    assert df["hero"][0] == "Mirage"
-    assert df["won"].to_list() == [True, True]
-    assert df["day"][0] == FIRST_GAME_DAY
+    assert df.get_column("player").to_list() == ["Someone", "other"]
+    assert df.get_column("hero")[0] == "Mirage"
+    assert df.get_column("won").to_list() == [True, True]
+    assert df.get_column("day")[0] == FIRST_GAME_DAY
 
 
 def test_tracked_player_games_names_case_insensitive(tracked_pq):
     df = players.tracked_player_games(["someone"], parquet_dir=tracked_pq, tz="UTC").collect()
 
-    assert df["player"].to_list() == ["Someone"]
+    assert df.get_column("player").to_list() == ["Someone"]
 
 
 def test_tracked_player_games_filters_hero(tracked_pq):
     df = players.tracked_player_games(hero="Mirage", parquet_dir=tracked_pq, tz="UTC").collect()
 
-    assert df["match_id"].to_list() == [900]
+    assert df.get_column("match_id").to_list() == [900]
 
 
 def test_tracked_player_games_since(tracked_pq):
     since = FIRST_GAME_DAY + dt.timedelta(days=1)
     df = players.tracked_player_games(since=since, parquet_dir=tracked_pq, tz="UTC").collect()
 
-    assert df["match_id"].to_list() == [901]
+    assert df.get_column("match_id").to_list() == [901]
 
 
 def test_write_player_tables_skips_already_built(tmp_path, monkeypatch):
@@ -696,6 +696,6 @@ def test_write_player_tables_skips_already_built(tmp_path, monkeypatch):
 
     matches = queries.scan("matches", out).collect()
 
-    assert sorted(matches["match_id"].to_list()) == [900, 901]
-    assert matches["match_id"].n_unique() == matches.height
+    assert sorted(matches.get_column("match_id").to_list()) == [900, 901]
+    assert matches.get_column("match_id").n_unique() == matches.height
     assert counts["matches"] == 2

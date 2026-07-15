@@ -111,8 +111,8 @@ def test_item_tables_flatten_each_era(tmp_path):
     parents = tables["item_history"].sort("era_from")
 
     assert parents.height == 2
-    assert parents["cost"].to_list() == [500, 800]
-    assert parents["client_version"].to_list() == [100, 200]
+    assert parents.get_column("cost").to_list() == [500, 800]
+    assert parents.get_column("client_version").to_list() == [100, 200]
     assert parents.schema["era_from"] == pl.Datetime("us", "UTC")
 
 
@@ -147,7 +147,7 @@ def test_hero_stat_history_tracks_change(tmp_path):
     stats = unnest.hero_tables(path)["hero_stat_history"].sort("era_from")
     health = stats.filter(pl.col("stat") == "max_health")
 
-    assert health["value"].to_list() == [600.0, 650.0]
+    assert health.get_column("value").to_list() == [600.0, 650.0]
 
     level_up = unnest.hero_tables(path)["hero_level_up_history"]
     assert level_up.filter(pl.col("stat") == "tech_power")["per_level_value"].to_list() == [
@@ -175,8 +175,8 @@ def test_ability_upgrade_tier_is_one_based(tmp_path):
     upgrades = unnest.ability_tables(path)["ability_upgrade_history"]
 
     assert upgrades.height == 1
-    assert upgrades["tier"].to_list() == [1]
-    assert upgrades["bonus"].to_list() == [10.0]
+    assert upgrades.get_column("tier").to_list() == [1]
+    assert upgrades.get_column("bonus").to_list() == [10.0]
 
 
 def test_ability_weapon_only_for_guns(tmp_path):
@@ -186,10 +186,10 @@ def test_ability_weapon_only_for_guns(tmp_path):
     weapons = unnest.ability_tables(path)["ability_weapon_history"]
 
     assert weapons.height == 1
-    assert weapons["ability_class"].to_list() == ["citadel_weapon_x"]
-    assert weapons["bullet_damage"].to_list() == [10.0]
-    assert weapons["clip_size"].to_list() == [20.0]
-    assert weapons["range"].to_list() == [None]
+    assert weapons.get_column("ability_class").to_list() == ["citadel_weapon_x"]
+    assert weapons.get_column("bullet_damage").to_list() == [10.0]
+    assert weapons.get_column("clip_size").to_list() == [20.0]
+    assert weapons.get_column("range").to_list() == [None]
 
 
 def test_rank_table_flattens(tmp_path):
@@ -199,7 +199,7 @@ def test_rank_table_flattens(tmp_path):
     ranks = unnest.rank_tables(path)["rank_history"]
 
     assert ranks.to_dicts()[0]["name"] == "Initiate"
-    assert ranks["tier"].to_list() == [1]
+    assert ranks.get_column("tier").to_list() == [1]
 
 
 def test_statue_table_flattens_each_era(tmp_path):
@@ -209,10 +209,10 @@ def test_statue_table_flattens_each_era(tmp_path):
     table = unnest.statue_tables(path)["statue_history"].sort("era_from")
 
     assert list(table.columns) == list(schemas.TABLES["statue_history"])
-    assert table["value"].to_list() == [25.0, 20.0]
-    assert table["buff"].to_list() == ["hp", "hp"]
-    assert table["level"].to_list() == [2, 2]
-    assert table["client_version"].to_list() == [100, 200]
+    assert table.get_column("value").to_list() == [25.0, 20.0]
+    assert table.get_column("buff").to_list() == ["hp", "hp"]
+    assert table.get_column("level").to_list() == [2, 2]
+    assert table.get_column("client_version").to_list() == [100, 200]
 
 
 def test_missing_history_gives_empty_typed_frames(tmp_path):
