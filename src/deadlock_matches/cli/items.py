@@ -51,7 +51,15 @@ def item_report(args: argparse.Namespace, config: str | Path | None = None) -> N
         ids = format_accounts(args.account, config)
         rows = (
             queries.item_games(item.name, args.hero, args.parquet, args.account, args.since)
-            .select("match_id", "won", "game_time_s", "damage", "owned_s", "dealt_after_buy")
+            .select(
+                "match_id",
+                "won",
+                "game_time_s",
+                "damage",
+                "owned_s",
+                "dealt_after_buy",
+                "effective_cost",
+            )
             .collect()
         )
         built = (
@@ -101,6 +109,14 @@ def item_report(args: argparse.Namespace, config: str | Path | None = None) -> N
             print(
                 f"  {'Not built':<10} {n:>6} {skipped_wins:>4} {skipped_losses:>4} "
                 f"{rate:>8.1f}% {'-':>8} {'-':>8} {'-':>9}"
+            )
+
+        effective = built.get_column("effective_cost").drop_nulls()
+
+        if item.components and not effective.is_empty():
+            print(
+                f"\n  The buy averaged {effective.mean():,.0f} souls after subtracting"
+                f" the components it consumed ({item.cost:,} in the shop)."
             )
 
         print()

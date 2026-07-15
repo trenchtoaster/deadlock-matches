@@ -58,8 +58,8 @@ def _cell(value: float | None, width: int = 8, *, sign: bool = False) -> str:
 DELIVERY_LABELS = {
     "gun": "Gun",
     "ability": "Abilities",
-    "gun_proc": "Items (gun)",
-    "spirit_proc": "Items (spirit)",
+    "gun_proc": "Items (bullet procs)",
+    "spirit_proc": "Items (standalone)",
 }
 
 SOUL_LABELS = {
@@ -79,8 +79,8 @@ SOUL_LABELS = {
 }
 
 SOUL_GROUPS = {
-    "troopers": "Lane",
-    "denies": "Lane",
+    "troopers": "Waves",
+    "denies": "Waves",
     "jungle": "Roaming",
     "breakables": "Roaming",
     "players": "Combat",
@@ -94,7 +94,7 @@ SOUL_GROUPS = {
     "goose_egg": "Other",
 }
 
-SOUL_GROUP_ORDER = ("Lane", "Roaming", "Combat", "Objectives", "Catch-Up", "Other")
+SOUL_GROUP_ORDER = ("Waves", "Roaming", "Combat", "Objectives", "Catch-Up", "Other")
 
 SOURCE_ROWS = (
     "troopers",
@@ -1232,16 +1232,38 @@ def _upgrade_target(r: dict[str, Any], buys: list[dict[str, Any]]) -> str | None
     if consumed is None or consumed.class_name is None:
         return None
 
+    by_class = {i.class_name: i for i in catalog.values() if i.class_name}
+
     for other in buys:
         if other["game_time_s"] != r["sold_time_s"] or other is r:
             continue
 
         target = catalog.get(other["item_id"])
 
-        if target and consumed.class_name in target.components:
+        if target and _in_component_chain(target, consumed.class_name, by_class):
             return f"into {other['item']} at {_game_time(r['sold_time_s'])}"
 
     return None
+
+
+def _in_component_chain(
+    target: items.Item, class_name: str, by_class: dict[str, items.Item]
+) -> bool:
+    """Look for class_name anywhere down the component chain of target."""
+    frontier = list(target.components)
+
+    for _ in range(3):
+        if class_name in frontier:
+            return True
+
+        frontier = [
+            deeper
+            for name in frontier
+            if (item := by_class.get(name)) is not None
+            for deeper in item.components
+        ]
+
+    return False
 
 
 def items_report(row: dict[str, Any], args: argparse.Namespace) -> None:
@@ -1567,8 +1589,8 @@ MELEE_ITEMS = (1414025773, 4204808176, 26002154, 800008313)
 POWERUP_STATS = frozenset({"PowerUp Gold", "PowerUp Permanent", "PowerUp Temp"})
 COMEBACK_LABELS = (
     ("Comeback Gold", "Comeback souls"),
-    ("Comeback Gold Koth", "Unstable Rift comeback"),
-    ("Comeback Gold Urn", "Soul Urn comeback"),
+    ("Comeback Gold Koth", "Unstable Rift comeback souls"),
+    ("Comeback Gold Urn", "Soul Urn comeback souls"),
 )
 UPTIME_RE = re.compile(r"(?P<ability>.+?)TimeAt_(?P<stacks>\d+)_stacks")
 
@@ -1902,15 +1924,18 @@ def _uptime_tables(values: dict[str, int]) -> None:
             print(f"  {stacks:<8}{_game_time(seconds):>8}{share:>6}%")
 
 
-def _leftover_sections(stats: dict[tuple[str | None, str], int]) -> None:
-    """Print whatever no curated section consumed, hero counters included."""
+def _leftover_sections(stats: dict[tuple[str | None, str], int], *, bare: bool = True) -> None:
+    """Print whatever no curated section consumed, hero counters included.
+
+    - bare=False drops the group-less strays instead of an Other section
+    """
     groups: dict[str | None, dict[str, int]] = {}
 
     for (group, stat), value in stats.items():
         if value:
             groups.setdefault(group, {})[stat] = value
 
-    bare = groups.pop(None, {})
+    strays = groups.pop(None, {})
 
     for group, values in groups.items():
         print(f"\n  {group}")
@@ -1919,10 +1944,10 @@ def _leftover_sections(stats: dict[tuple[str | None, str], int]) -> None:
         for stat, value in values.items():
             print(f"  {_uncamel(stat).capitalize()}: {value:,}")
 
-    if bare:
+    if bare and strays:
         print("\n  Other")
 
-        for stat, value in bare.items():
+        for stat, value in strays.items():
             print(f"  {stat}: {value:,}")
 
 
@@ -1982,7 +2007,7 @@ def _lobby_aim_table(row: dict[str, Any], args: argparse.Namespace) -> None:
         .filter(
             pl.col("match_id") == row["match_id"],
             pl.col("stat") == "damage",
-            pl.col("category") == "gun",
+            queries.damage_category() == "gun",
             pl.col("target_account_id").is_not_null(),
         )
         .group_by(pl.col("dealer_account_id").alias("account_id"))
@@ -2529,14 +2554,52 @@ HEALING_SHARES = (
     ("Self %", "self_pct", 7),
 )
 
+SOUL_SHARES = (
+    ("Waves %", "waves_pct", 8),
+    ("Roam %", "roaming_pct", 7),
+    ("Combat %", "combat_pct", 9),
+    ("Obj %", "objectives_pct", 6),
+)
 
-def _source_tables(games: pl.DataFrame, sources: pl.DataFrame) -> None:
-    """Print the delivery block and the per source table with their rate notes."""
+
+def _source_rows(sources: pl.DataFrame, width: int, dwidth: int) -> None:
+    """Print the per source rows under their column header."""
+    print(
+        f"\n  {'Games':>5}  {'Source':<{width}}{'Delivery':<{dwidth}}"
+        f"{'Total':>12}{'/game':>9}{'/min':>9}{'/min owned':>12}{'/1k souls':>11}{'%':>7}"
+    )
+
+    for r in sources.iter_rows(named=True):
+        label = DELIVERY_LABELS.get(r["delivery"], r["delivery"])
+        owned = f"{r['per_min_owned']:,.1f}" if r["per_min_owned"] is not None else "-"
+        per_1k = f"{r['per_1k']:,.1f}" if r["per_1k"] is not None else "-"
+        print(
+            f"  {r['games']:>5}  {r['source_name']:<{width}}{label:<{dwidth}}"
+            f"{r['total']:>12,}{r['total'] / r['games']:>9,.0f}{r['per_min']:>9,.1f}"
+            f"{owned:>12}{per_1k:>11}{r['percent']:>6.1f}%"
+        )
+
+
+def _source_tables(
+    games: pl.DataFrame, sources: pl.DataFrame, prevented: pl.DataFrame | None = None
+) -> None:
+    """Print the delivery block and the per source table with their rate notes.
+
+    - prevented adds a healing prevented table with the same columns, its
+      percent column shares out the prevented total
+    """
     total = int(sources.get_column("total").sum())
     minutes = games.get_column("duration_s").sum() / 60
-    width = max(max(len(n) for n in sources.get_column("source_name")), 14) + 2
+    n_games = len(games)
+    names = sources.get_column("source_name")
 
-    print(f"  {'Delivery':<{width}}{'Total':>12}{'/min':>9}{'%':>7}")
+    if prevented is not None:
+        names = pl.concat([names, prevented.get_column("source_name")])
+
+    width = max(max(len(n) for n in names), 14) + 2
+    dwidth = max(len(label) for label in DELIVERY_LABELS.values()) + 2
+
+    print(f"  {'Delivery':<{width}}{'Total':>12}{'/game':>9}{'/min':>9}{'%':>7}")
 
     groups = sources.group_by("delivery").agg(pl.col("total").sum()).sort("total", descending=True)
 
@@ -2544,29 +2607,26 @@ def _source_tables(games: pl.DataFrame, sources: pl.DataFrame) -> None:
         label = DELIVERY_LABELS.get(r["delivery"], r["delivery"])
         percent = f"{100 * r['total'] / total:.0f}%" if total else "-"
 
-        print(f"  {label:<{width}}{r['total']:>12,}{r['total'] / minutes:>9,.1f}{percent:>7}")
-
-    print(f"  {'Total':<{width}}{total:>12,}{total / minutes:>9,.1f}")
-
-    print(f"\n  {'Games':>5}  {'Source':<{width}}{'Delivery':<16}{'Total':>12}{'/min':>9}{'%':>7}")
-
-    for r in sources.iter_rows(named=True):
-        label = DELIVERY_LABELS.get(r["delivery"], r["delivery"])
-        rate = f"{r['per_min']:,.1f}" if r["per_min"] is not None else "-"
         print(
-            f"  {r['games']:>5}  {r['source_name']:<{width}}{label:<16}"
-            f"{r['total']:>12,}{rate:>9}{r['percent']:>6.1f}%"
+            f"  {label:<{width}}{r['total']:>12,}{r['total'] / n_games:>9,.0f}"
+            f"{r['total'] / minutes:>9,.1f}{percent:>7}"
         )
 
-    whole = (
-        "Gun, ability, and delivery"
-        if (sources.get_column("delivery") == "gun").any()
-        else "Ability and delivery"
-    )
+    print(f"  {'Total':<{width}}{total:>12,}{total / n_games:>9,.0f}{total / minutes:>9,.1f}")
+
+    _source_rows(sources, width, dwidth)
+
+    if prevented is not None:
+        print("\nHealing prevented:")
+        _source_rows(prevented, width, dwidth)
 
     print(
-        "\n  Item rows divide /min by the minutes the item was owned, not the whole game."
-        f"\n  {whole} /min divide by the combined length of every game."
+        "\n  /game divides a delivery row by every game and a source row by the games"
+        " it appeared in."
+        "\n  /min divides the same way with the minutes of those games."
+        "\n  /min owned divides an item row by the minutes the item was owned instead."
+        "\n  /1k souls divides an item row by every 1,000 souls it actually cost,"
+        " so an upgrade does not recount the components you already bought."
     )
 
 
@@ -2575,9 +2635,9 @@ def _per_game_lines(
     args: argparse.Namespace,
     config: str | Path | None,
     shares: tuple[tuple[str, str, int], ...],
-    value: str,
+    values: tuple[tuple[str, str, int], ...],
 ) -> None:
-    """Print the newest games one per line with their delivery shares."""
+    """Print the newest games one per line with the given percent and total columns."""
     names = {a: name for name, a in config_account_names(config).items()}
     shown = games.tail(max(args.games, 0))
     header = "Per game, newest last"
@@ -2588,11 +2648,12 @@ def _per_game_lines(
         )
 
     share_heads = " ".join(f"{label:>{w}}" for label, _, w in shares)
+    value_heads = " ".join(f"{label:>{w}}" for label, _, w in values)
 
     print(f"\n{header}\n")
     print(
         f"  {'Account':<10} {'Day':<10} {'Result':<7} {'K/D/A':<9} "
-        f"{share_heads} {value:>9}  Match ID"
+        f"{share_heads} {value_heads}  Match ID"
     )
 
     for g in shown.iter_rows(named=True):
@@ -2602,10 +2663,11 @@ def _per_game_lines(
         cells = " ".join(
             f"{g[col]:>{w}.1f}" if g[col] is not None else f"{'-':>{w}}" for _, col, w in shares
         )
+        totals = " ".join(f"{g[col]:>{w},}" for _, col, w in values)
 
         print(
             f"  {account:<10} {g['day']!s:<10} {result:<7} {kda:<9} "
-            f"{cells} {g['total']:>9,}  {g['match_id']}"
+            f"{cells} {totals}  {g['match_id']}"
         )
 
 
@@ -2615,8 +2677,8 @@ def damage_games_report(args: argparse.Namespace, config: str | Path | None = No
     - the delivery block splits the total into gun, abilities, and item procs
     - the source table is one row per gun, ability, or item source with the
       games it appeared in
-    - the per game table shows the gun and gun plus items shares drifting
-      game to game
+    - the per game table lists the newest games with the percent of damage
+      from gun, abilities, and items
     """
     if not queries.table_exists("damage", args.parquet):
         print("No damage table yet, run `deadlock sync`")
@@ -2646,7 +2708,7 @@ def damage_games_report(args: argparse.Namespace, config: str | Path | None = No
 
     print(f"Damage to heroes by source, {len(games)} games of {hero}\n")
     _source_tables(games, sources)
-    _per_game_lines(games, args, config, DAMAGE_SHARES, "Damage")
+    _per_game_lines(games, args, config, DAMAGE_SHARES, (("Damage", "total", 9),))
 
 
 def healing_games_report(args: argparse.Namespace, config: str | Path | None = None) -> None:
@@ -2655,8 +2717,10 @@ def healing_games_report(args: argparse.Namespace, config: str | Path | None = N
     - the delivery block splits the total into abilities and item procs
     - the source table is one row per ability or item source with the games
       it appeared in
-    - the per game table adds the share that landed on the healer, so self
-      sustain and teammate support read differently
+    - a healing prevented table follows with the sources that denied enemy
+      healing and is skipped when no game has any
+    - the per game table adds the percent of healing that landed on the
+      healer
     """
     if not queries.table_exists("damage", args.parquet):
         print("No damage table yet, run `deadlock sync`")
@@ -2674,10 +2738,11 @@ def healing_games_report(args: argparse.Namespace, config: str | Path | None = N
             since=args.since,
         )
         hero = games.item(0, "hero")
+        matches = games.get_column("match_id").to_list()
         sources = queries.damage_by_source(
             hero,
             accounts=args.account,
-            matches=games.get_column("match_id").to_list(),
+            matches=matches,
             parquet_dir=args.parquet,
             stat="healing",
         )
@@ -2685,9 +2750,291 @@ def healing_games_report(args: argparse.Namespace, config: str | Path | None = N
         print(e)
         return
 
+    try:
+        prevented = queries.damage_by_source(
+            hero,
+            accounts=args.account,
+            matches=matches,
+            parquet_dir=args.parquet,
+            stat="heal_prevented",
+        )
+    except ValueError:
+        prevented = None
+
     print(f"Healing by source, {len(games)} games of {hero}\n")
-    _source_tables(games, sources)
-    _per_game_lines(games, args, config, HEALING_SHARES, "Healing")
+    _source_tables(games, sources, prevented=prevented)
+    _per_game_lines(
+        games,
+        args,
+        config,
+        HEALING_SHARES,
+        (("Healing", "total", 9), ("Prevented", "prevented", 10)),
+    )
+
+
+def _soul_tables(games: pl.DataFrame, sources: pl.DataFrame) -> None:
+    """Print the group block and the per source table for souls."""
+    sources = sources.filter(pl.col("souls") > 0).with_columns(
+        pl.col("source_name").replace(SOUL_GROUPS).alias("group"),
+        pl.col("source_name").replace(SOUL_LABELS).alias("label"),
+    )
+    total = int(sources.get_column("souls").sum())
+    minutes = games.get_column("duration_s").sum() / 60
+    width = max(max(len(n) for n in sources.get_column("label")), 14) + 2
+
+    print(f"  {'Group':<{width}}{'Total':>12}{'/game':>9}{'/min':>9}{'%':>7}")
+
+    groups = sources.group_by("group").agg(pl.col("souls").sum()).sort("souls", descending=True)
+
+    for r in groups.iter_rows(named=True):
+        percent = f"{100 * r['souls'] / total:.0f}%" if total else "-"
+
+        print(
+            f"  {r['group']:<{width}}{r['souls']:>12,}{r['souls'] / len(games):>9,.0f}"
+            f"{r['souls'] / minutes:>9,.1f}{percent:>7}"
+        )
+
+    print(f"  {'Total':<{width}}{total:>12,}{total / len(games):>9,.0f}{total / minutes:>9,.1f}")
+
+    print(
+        f"\n  {'Games':>5}  {'Source':<{width}}{'Group':<12}"
+        f"{'Souls':>12}{'/game':>9}{'/min':>9}{'%':>7}"
+    )
+
+    for r in sources.iter_rows(named=True):
+        print(
+            f"  {r['games']:>5}  {r['label']:<{width}}{r['group']:<12}"
+            f"{r['souls']:>12,}{r['souls'] / r['games']:>9,.0f}"
+            f"{r['souls'] / r['minutes']:>9,.1f}{r['percent']:>6.1f}%"
+        )
+
+    print(
+        "\n  /game divides a group row by every game and a source row by the games"
+        " it appeared in."
+        "\n  /min divides the same way with the minutes of those games."
+    )
+
+
+def souls_games_report(args: argparse.Namespace, config: str | Path | None = None) -> None:
+    """Print souls by source group across every game of a hero, then one line per game.
+
+    - the group block splits gross souls into waves, roaming, combat,
+      objectives, and catch up
+    - the source table is one row per income source with the games it
+      appeared in
+    - the per game table lists the newest games with the percent of souls
+      from each group and souls per minute
+    """
+    if not queries.table_exists("soul_sources", args.parquet):
+        print("No soul_sources table yet, run `deadlock sync`")
+        return
+
+    tz = config_timezone(config)
+
+    try:
+        games = queries.souls_game_records(
+            args.hero,
+            accounts=args.account,
+            parquet_dir=args.parquet,
+            tz=tz,
+            days=args.days,
+            since=args.since,
+        )
+        hero = games.item(0, "hero")
+        sources = queries.souls_by_source(
+            hero,
+            accounts=args.account,
+            matches=games.get_column("match_id").to_list(),
+            parquet_dir=args.parquet,
+        )
+    except ValueError as e:
+        print(e)
+        return
+
+    games = games.with_columns(
+        (pl.col("total") / (pl.col("duration_s") / 60)).round(0).cast(pl.Int64).alias("per_min")
+    )
+
+    print(f"Souls by source, {len(games)} games of {hero}\n")
+    _soul_tables(games, sources)
+    _per_game_lines(
+        games, args, config, SOUL_SHARES, (("Souls", "total", 9), ("/min", "per_min", 6))
+    )
+
+
+COMBAT_SHARES = (
+    ("Hit %", "hit_pct", 6),
+    ("HS %", "headshot_pct", 6),
+)
+
+AIM_EXTRA_ROWS = (
+    ("Lucky shots", "LuckyShots"),
+    ("Hits on immobilized", "Immobile Hits"),
+    ("Headshots on immobilized", "Immobile Headshots"),
+)
+
+
+def _aim_share(values: dict[str, int], key: str, base: str) -> float | None:
+    """Give one counter as a percent of another, None without a base."""
+    whole = values.get(base, 0)
+
+    if not whole:
+        return None
+
+    return 100 * values.get(key, 0) / whole
+
+
+def _aim_totals_table(title: str, values: dict[str, int], n_games: int) -> None:
+    """Print one aim counter table with totals, per game, and rates."""
+    rows = [
+        ("Shots", values.get("Shots", 0), None),
+        ("Hits", values.get("Hits", 0), _aim_share(values, "Hits", "Shots")),
+        ("Headshots", values.get("Headshots", 0), _aim_share(values, "Headshots", "Hits")),
+    ]
+    rows += [(label, values[key], None) for label, key in AIM_EXTRA_ROWS if values.get(key)]
+
+    print(f"  {title:<26}{'Total':>12}{'/game':>9}{'Rate':>8}")
+
+    for label, value, rate in rows:
+        cell = f"{rate:.1f}%" if rate is not None else ""
+
+        print(f"  {label:<26}{value:>12,}{value / n_games:>9,.0f}{cell:>8}")
+
+
+def _all_target_accuracy_totals(games: pl.DataFrame, args: argparse.Namespace) -> int | None:
+    """Read the familiar all target accuracy summed over every listed game."""
+    df = (
+        queries.scan("stats", args.parquet)
+        .join(
+            games.lazy().select("match_id", "account_id"),
+            on=["match_id", "account_id"],
+            how="semi",
+        )
+        .group_by("match_id", "account_id")
+        .agg(pl.col("shots_hit").max(), pl.col("shots_missed").max())
+        .select(pl.col("shots_hit").sum(), pl.col("shots_missed").sum())
+        .collect()
+    )
+
+    if df.is_empty():
+        return None
+
+    hit, missed = df.row(0)
+    hit = hit or 0
+    missed = missed or 0
+
+    if not hit and not missed:
+        return None
+
+    return round(100 * hit / (hit + missed))
+
+
+def _combat_aim_sections(
+    games: pl.DataFrame,
+    args: argparse.Namespace,
+    stats: dict[tuple[str | None, str], int],
+    rates: dict[tuple[str | None, str], float],
+) -> None:
+    """Print your aim table, the enemy fire table, and the rate lines."""
+    you = _take_group(stats, "Enemy Hero Accuracy")
+    them = _take_group(stats, "Enemy Hero Accuracy - Incoming")
+    _take_group(stats, "Bullet Stats")
+    _take_group(stats, "Bullet Stats - Incoming")
+
+    if you.get("Shots"):
+        _aim_totals_table("Aim vs heroes", you, len(games))
+
+    if them.get("Shots"):
+        print()
+        _aim_totals_table("Enemy fire at you", them, len(games))
+
+    lines = [
+        f"{_uncamel(stat).capitalize().replace('hit rate', 'hit rate:')}"
+        f" {rates['Bullet Stats', stat]:.0f}% averaged per game"
+        for stat in ("StunHitRate", "StunHeadshotHitRate")
+        if rates.get(("Bullet Stats", stat))
+    ]
+
+    familiar = _all_target_accuracy_totals(games, args)
+
+    if familiar is not None:
+        lines.append(f"Accuracy with troopers and everything else included: {familiar}%")
+
+    lines.append("Rates count heroes only, troopers and other NPCs left out.")
+
+    print()
+
+    for text in lines:
+        print(f"  {text}")
+
+
+def _combat_parry_lines(games: pl.DataFrame, stats: dict[tuple[str | None, str], int]) -> None:
+    """Print the parry totals with the per game rate."""
+    success = stats.pop((None, "Parry Success"), 0)
+    missed = stats.pop((None, "Parry Miss"), 0)
+
+    if not (success or missed):
+        return
+
+    print(
+        f"\n  Parries {success:,} landed, {missed:,} missed,"
+        f" {success / len(games):.1f} landed per game"
+        "\n  Counterspell auto-parries count as landed parries."
+    )
+
+
+def combat_games_report(args: argparse.Namespace, config: str | Path | None = None) -> None:
+    """Print the hidden fight counters across every game of a hero, then one line per game.
+
+    - the aim tables total fire at enemy heroes and enemy fire at the player
+    - damage by range and parries follow as whole window sums
+    - per hero counters close the window view with uptime shares included
+    """
+    if not queries.table_exists("custom_stats", args.parquet):
+        print("No custom_stats table yet, run `deadlock sync --full`")
+        return
+
+    tz = config_timezone(config)
+
+    try:
+        games = queries.combat_game_records(
+            args.hero,
+            accounts=args.account,
+            parquet_dir=args.parquet,
+            tz=tz,
+            days=args.days,
+            since=args.since,
+        )
+    except ValueError as e:
+        print(e)
+        return
+
+    hero = games.item(0, "hero")
+    agg = queries.custom_stat_totals(
+        args.account, games.get_column("match_id").to_list(), parquet_dir=args.parquet
+    )
+
+    stats: dict[tuple[str | None, str], int] = {}
+    rates: dict[tuple[str | None, str], float] = {}
+
+    for r in agg.iter_rows(named=True):
+        rates[r["group"], r["stat"]] = float(r["avg"])
+
+        if r["stat"] not in POWERUP_STATS:
+            stats[r["group"], r["stat"]] = int(r["total"])
+
+    if not any(stats.values()):
+        print(f"No combat stats in {len(games)} games of {hero}")
+        return
+
+    print(f"Combat stats, {len(games)} games of {hero}\n")
+    _combat_aim_sections(games, args, stats, rates)
+    _range_section(stats)
+    _combat_parry_lines(games, stats)
+    _leftover_sections(stats, bare=False)
+    _per_game_lines(
+        games, args, config, COMBAT_SHARES, (("Shots", "shots", 8), ("Parry", "parries", 6))
+    )
 
 
 DEATH_PHASES = [(0, "0-10 min"), (600, "10-20 min"), (1200, "20-30 min"), (1800, "30+ min")]

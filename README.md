@@ -185,7 +185,9 @@ A few flags repeat across commands:
 - `laning` - every game bucketed by where your lane stood at 9:00, so you can read whether winning lane wins the game
 - `deaths` - deaths bucketed by game time, who kills you, and with movement exported whether you were alone
 - `damage` - your damage sources summed across every game of a hero, then the gun/ability/item split game by game
-- `healing` - the same for your healing, with the share that landed on you instead of a teammate
+- `healing` - the same for your healing plus the healing your anti-heal denied, with the share that landed on you instead of a teammate
+- `souls` - the same for your souls, grouped into waves, roaming, combat, and objectives
+- `combat` - the hidden fight counters summed across every game of a hero: aim both directions, damage by range, parries
 
 **Heroes, abilities, and items** reads the bundled asset data and works offline. Full output in [docs/commands.md](docs/commands.md#heroes-abilities-and-items).
 

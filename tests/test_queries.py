@@ -17,6 +17,7 @@ LOCAL_DAY = (
 MYSTIC_SHOT = 395867183
 ECHO_SHARD = 630839635
 DUST_DEVIL = 1336069669
+RIVAL = 555
 
 
 def add_custom_stats(info, entries):
@@ -342,6 +343,72 @@ def build_sold_match(match_id=300, *, rebuy=False):
     return info
 
 
+def build_upgrade_match(match_id=310):
+    info = build_match(match_id=match_id)
+    info.players[0].items[0].sold_time_s = 700
+
+    consumed = info.players[0].items[1]
+    consumed.sold_time_s = 900
+    consumed.flags = 1
+
+    return info
+
+
+def build_double_upgrade_match(match_id=311):
+    info = build_upgrade_match(match_id=match_id)
+
+    it = info.players[0].items.add()
+    it.item_id = RIVAL
+    it.game_time_s = 900
+
+    return info
+
+
+def build_skip_upgrade_match(match_id=312):
+    info = build_match(match_id=match_id)
+    del info.players[0].items[1]
+
+    consumed = info.players[0].items[0]
+    consumed.sold_time_s = 900
+    consumed.flags = 1
+
+    return info
+
+
+def build_chain_collision_match(match_id=313):
+    info = build_match(match_id=match_id)
+    info.players[0].items[1].game_time_s = 900
+
+    it = info.players[0].items.add()
+    it.item_id = RIVAL
+    it.game_time_s = 900
+
+    consumed = info.players[0].items[0]
+    consumed.sold_time_s = 900
+    consumed.flags = 1
+
+    return info
+
+
+def build_souls_match(match_id=100):
+    info = build_match(match_id=match_id)
+    snap = info.players[0].stats[-1]
+
+    for source, gold, orbs in (
+        (export.GoldSource.LANE_CREEPS, 2000, 500),
+        (export.GoldSource.PLAYERS, 600, 0),
+        (export.GoldSource.BOSSES, 800, 0),
+        (export.GoldSource.TEAM_BONUS, 100, 0),
+        (export.GoldSource.DENIES, 0, 0),
+    ):
+        gs = snap.gold_sources.add()
+        gs.source = source
+        gs.gold = gold
+        gs.gold_orbs = orbs
+
+    return info
+
+
 def build_heal_match(match_id=100):
     info = build_match(match_id=match_id)
     dm = info.damage_matrix
@@ -355,12 +422,77 @@ def build_heal_match(match_id=100):
     t.target_player_slot = 1
     t.damage.extend([20, 50])
 
+    dm.source_details.source_name.append("citadel_ability_dash")
+    dm.source_details.stat_type.append(0)
+
+    src = dm.damage_dealers[0].damage_sources.add()
+    src.source_details_index = 5
+    t = src.damage_to_players.add()
+    t.target_player_slot = 2
+    t.damage.extend([0, 0])
+
+    dm.source_details.source_name.append("upgrade_toxic_bullets")
+    dm.source_details.stat_type.append(2)
+
+    src = dm.damage_dealers[0].damage_sources.add()
+    src.source_details_index = 6
+    t = src.damage_to_players.add()
+    t.target_player_slot = 2
+    t.damage.extend([10, 25])
+
     return info
+
+
+def _write_item_history(parquet_dir, slots=None):
+    """Write a small item_history table so delivery can resolve item slots."""
+    if slots is None:
+        slots = {"upgrade_crackshot": "weapon", "upgrade_toxic_bullets": "weapon"}
+
+    rows = [
+        {
+            "item_id": 9000 + n,
+            "name": class_name,
+            "class_name": class_name,
+            "cost": 500,
+            "slot": slot,
+            "tier": 1,
+            "is_active": False,
+            "description": None,
+            "era_from": dt.datetime(2020, 1, 1, tzinfo=dt.UTC),
+            "client_version": 1,
+        }
+        for n, (class_name, slot) in enumerate(slots.items())
+    ]
+    path = schemas.table_path("item_history", parquet_dir)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    schemas.conform("item_history", rows).write_parquet(path)
 
 
 @pytest.fixture
 def pq(tmp_path):
     for name, df in export.build_tables([build_match()], exclude=("movement",)).items():
+        df.write_parquet(tmp_path / f"{name}.parquet")
+
+    _write_item_history(tmp_path)
+
+    return tmp_path
+
+
+@pytest.fixture
+def no_history_pq(tmp_path):
+    for name, df in export.build_tables([build_match()], exclude=("movement",)).items():
+        df.write_parquet(tmp_path / f"{name}.parquet")
+
+    path = schemas.table_path("item_history", tmp_path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    schemas.conform("item_history", []).write_parquet(path)
+
+    return tmp_path
+
+
+@pytest.fixture
+def souls_pq(tmp_path):
+    for name, df in export.build_tables([build_souls_match()], exclude=("movement",)).items():
         df.write_parquet(tmp_path / f"{name}.parquet")
 
     return tmp_path
@@ -371,6 +503,8 @@ def heal_pq(tmp_path):
     for name, df in export.build_tables([build_heal_match()], exclude=("movement",)).items():
         df.write_parquet(tmp_path / f"{name}.parquet")
 
+    _write_item_history(tmp_path)
+
     return tmp_path
 
 
@@ -378,6 +512,8 @@ def heal_pq(tmp_path):
 def sold_pq(tmp_path):
     for name, df in export.build_tables([build_sold_match()], exclude=("movement",)).items():
         df.write_parquet(tmp_path / f"{name}.parquet")
+
+    _write_item_history(tmp_path)
 
     return tmp_path
 
@@ -389,6 +525,98 @@ def rebuy_pq(tmp_path):
     for name, df in export.build_tables(infos, exclude=("movement",)).items():
         df.write_parquet(tmp_path / f"{name}.parquet")
 
+    _write_item_history(tmp_path)
+
+    return tmp_path
+
+
+def _write_effective_assets(parquet_dir):
+    era = dt.datetime(2026, 1, 1, tzinfo=dt.UTC)
+    priced = [
+        (DUST_DEVIL, "Dust Devil", "upgrade_dust", 500, 1),
+        (MYSTIC_SHOT, "Mystic Shot", "upgrade_crackshot", 1250, 2),
+        (ECHO_SHARD, "Echo Shard", "upgrade_echo", 3000, 3),
+        (RIVAL, "Rival", "upgrade_rival", 2000, 3),
+    ]
+    rows = [
+        {
+            "item_id": item_id,
+            "name": name,
+            "class_name": class_name,
+            "cost": cost,
+            "slot": "spirit",
+            "tier": tier,
+            "is_active": False,
+            "description": None,
+            "era_from": era,
+            "client_version": 100,
+        }
+        for item_id, name, class_name, cost, tier in priced
+    ]
+    comps = [
+        {
+            "item_id": item_id,
+            "position": 0,
+            "component_class_name": component,
+            "era_from": era,
+            "client_version": 100,
+        }
+        for item_id, component in (
+            (ECHO_SHARD, "upgrade_crackshot"),
+            (RIVAL, "upgrade_crackshot"),
+            (MYSTIC_SHOT, "upgrade_dust"),
+        )
+    ]
+
+    for table, records in (("item_history", rows), ("item_component_history", comps)):
+        path = schemas.table_path(table, parquet_dir)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        schemas.conform(table, records).write_parquet(path)
+
+
+@pytest.fixture
+def effective_pq(tmp_path):
+    for name, df in export.build_tables([build_upgrade_match()], exclude=("movement",)).items():
+        df.write_parquet(tmp_path / f"{name}.parquet")
+
+    _write_effective_assets(tmp_path)
+
+    return tmp_path
+
+
+@pytest.fixture
+def double_upgrade_pq(tmp_path):
+    infos = [build_double_upgrade_match()]
+
+    for name, df in export.build_tables(infos, exclude=("movement",)).items():
+        df.write_parquet(tmp_path / f"{name}.parquet")
+
+    _write_effective_assets(tmp_path)
+
+    return tmp_path
+
+
+@pytest.fixture
+def skip_upgrade_pq(tmp_path):
+    infos = [build_skip_upgrade_match()]
+
+    for name, df in export.build_tables(infos, exclude=("movement",)).items():
+        df.write_parquet(tmp_path / f"{name}.parquet")
+
+    _write_effective_assets(tmp_path)
+
+    return tmp_path
+
+
+@pytest.fixture
+def chain_collision_pq(tmp_path):
+    infos = [build_chain_collision_match()]
+
+    for name, df in export.build_tables(infos, exclude=("movement",)).items():
+        df.write_parquet(tmp_path / f"{name}.parquet")
+
+    _write_effective_assets(tmp_path)
+
     return tmp_path
 
 
@@ -396,6 +624,8 @@ def rebuy_pq(tmp_path):
 def interval_pq(tmp_path):
     for name, df in export.build_tables([build_interval_match()], exclude=("movement",)).items():
         df.write_parquet(tmp_path / f"{name}.parquet")
+
+    _write_item_history(tmp_path)
 
     return tmp_path
 
@@ -414,6 +644,8 @@ def two_interval_pq(tmp_path):
 
     for name, df in export.build_tables(infos, exclude=("movement",)).items():
         df.write_parquet(tmp_path / f"{name}.parquet")
+
+    _write_item_history(tmp_path)
 
     return tmp_path
 
@@ -441,6 +673,8 @@ def record_pq(tmp_path):
 
     for name, df in export.build_tables(infos).items():
         df.write_parquet(tmp_path / f"{name}.parquet")
+
+    _write_item_history(tmp_path)
 
     return tmp_path
 
@@ -474,15 +708,15 @@ def test_my_games_filters_to_accounts(pq):
     df = queries.my_games(pq, accounts=[42], tz="America/Chicago").collect()
 
     assert df.height == 1
-    assert df["account_id"][0] == 42
-    assert df["won"][0] is True
+    assert df.get_column("account_id")[0] == 42
+    assert df.get_column("won")[0] is True
 
 
 def test_my_games_adds_local_day(pq):
     df = queries.my_games(pq, accounts=[42], tz="America/Chicago").collect()
     start_local = df.schema["start_local"]
 
-    assert df["day"][0] == LOCAL_DAY
+    assert df.get_column("day")[0] == LOCAL_DAY
     assert isinstance(start_local, pl.Datetime)
     assert start_local.time_zone == "America/Chicago"
 
@@ -495,21 +729,21 @@ def test_my_games_requires_accounts(pq):
 def test_daily_record(record_pq):
     df = queries.daily_record(record_pq, accounts=[42], tz="America/Chicago")
 
-    assert df["games"].to_list() == [3, 2]
-    assert df["wins"].to_list() == [1, 2]
-    assert df["losses"].to_list() == [2, 0]
-    assert df["net"].to_list() == [-1, 2]
-    assert df["cum_net"].to_list() == [-1, 1]
-    assert df["win_rate"].to_list() == pytest.approx([100 / 3, 100.0])
-    assert df["day"].is_sorted()
+    assert df.get_column("games").to_list() == [3, 2]
+    assert df.get_column("wins").to_list() == [1, 2]
+    assert df.get_column("losses").to_list() == [2, 0]
+    assert df.get_column("net").to_list() == [-1, 2]
+    assert df.get_column("cum_net").to_list() == [-1, 1]
+    assert df.get_column("win_rate").to_list() == pytest.approx([100 / 3, 100.0])
+    assert df.get_column("day").is_sorted()
 
 
 def test_daily_record_last_n_days_window(record_pq):
     df = queries.daily_record(record_pq, accounts=[42], tz="America/Chicago", days=1)
 
     assert df.height == 1
-    assert df["games"].to_list() == [2]
-    assert df["cum_net"].to_list() == [2]
+    assert df.get_column("games").to_list() == [2]
+    assert df.get_column("cum_net").to_list() == [2]
 
 
 def test_daily_record_weekly_rollup(tmp_path):
@@ -524,11 +758,11 @@ def test_daily_record_weekly_rollup(tmp_path):
 
     df = queries.daily_record(tmp_path, accounts=[42], tz="America/Chicago", by="week")
 
-    assert df["day"].to_list() == [dt.date(2026, 6, 29), dt.date(2026, 7, 6)]
-    assert df["games"].to_list() == [2, 1]
-    assert df["wins"].to_list() == [1, 1]
-    assert df["net"].to_list() == [0, 1]
-    assert df["cum_net"].to_list() == [0, 1]
+    assert df.get_column("day").to_list() == [dt.date(2026, 6, 29), dt.date(2026, 7, 6)]
+    assert df.get_column("games").to_list() == [2, 1]
+    assert df.get_column("wins").to_list() == [1, 1]
+    assert df.get_column("net").to_list() == [0, 1]
+    assert df.get_column("cum_net").to_list() == [0, 1]
 
 
 def test_daily_record_monthly_rollup(tmp_path):
@@ -543,11 +777,11 @@ def test_daily_record_monthly_rollup(tmp_path):
 
     df = queries.daily_record(tmp_path, accounts=[42], tz="America/Chicago", by="month")
 
-    assert df["day"].to_list() == [dt.date(2026, 7, 1), dt.date(2026, 8, 1)]
-    assert df["games"].to_list() == [1, 2]
-    assert df["wins"].to_list() == [1, 0]
-    assert df["net"].to_list() == [1, -2]
-    assert df["cum_net"].to_list() == [1, -1]
+    assert df.get_column("day").to_list() == [dt.date(2026, 7, 1), dt.date(2026, 8, 1)]
+    assert df.get_column("games").to_list() == [1, 2]
+    assert df.get_column("wins").to_list() == [1, 0]
+    assert df.get_column("net").to_list() == [1, -2]
+    assert df.get_column("cum_net").to_list() == [1, -1]
 
 
 def test_daily_record_unknown_bucket(record_pq):
@@ -565,30 +799,30 @@ def test_daily_record_lobby_label(tmp_path):
 
     df = queries.daily_record(tmp_path, accounts=[42], tz="America/Chicago")
 
-    assert df["lobby"].to_list() == ["Phantom 3"]
-    assert df["rated_games"].to_list() == [1]
+    assert df.get_column("lobby").to_list() == ["Phantom 3"]
+    assert df.get_column("rated_games").to_list() == [1]
 
 
 def test_daily_record_lobby_null_without_badges(record_pq):
     df = queries.daily_record(record_pq, accounts=[42], tz="America/Chicago")
 
-    assert df["lobby"].to_list() == [None, None]
-    assert df["rated_games"].to_list() == [0, 0]
+    assert df.get_column("lobby").to_list() == [None, None]
+    assert df.get_column("rated_games").to_list() == [0, 0]
 
 
 def test_abandon_record_flags_who_left(abandon_pq):
     df = queries.abandon_record(abandon_pq, accounts=[42], tz="America/Chicago")
 
-    assert df["match_id"].to_list() == [2, 3, 4]
-    assert df["you"].to_list() == [False, False, True]
-    assert df["ally"].to_list() == [True, False, False]
-    assert df["enemy"].to_list() == [False, True, False]
-    assert df["won"].to_list() == [False, True, False]
+    assert df.get_column("match_id").to_list() == [2, 3, 4]
+    assert df.get_column("you").to_list() == [False, False, True]
+    assert df.get_column("ally").to_list() == [True, False, False]
+    assert df.get_column("enemy").to_list() == [False, True, False]
+    assert df.get_column("won").to_list() == [False, True, False]
 
 
 def test_abandon_record_buys_do_not_mark_returned(abandon_pq):
     df = queries.abandon_record(abandon_pq, accounts=[42], tz="America/Chicago")
-    returned = dict(zip(df["match_id"], df["returned"], strict=True))
+    returned = dict(zip(df.get_column("match_id"), df.get_column("returned"), strict=True))
 
     assert returned == {2: False, 3: False, 4: False}
 
@@ -596,14 +830,14 @@ def test_abandon_record_buys_do_not_mark_returned(abandon_pq):
 def test_abandon_record_excludes_unscored(abandon_pq):
     df = queries.abandon_record(abandon_pq, accounts=[42], tz="America/Chicago")
 
-    assert 5 not in df["match_id"].to_list()
+    assert 5 not in df.get_column("match_id").to_list()
 
 
 def test_unscored_record_lists_left_out_games(abandon_pq):
     df = queries.unscored_record(abandon_pq, accounts=[42], tz="America/Chicago")
 
-    assert df["match_id"].to_list() == [5]
-    assert df["won"].to_list() == [True]
+    assert df.get_column("match_id").to_list() == [5]
+    assert df.get_column("won").to_list() == [True]
 
 
 def test_unscored_record_empty_when_all_scored(record_pq):
@@ -634,9 +868,9 @@ def test_record_games_window_filters(record_pq):
 def test_daily_record_excludes_unscored_and_counts_abandons(abandon_pq):
     df = queries.daily_record(abandon_pq, accounts=[42], tz="America/Chicago")
 
-    assert df["games"].to_list() == [4]
-    assert df["wins"].to_list() == [2]
-    assert df["abandons"].to_list() == [3]
+    assert df.get_column("games").to_list() == [4]
+    assert df.get_column("wins").to_list() == [2]
+    assert df.get_column("abandons").to_list() == [3]
 
 
 def test_abandon_record_kills_do_not_mark_returned(tmp_path):
@@ -650,7 +884,7 @@ def test_abandon_record_kills_do_not_mark_returned(tmp_path):
 
     df = queries.abandon_record(tmp_path, accounts=[42], tz="America/Chicago")
 
-    assert df["returned"].to_list() == [False]
+    assert df.get_column("returned").to_list() == [False]
 
 
 def test_abandon_record_returned_via_damage_growth(tmp_path):
@@ -663,7 +897,7 @@ def test_abandon_record_returned_via_damage_growth(tmp_path):
 
     df = queries.abandon_record(tmp_path, accounts=[42], tz="America/Chicago")
 
-    assert df["returned"].to_list() == [True]
+    assert df.get_column("returned").to_list() == [True]
 
 
 def test_abandon_record_death_after_abandon_is_not_returned(tmp_path):
@@ -677,7 +911,7 @@ def test_abandon_record_death_after_abandon_is_not_returned(tmp_path):
 
     df = queries.abandon_record(tmp_path, accounts=[42], tz="America/Chicago")
 
-    assert df["returned"].to_list() == [False]
+    assert df.get_column("returned").to_list() == [False]
 
 
 def test_abandon_record_empty_without_abandons(record_pq):
@@ -750,20 +984,20 @@ def test_item_value_unknown_item(pq):
 
 def test_daily_record_since_cutoff(record_pq):
     full = queries.daily_record(record_pq, accounts=[42], tz="America/Chicago")
-    cutoff = full["day"].to_list()[-1]
+    cutoff = full.get_column("day").to_list()[-1]
 
     df = queries.daily_record(
         record_pq, accounts=[42], tz="America/Chicago", since=cutoff.isoformat()
     )
 
-    assert df["day"].to_list() == [cutoff]
-    assert df["games"].to_list() == [2]
+    assert df.get_column("day").to_list() == [cutoff]
+    assert df.get_column("games").to_list() == [2]
 
 
 def test_daily_record_hero_filter(record_pq):
     full = queries.daily_record(record_pq, accounts=[42], tz="America/Chicago", hero="Mirage")
 
-    assert full["games"].sum() == 5
+    assert full.get_column("games").sum() == 5
     assert queries.daily_record(
         record_pq, accounts=[42], tz="America/Chicago", hero="Haze"
     ).is_empty()
@@ -783,8 +1017,8 @@ def test_daily_record_counts_alt_account_match_once(tmp_path):
 
     df = queries.daily_record(tmp_path, accounts=[42, 43], tz="America/Chicago")
 
-    assert df["games"].to_list() == [1]
-    assert df["wins"].to_list() == [1]
+    assert df.get_column("games").to_list() == [1]
+    assert df.get_column("wins").to_list() == [1]
 
 
 def test_daily_record_requires_accounts(pq):
@@ -795,23 +1029,23 @@ def test_daily_record_requires_accounts(pq):
 def test_item_buys_ranks_named_purchases_only(pq):
     df = queries.item_buys(parquet_dir=pq, accounts=[42]).collect().sort("buy_n")
 
-    assert df["item"].to_list() == ["Mystic Shot", "Echo Shard"]
-    assert df["buy_n"].to_list() == [1, 2]
+    assert df.get_column("item").to_list() == ["Mystic Shot", "Echo Shard"]
+    assert df.get_column("buy_n").to_list() == [1, 2]
 
 
 def test_item_buys_filters_item_name(pq):
     df = queries.item_buys("Echo Shard", parquet_dir=pq, accounts=[42]).collect()
 
     assert df.height == 1
-    assert df["game_time_s"][0] == 900
-    assert df["buy_n"][0] == 2
+    assert df.get_column("game_time_s")[0] == 900
+    assert df.get_column("buy_n")[0] == 2
 
 
 def test_item_buys_filters_accounts(pq):
     df = queries.item_buys(parquet_dir=pq, accounts=[43]).collect()
 
-    assert df["account_id"].to_list() == [43]
-    assert df["buy_n"].to_list() == [1]
+    assert df.get_column("account_id").to_list() == [43]
+    assert df.get_column("buy_n").to_list() == [1]
 
 
 def test_item_buys_requires_accounts(pq):
@@ -822,8 +1056,8 @@ def test_item_buys_requires_accounts(pq):
 def test_item_buys_filters_tier(pq):
     df = queries.item_buys(parquet_dir=pq, accounts=[42], tier=4).collect()
 
-    assert df["item"].to_list() == ["Echo Shard"]
-    assert df["buy_n"].to_list() == [2]
+    assert df.get_column("item").to_list() == ["Echo Shard"]
+    assert df.get_column("buy_n").to_list() == [2]
 
 
 def test_item_buys_tier_and_item_combine(pq):
@@ -842,33 +1076,139 @@ def test_hero_scaling_frame():
     mirage = df.filter((pl.col("hero_id") == 52) & (pl.col("era_from") == era)).sort("level")
 
     assert mirage.height == 36
-    assert mirage["level"].to_list() == list(range(1, 37))
-    assert mirage["base_health"][0] < mirage["base_health"][-1]
-    assert mirage["required_souls"].is_sorted()
-    assert df["client_version"].null_count() == 0
+    assert mirage.get_column("level").to_list() == list(range(1, 37))
+    assert mirage.get_column("base_health")[0] < mirage.get_column("base_health")[-1]
+    assert mirage.get_column("required_souls").is_sorted()
+    assert df.get_column("client_version").null_count() == 0
+
+
+def test_damage_categories():
+    frame = pl.LazyFrame(
+        {
+            "source_class": [
+                "Bullet",
+                "Ability",
+                "Melee",
+                "UnknownAbility",
+                "citadel_weapon_mirage_set",
+                "upgrade_escalating_exposure",
+                "mirage_tornado",
+                "ability_blood_bomb_bloodspill",
+            ]
+        }
+    )
+    got = frame.select(queries.damage_category()).collect().to_series().to_list()
+
+    assert got == ["total", "total", "total", "total", "gun", "item", "ability", "ability"]
+
+
+def test_damage_delivery(tmp_path):
+    slots = {
+        "upgrade_crackshot": "weapon",
+        "upgrade_headhunter": "weapon",
+        "upgrade_toxic_bullets": "weapon",
+        "upgrade_ethereal_bullets": "spirit",
+        "upgrade_quick_silver": "spirit",
+        "upgrade_siphon_bullets": "vitality",
+        "upgrade_escalating_exposure": "spirit",
+    }
+    _write_item_history(tmp_path, slots)
+    expected = {
+        "Bullet": None,
+        "Ability": None,
+        "citadel_weapon_mirage_set": "gun",
+        "citadel_weapon_mirage_set_crit": "gun",
+        "upgrade_crackshot": "gun_proc",
+        "upgrade_headhunter": "gun_proc",
+        "upgrade_toxic_bullets": "gun_proc",
+        "upgrade_ethereal_bullets": "spirit_proc",
+        "upgrade_quick_silver": "spirit_proc",
+        "upgrade_siphon_bullets": "gun_proc",
+        "upgrade_escalating_exposure": "spirit_proc",
+        "mirage_tornado": "ability",
+        "upgrade_nonexistent_item": "spirit_proc",
+    }
+    classes = list(expected)
+    pl.DataFrame(
+        {
+            "match_id": [1],
+            "start_time": [dt.datetime(2026, 2, 1, tzinfo=dt.UTC)],
+        }
+    ).write_parquet(tmp_path / "matches.parquet")
+    frame = pl.LazyFrame({"match_id": [1] * len(classes), "source_class": classes})
+
+    out = queries.with_delivery(frame, tmp_path).collect()
+    got = dict(out.select("source_class", "delivery").iter_rows())
+
+    assert got == expected
+
+
+def test_delivery_follows_item_era(tmp_path):
+    rows = [
+        {
+            "item_id": 9000,
+            "name": "Flux",
+            "class_name": "upgrade_flux",
+            "cost": 500,
+            "slot": slot,
+            "tier": 1,
+            "is_active": False,
+            "description": None,
+            "era_from": era,
+            "client_version": version,
+        }
+        for slot, era, version in (
+            ("weapon", dt.datetime(2026, 1, 1, tzinfo=dt.UTC), 100),
+            ("spirit", dt.datetime(2026, 3, 1, tzinfo=dt.UTC), 200),
+        )
+    ]
+    path = schemas.table_path("item_history", tmp_path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    schemas.conform("item_history", rows).write_parquet(path)
+    pl.DataFrame(
+        {
+            "match_id": [1, 2],
+            "start_time": [
+                dt.datetime(2026, 2, 1, tzinfo=dt.UTC),
+                dt.datetime(2026, 4, 1, tzinfo=dt.UTC),
+            ],
+        }
+    ).write_parquet(tmp_path / "matches.parquet")
+    frame = pl.LazyFrame({"match_id": [1, 2], "source_class": ["upgrade_flux", "upgrade_flux"]})
+
+    out = queries.with_delivery(frame, tmp_path).collect().sort("match_id")
+
+    assert out.get_column("delivery").to_list() == ["gun_proc", "spirit_proc"]
+
+
+def test_hero_damage_delivery_column(pq):
+    df = queries.hero_damage(parquet_dir=pq, tz="America/Chicago").collect()
+    got = dict(df.select("source_class", "delivery").iter_rows())
+
+    assert got == {"citadel_weapon_mirage": "gun", "upgrade_crackshot": "gun_proc"}
 
 
 def test_hero_damage_keeps_only_detail_rows_on_heroes(pq):
     df = queries.hero_damage(parquet_dir=pq, tz="America/Chicago").collect()
     df = df.sort("damage", descending=True)
 
-    assert df["source_class"].to_list() == ["citadel_weapon_mirage", "upgrade_crackshot"]
-    assert df["target_account_id"].to_list() == [43, 43]
-    assert df["damage"].to_list() == [150, 90]
+    assert df.get_column("source_class").to_list() == ["citadel_weapon_mirage", "upgrade_crackshot"]
+    assert df.get_column("target_account_id").to_list() == [43, 43]
+    assert df.get_column("damage").to_list() == [150, 90]
 
 
 def test_hero_damage_stat_filter(pq):
     df = queries.hero_damage("healing", parquet_dir=pq, tz="America/Chicago").collect()
 
-    assert df["source_class"].to_list() == ["mirage_tornado"]
-    assert df["damage"].to_list() == [30]
+    assert df.get_column("source_class").to_list() == ["mirage_tornado"]
+    assert df.get_column("damage").to_list() == [30]
 
 
 def test_hero_damage_adds_dealer_hero_and_day(pq):
     df = queries.hero_damage(parquet_dir=pq, tz="America/Chicago").collect()
 
-    assert df["hero"].to_list() == ["Mirage", "Mirage"]
-    assert df["day"].to_list() == [LOCAL_DAY, LOCAL_DAY]
+    assert df.get_column("hero").to_list() == ["Mirage", "Mirage"]
+    assert df.get_column("day").to_list() == [LOCAL_DAY, LOCAL_DAY]
 
 
 def custom_pq(tmp_path):
@@ -891,12 +1231,12 @@ def test_custom_stats_joins_hero_and_day(tmp_path):
     pq = custom_pq(tmp_path)
     df = queries.custom_stats(parquet_dir=pq, tz="America/Chicago").sort("stat").collect()
 
-    assert df["stat"].to_list() == ["HeroHitRate", "Parry Success"]
-    assert df["group"].to_list() == ["Bullet Stats", None]
-    assert df["value"].to_list() == [24, 4]
-    assert df["hero"].to_list() == ["Mirage", "Mirage"]
-    assert df["won"].to_list() == [True, True]
-    assert df["day"].to_list() == [LOCAL_DAY, LOCAL_DAY]
+    assert df.get_column("stat").to_list() == ["HeroHitRate", "Parry Success"]
+    assert df.get_column("group").to_list() == ["Bullet Stats", None]
+    assert df.get_column("value").to_list() == [24, 4]
+    assert df.get_column("hero").to_list() == ["Mirage", "Mirage"]
+    assert df.get_column("won").to_list() == [True, True]
+    assert df.get_column("day").to_list() == [LOCAL_DAY, LOCAL_DAY]
 
 
 def test_custom_stats_final_picks_last_snapshot(tmp_path):
@@ -916,9 +1256,9 @@ def test_custom_stats_final_picks_last_snapshot(tmp_path):
         .collect()
     )
 
-    assert final["value"].to_list() == [4]
-    assert raw["time_stamp_s"].to_list() == [180, 600]
-    assert raw["value"].to_list() == [1, 4]
+    assert final.get_column("value").to_list() == [4]
+    assert raw.get_column("time_stamp_s").to_list() == [180, 600]
+    assert raw.get_column("value").to_list() == [1, 4]
 
 
 def test_aim_rates_percentiles_within_hero(tmp_path):
@@ -957,17 +1297,17 @@ def test_aim_rates_percentiles_within_hero(tmp_path):
 
     df = queries.aim_rates(min_games=2, parquet_dir=tmp_path, tz="America/Chicago").sort("match_id")
 
-    assert df["match_id"].to_list() == [100, 101]
-    assert df["hit_rate"].to_list() == [50.0, 20.0]
-    assert df["headshot_rate"].to_list() == [40.0, 10.0]
-    assert df["hit_percentile"].to_list() == [100.0, 50.0]
-    assert df["headshot_percentile"].to_list() == [100.0, 50.0]
-    assert df["hero_games"].to_list() == [2, 2]
+    assert df.get_column("match_id").to_list() == [100, 101]
+    assert df.get_column("hit_rate").to_list() == [50.0, 20.0]
+    assert df.get_column("headshot_rate").to_list() == [40.0, 10.0]
+    assert df.get_column("hit_percentile").to_list() == [100.0, 50.0]
+    assert df.get_column("headshot_percentile").to_list() == [100.0, 50.0]
+    assert df.get_column("hero_games").to_list() == [2, 2]
 
     small = queries.aim_rates(parquet_dir=tmp_path, tz="America/Chicago")
 
-    assert small["hit_percentile"].to_list() == [None, None]
-    assert small["headshot_percentile"].to_list() == [None, None]
+    assert small.get_column("hit_percentile").to_list() == [None, None]
+    assert small.get_column("headshot_percentile").to_list() == [None, None]
 
 
 def test_custom_stats_filters(tmp_path):
@@ -978,8 +1318,8 @@ def test_custom_stats_filters(tmp_path):
     by_account = queries.custom_stats(accounts=[999], parquet_dir=pq).collect()
     by_match = queries.custom_stats(matches=[100], parquet_dir=pq).collect()
 
-    assert by_stat["value"].to_list() == [4]
-    assert by_group["stat"].to_list() == ["HeroHitRate"]
+    assert by_stat.get_column("value").to_list() == [4]
+    assert by_group.get_column("stat").to_list() == ["HeroHitRate"]
     assert by_account.is_empty()
     assert len(by_match) == 2
 
@@ -988,46 +1328,51 @@ def test_final_stats(pq):
     df = queries.final_stats(pq, tz="America/Chicago").collect()
     me = df.filter(pl.col("account_id") == 42)
 
-    assert me["net_worth"][0] == 6000
-    assert me["shots_hit"][0] == 70
-    assert me["accuracy"][0] == pytest.approx(0.7)
-    assert me["headshot_rate"][0] == pytest.approx(0.25)
-    assert me["hero"][0] == "Mirage"
-    assert me["won"][0] is True
+    assert me.get_column("net_worth")[0] == 6000
+    assert me.get_column("shots_hit")[0] == 70
+    assert me.get_column("accuracy")[0] == pytest.approx(0.7)
+    assert me.get_column("headshot_rate")[0] == pytest.approx(0.25)
+    assert me.get_column("hero")[0] == "Mirage"
+    assert me.get_column("won")[0] is True
 
 
 def test_final_stats_adds_local_day(pq):
     df = queries.final_stats(pq, tz="America/Chicago").collect()
 
-    assert df["day"].to_list() == [LOCAL_DAY, LOCAL_DAY]
+    assert df.get_column("day").to_list() == [LOCAL_DAY, LOCAL_DAY]
 
 
 def test_damage_by_source_totals_share_and_rate(pq):
     df = queries.damage_by_source("Mirage", accounts=[42], parquet_dir=pq)
 
     assert df.columns[0] == "games"
-    assert df["total"].to_list() == [150, 90]
-    assert df["games"].to_list() == [1, 1]
-    assert df["per_min"].to_list() == [5.0, 3.6]
-    assert df["percent"].sum() == pytest.approx(100.0)
+    assert df.get_column("total").to_list() == [150, 90]
+    assert df.get_column("games").to_list() == [1, 1]
+    assert df.get_column("per_min").to_list() == [5.0, 3.0]
+    assert df.get_column("per_min_owned").to_list() == [None, 3.6]
+    assert df.get_column("percent").sum() == pytest.approx(100.0)
 
 
 def test_damage_by_source_item_rate_ends_at_the_sell(sold_pq):
     df = queries.damage_by_source("Mirage", accounts=[42], parquet_dir=sold_pq)
+    row = df.filter(pl.col("source_name") == "Mystic Shot")
 
-    assert df.filter(pl.col("source_name") == "Mystic Shot")["per_min"].to_list() == [9.0]
+    assert row.get_column("per_min").to_list() == [3.0]
+    assert row.get_column("per_min_owned").to_list() == [9.0]
 
 
 def test_damage_by_source_item_rate_sums_rebuy_windows(rebuy_pq):
     df = queries.damage_by_source("Mirage", accounts=[42], parquet_dir=rebuy_pq)
+    row = df.filter(pl.col("source_name") == "Mystic Shot")
 
-    assert df.filter(pl.col("source_name") == "Mystic Shot")["per_min"].to_list() == [4.5]
+    assert row.get_column("per_min").to_list() == [3.0]
+    assert row.get_column("per_min_owned").to_list() == [4.5]
 
 
 def test_damage_by_source_matches_filter(pq):
     kept = queries.damage_by_source("Mirage", accounts=[42], matches=[100], parquet_dir=pq)
 
-    assert kept["total"].to_list() == [150, 90]
+    assert kept.get_column("total").to_list() == [150, 90]
 
     with pytest.raises(ValueError):
         queries.damage_by_source("Mirage", accounts=[42], matches=[999], parquet_dir=pq)
@@ -1039,6 +1384,94 @@ def test_damage_by_source_raises_without_games(pq):
 
     with pytest.raises(ValueError):
         queries.damage_by_source("Mirage", accounts=[], parquet_dir=pq)
+
+
+def _effective_by_item(parquet_dir, account_id=42):
+    df = queries.item_events_effective(parquet_dir).collect()
+
+    return {
+        r["item_id"]: r["effective_cost"]
+        for r in df.filter(pl.col("account_id") == account_id).iter_rows(named=True)
+    }
+
+
+def test_effective_cost_outright_buy_pays_the_era_price(effective_pq):
+    assert _effective_by_item(effective_pq)[DUST_DEVIL] == 500
+
+
+def test_effective_cost_nets_the_consumed_component(effective_pq):
+    by_item = _effective_by_item(effective_pq)
+
+    assert by_item[ECHO_SHARD] == 1750
+    assert by_item[MYSTIC_SHOT] == 1250
+
+
+def test_effective_cost_sell_gets_no_refund_credit(effective_pq):
+    by_item = _effective_by_item(effective_pq)
+
+    assert by_item[DUST_DEVIL] == 500
+    assert sum(by_item.values()) == 3500
+
+
+def test_effective_cost_upgrade_without_components_pays_full_price(effective_pq):
+    assert _effective_by_item(effective_pq, account_id=43)[ECHO_SHARD] == 3000
+
+
+def test_effective_cost_sums_to_the_souls_spent(effective_pq):
+    df = queries.item_events_effective(effective_pq).collect().filter(pl.col("account_id") == 42)
+    consumed = int(df.filter(pl.col("flags") == 1).get_column("cost").sum())
+    total = int(df.get_column("cost").sum())
+
+    assert df.get_column("effective_cost").sum() == total - consumed
+
+
+def test_effective_cost_same_second_upgrades_credit_once(double_upgrade_pq):
+    by_item = _effective_by_item(double_upgrade_pq)
+
+    assert by_item[RIVAL] == 750
+    assert by_item[ECHO_SHARD] == 3000
+    assert sum(by_item.values()) == 5500
+
+
+def test_effective_cost_tier_skip_credits_the_chain(skip_upgrade_pq):
+    by_item = _effective_by_item(skip_upgrade_pq)
+
+    assert by_item[ECHO_SHARD] == 2500
+    assert by_item[DUST_DEVIL] == 500
+
+
+def test_effective_cost_chain_collision_prefers_the_direct_component(chain_collision_pq):
+    by_item = _effective_by_item(chain_collision_pq)
+
+    assert by_item[MYSTIC_SHOT] == 750
+    assert by_item[RIVAL] == 2000
+    assert by_item[ECHO_SHARD] == 3000
+
+
+def test_item_games_effective_cost(effective_pq):
+    df = queries.item_games("Echo Shard", parquet_dir=effective_pq, accounts=[42]).collect()
+
+    assert df.get_column("effective_cost").to_list() == [1750]
+
+
+def test_item_games_effective_cost_null_without_history(pq):
+    df = queries.item_games("Echo Shard", parquet_dir=pq, accounts=[42]).collect()
+
+    assert df.get_column("effective_cost").to_list() == [None]
+
+
+def test_damage_by_source_per_1k_souls(effective_pq):
+    df = queries.damage_by_source("Mirage", accounts=[42], parquet_dir=effective_pq)
+    by_source = {r["source_name"]: r["per_1k"] for r in df.iter_rows(named=True)}
+
+    assert by_source["Mystic Shot"] == 72.0
+    assert by_source["citadel_weapon_mirage"] is None
+
+
+def test_damage_by_source_per_1k_null_without_history(no_history_pq):
+    df = queries.damage_by_source("Mirage", accounts=[42], parquet_dir=no_history_pq)
+
+    assert df.get_column("per_1k").to_list() == [None, None]
 
 
 def test_damage_game_records_splits_deliveries(pq):
@@ -1060,7 +1493,7 @@ def test_damage_game_records_splits_deliveries(pq):
 def test_damage_game_records_resolves_fuzzy_hero_names(pq):
     df = queries.damage_game_records("mirage", accounts=[42], parquet_dir=pq, tz="America/Chicago")
 
-    assert df["hero"].to_list() == ["Mirage"]
+    assert df.get_column("hero").to_list() == ["Mirage"]
 
 
 def test_damage_game_records_day_filters(record_pq):
@@ -1074,9 +1507,9 @@ def test_damage_game_records_day_filters(record_pq):
     since = records(since=str(LOCAL_DAY + dt.timedelta(days=1)))
 
     assert len(all_games) == 5
-    assert all_games["match_id"].to_list()[-2:] == [4, 5]
-    assert last["match_id"].to_list() == [4, 5]
-    assert since["match_id"].to_list() == [4, 5]
+    assert all_games.get_column("match_id").to_list()[-2:] == [4, 5]
+    assert last.get_column("match_id").to_list() == [4, 5]
+    assert since.get_column("match_id").to_list() == [4, 5]
 
 
 def test_damage_game_records_raises(pq):
@@ -1090,15 +1523,45 @@ def test_damage_game_records_raises(pq):
 def test_damage_by_source_healing_stat(heal_pq):
     df = queries.damage_by_source("Mirage", accounts=[42], parquet_dir=heal_pq, stat="healing")
 
-    assert df["source_name"].to_list() == ["Toxic Bullets", "Dust Devil"]
-    assert df["total"].to_list() == [50, 30]
-    assert df["per_min"].to_list() == [None, 1.0]
-    assert df["percent"].to_list() == [62.5, 37.5]
+    assert df.get_column("source_name").to_list() == ["Toxic Bullets", "Dust Devil"]
+    assert df.get_column("total").to_list() == [50, 30]
+    assert df.get_column("per_min").to_list() == [1.7, 1.0]
+    assert df.get_column("per_min_owned").to_list() == [None, None]
+    assert df.get_column("percent").to_list() == [62.5, 37.5]
 
 
 def test_damage_by_source_healing_stat_raises_without_rows(pq):
     with pytest.raises(ValueError, match="no mitigated rows"):
         queries.damage_by_source("Mirage", accounts=[42], parquet_dir=pq, stat="mitigated")
+
+
+def test_damage_by_source_heal_prevented_stat(heal_pq):
+    df = queries.damage_by_source(
+        "Mirage", accounts=[42], parquet_dir=heal_pq, stat="heal_prevented"
+    )
+
+    assert df.get_column("source_name").to_list() == ["Toxic Bullets"]
+    assert df.get_column("delivery").to_list() == ["gun_proc"]
+    assert df.get_column("total").to_list() == [25]
+    assert df.get_column("per_min").to_list() == [0.8]
+    assert df.get_column("percent").to_list() == [100.0]
+
+
+def test_damage_by_source_per_min_skips_stat_free_games(tmp_path):
+    infos = [build_heal_match(100), build_match(101)]
+
+    for name, df in export.build_tables(infos, exclude=("movement",)).items():
+        df.write_parquet(tmp_path / f"{name}.parquet")
+
+    _write_item_history(tmp_path)
+
+    df = queries.damage_by_source(
+        "Mirage", accounts=[42], matches=[100, 101], parquet_dir=tmp_path, stat="heal_prevented"
+    )
+
+    assert df.get_column("total").to_list() == [25]
+    assert df.get_column("games").to_list() == [1]
+    assert df.get_column("per_min").to_list() == [0.8]
 
 
 def test_healing_game_records_splits_delivery_and_recipient(heal_pq):
@@ -1112,11 +1575,18 @@ def test_healing_game_records_splits_delivery_and_recipient(heal_pq):
     assert row["abilities"] == 30
     assert row["items"] == 50
     assert row["self"] == 50
+    assert row["prevented"] == 25
     assert row["abilities_pct"] == 37.5
     assert row["items_pct"] == 62.5
     assert row["self_pct"] == 62.5
     assert row["won"] is True
     assert row["day"] == LOCAL_DAY
+
+
+def test_healing_game_records_prevented_zero_without_rows(pq):
+    df = queries.healing_game_records("Mirage", accounts=[42], parquet_dir=pq, tz="America/Chicago")
+
+    assert df.get_column("prevented").to_list() == [0]
 
 
 def test_healing_game_records_day_filters(record_pq):
@@ -1130,8 +1600,8 @@ def test_healing_game_records_day_filters(record_pq):
     since = records(since=str(LOCAL_DAY + dt.timedelta(days=1)))
 
     assert len(all_games) == 5
-    assert last["match_id"].to_list() == [4, 5]
-    assert since["match_id"].to_list() == [4, 5]
+    assert last.get_column("match_id").to_list() == [4, 5]
+    assert since.get_column("match_id").to_list() == [4, 5]
 
 
 def test_healing_game_records_raises(pq):
@@ -1142,19 +1612,178 @@ def test_healing_game_records_raises(pq):
         queries.healing_game_records("Haze", accounts=[42], parquet_dir=pq)
 
 
+def test_souls_by_source_drops_sources_that_never_paid(souls_pq):
+    df = queries.souls_by_source("Mirage", accounts=[42], parquet_dir=souls_pq)
+
+    assert "denies" not in df.get_column("source_name").to_list()
+    assert set(df.get_column("games").to_list()) == {1}
+
+
+def test_damage_by_source_drops_zero_value_sources(heal_pq):
+    df = queries.damage_by_source("Mirage", accounts=[42], parquet_dir=heal_pq)
+
+    assert len(df) == 2
+    assert df.get_column("total").to_list() == [150, 90]
+
+
+def test_damage_intervals_hides_zero_value_sources(tmp_path):
+    info = build_interval_match()
+    dm = info.damage_matrix
+    dm.source_details.source_name.append("citadel_ability_dash")
+    dm.source_details.stat_type.append(0)
+
+    src = dm.damage_dealers[0].damage_sources.add()
+    src.source_details_index = len(dm.source_details.source_name) - 1
+    t = src.damage_to_players.add()
+    t.target_player_slot = 2
+    t.damage.extend([0, 0, 0])
+
+    for name, df in export.build_tables([info], exclude=("movement",)).items():
+        df.write_parquet(tmp_path / f"{name}.parquet")
+
+    _write_item_history(tmp_path)
+
+    df = queries.damage_intervals(500, 42, parquet_dir=tmp_path)
+
+    assert df.get_column("source_name").n_unique() == 2
+    assert (df.get_column("total") > 0).all()
+
+
+def test_souls_game_records_splits_groups(souls_pq):
+    df = queries.souls_game_records(
+        "Mirage", accounts=[42], parquet_dir=souls_pq, tz="America/Chicago"
+    )
+    row = df.row(0, named=True)
+
+    assert len(df) == 1
+    assert row["total"] == 4000
+    assert row["waves"] == 2500
+    assert row["roaming"] == 0
+    assert row["combat"] == 600
+    assert row["objectives"] == 800
+    assert row["waves_pct"] == 62.5
+    assert row["roaming_pct"] == 0.0
+    assert row["combat_pct"] == 15.0
+    assert row["objectives_pct"] == 20.0
+    assert row["won"] is True
+    assert row["day"] == LOCAL_DAY
+
+
+def test_souls_game_records_day_filters(record_pq):
+    def records(**kwargs):
+        return queries.souls_game_records(
+            "Mirage", accounts=[42], parquet_dir=record_pq, tz="America/Chicago", **kwargs
+        )
+
+    all_games = records()
+    last = records(days=1)
+    since = records(since=str(LOCAL_DAY + dt.timedelta(days=1)))
+
+    assert len(all_games) == 5
+    assert last.get_column("match_id").to_list() == [4, 5]
+    assert since.get_column("match_id").to_list() == [4, 5]
+
+
+def test_souls_game_records_raises(pq):
+    with pytest.raises(ValueError, match="Unknown hero"):
+        queries.souls_game_records("Nobody", accounts=[42], parquet_dir=pq)
+
+    with pytest.raises(ValueError, match="no games"):
+        queries.souls_game_records("Haze", accounts=[42], parquet_dir=pq)
+
+
+def test_combat_game_records_counts_and_rates(tmp_path):
+    info = build_match()
+    add_custom_stats(
+        info,
+        [
+            ("Enemy Hero Accuracy##Shots", 1000),
+            ("Enemy Hero Accuracy##Hits", 250),
+            ("Enemy Hero Accuracy##Headshots", 50),
+            ("Enemy Hero Accuracy - Incoming##Shots", 800),
+            ("Parry Success", 3),
+            ("Parry Miss", 2),
+        ],
+    )
+
+    for name, df in export.build_tables([info], exclude=("movement",)).items():
+        df.write_parquet(tmp_path / f"{name}.parquet")
+
+    df = queries.combat_game_records(
+        "Mirage", accounts=[42], parquet_dir=tmp_path, tz="America/Chicago"
+    )
+    row = df.row(0, named=True)
+
+    assert len(df) == 1
+    assert row["shots"] == 1000
+    assert row["hits"] == 250
+    assert row["headshots"] == 50
+    assert row["parries"] == 3
+    assert row["missed_parries"] == 2
+    assert row["hit_pct"] == 25.0
+    assert row["headshot_pct"] == 20.0
+    assert row["won"] is True
+    assert row["day"] == LOCAL_DAY
+
+
+def test_combat_game_records_fills_missing_counters(pq):
+    df = queries.combat_game_records("Mirage", accounts=[42], parquet_dir=pq)
+    row = df.row(0, named=True)
+
+    assert row["shots"] == 0
+    assert row["parries"] == 0
+    assert row["hit_pct"] is None
+    assert row["headshot_pct"] is None
+
+
+def test_combat_game_records_day_filters(record_pq):
+    def records(**kwargs):
+        return queries.combat_game_records(
+            "Mirage", accounts=[42], parquet_dir=record_pq, tz="America/Chicago", **kwargs
+        )
+
+    all_games = records()
+    last = records(days=1)
+    since = records(since=str(LOCAL_DAY + dt.timedelta(days=1)))
+
+    assert len(all_games) == 5
+    assert last.get_column("match_id").to_list() == [4, 5]
+    assert since.get_column("match_id").to_list() == [4, 5]
+
+
+def test_combat_game_records_raises(pq):
+    with pytest.raises(ValueError, match="Unknown hero"):
+        queries.combat_game_records("Nobody", accounts=[42], parquet_dir=pq)
+
+    with pytest.raises(ValueError, match="no games"):
+        queries.combat_game_records("Haze", accounts=[42], parquet_dir=pq)
+
+
 def test_souls_by_source_sums_orbs(movement_pq):
     df = queries.souls_by_source("Mirage", accounts=[42], parquet_dir=movement_pq)
 
     assert df.columns[0] == "games"
-    assert df["souls"].sum() == 700
-    assert df["games"].to_list() == [1]
-    assert df["percent"].to_list() == [100.0]
+    assert df.get_column("souls").sum() == 700
+    assert df.get_column("games").to_list() == [1]
+    assert df.get_column("percent").to_list() == [100.0]
+
+
+def test_souls_by_source_minutes_cover_only_the_paying_games(tmp_path):
+    infos = [build_movement_match(100), build_match(101)]
+
+    for name, df in export.build_tables(infos, exclude=("movement",)).items():
+        df.write_parquet(tmp_path / f"{name}.parquet")
+
+    df = queries.souls_by_source("Mirage", accounts=[42], parquet_dir=tmp_path)
+
+    assert df.get_column("games").to_list() == [1]
+    assert df.get_column("minutes").to_list() == [30.0]
 
 
 def test_souls_by_source_matches_filter(movement_pq):
     kept = queries.souls_by_source("Mirage", accounts=[42], matches=[100], parquet_dir=movement_pq)
 
-    assert kept["souls"].sum() == 700
+    assert kept.get_column("souls").sum() == 700
 
     with pytest.raises(ValueError):
         queries.souls_by_source("Mirage", accounts=[42], matches=[999], parquet_dir=movement_pq)
@@ -1170,16 +1799,16 @@ def test_final_stats_null_rates_when_nothing_fired(pq):
     other = df.filter(pl.col("account_id") == 43)
 
     assert other.height == 1
-    assert other["accuracy"][0] is None
-    assert other["headshot_rate"][0] is None
+    assert other.get_column("accuracy")[0] is None
+    assert other.get_column("headshot_rate")[0] is None
 
 
 def test_team_damage_ranks_within_team(rank_pq):
     df = queries.team_damage_ranks(rank_pq).collect().sort("account_id")
 
-    assert df["account_id"].to_list() == [42, 43, 44]
-    assert df["team_damage_rank"].to_list() == [1, 1, 2]
-    assert df["top_team_damage"].to_list() == [True, True, False]
+    assert df.get_column("account_id").to_list() == [42, 43, 44]
+    assert df.get_column("team_damage_rank").to_list() == [1, 1, 2]
+    assert df.get_column("top_team_damage").to_list() == [True, True, False]
 
 
 def test_team_damage_ranks_uses_final_damage(rank_pq):
@@ -1239,7 +1868,7 @@ def test_hero_scaling_asof_picks_era_correct_health(tmp_path, monkeypatch):
 
     out = queries.hero_scaling_asof(left).sort("start_time").collect()
 
-    assert out["base_health"].to_list() == [1010.0, 1210.0]
+    assert out.get_column("base_health").to_list() == [1010.0, 1210.0]
 
 
 def test_hero_scaling_asof_coalesces_prehistory(tmp_path, monkeypatch):
@@ -1254,7 +1883,7 @@ def test_hero_scaling_asof_coalesces_prehistory(tmp_path, monkeypatch):
 
     out = queries.hero_scaling_asof(left).collect()
 
-    assert out["base_health"].to_list() == [1010.0]
+    assert out.get_column("base_health").to_list() == [1010.0]
 
 
 def test_table_exists(pq, movement_pq):
@@ -1272,10 +1901,10 @@ def test_my_deaths_joins_game_columns(movement_pq):
     df = queries.my_deaths(movement_pq, accounts=[42], tz="America/Chicago").collect()
 
     assert df.height == 1
-    assert df["game_time_s"][0] == 100
-    assert df["killer_account_id"][0] == 43
-    assert df["hero"][0] == "Mirage"
-    assert df["won"][0] is True
+    assert df.get_column("game_time_s")[0] == 100
+    assert df.get_column("killer_account_id")[0] == 43
+    assert df.get_column("hero")[0] == "Mirage"
+    assert df.get_column("won")[0] is True
 
 
 def test_death_context_counts_nearby(movement_pq):
@@ -1284,10 +1913,10 @@ def test_death_context_counts_nearby(movement_pq):
     ).collect()
 
     assert df.height == 1
-    assert df["allies"][0] == 0
-    assert df["enemies"][0] == 1
-    assert df["solo"][0] is True
-    assert df["outnumbered"][0] is False
+    assert df.get_column("allies")[0] == 0
+    assert df.get_column("enemies")[0] == 1
+    assert df.get_column("solo")[0] is True
+    assert df.get_column("outnumbered")[0] is False
 
 
 def test_death_context_radius_widens(movement_pq):
@@ -1295,9 +1924,9 @@ def test_death_context_radius_widens(movement_pq):
         radius=20000, parquet_dir=movement_pq, accounts=[42], tz="America/Chicago"
     ).collect()
 
-    assert df["allies"][0] == 1
-    assert df["enemies"][0] == 1
-    assert df["solo"][0] is False
+    assert df.get_column("allies")[0] == 1
+    assert df.get_column("enemies")[0] == 1
+    assert df.get_column("solo")[0] is False
 
 
 def test_death_context_requires_movement(pq):
@@ -1309,23 +1938,23 @@ def test_movement_profile_metrics(movement_pq):
     df = queries.movement_profile(movement_pq).collect()
     me = df.filter(pl.col("account_id") == 42)
 
-    assert me["alive_s"][0] == 10
-    assert me["slide_percent"][0] == pytest.approx(20.0)
-    assert me["in_air_percent"][0] == pytest.approx(20.0)
-    assert me["zipline_percent"][0] == pytest.approx(10.0)
-    assert me["combat_percent"][0] == pytest.approx(40.0)
-    assert me["dashes_min"][0] == pytest.approx(6.0)
-    assert me["air_dashes_min"][0] == pytest.approx(6.0)
-    assert me["distance"][0] == pytest.approx(700.0)
-    assert me["stationary_percent"][0] == pytest.approx(0.0)
+    assert me.get_column("alive_s")[0] == 10
+    assert me.get_column("slide_percent")[0] == pytest.approx(20.0)
+    assert me.get_column("in_air_percent")[0] == pytest.approx(20.0)
+    assert me.get_column("zipline_percent")[0] == pytest.approx(10.0)
+    assert me.get_column("combat_percent")[0] == pytest.approx(40.0)
+    assert me.get_column("dashes_min")[0] == pytest.approx(6.0)
+    assert me.get_column("air_dashes_min")[0] == pytest.approx(6.0)
+    assert me.get_column("distance")[0] == pytest.approx(700.0)
+    assert me.get_column("stationary_percent")[0] == pytest.approx(0.0)
 
 
 def test_movement_profile_stationary_player(movement_pq):
     df = queries.movement_profile(movement_pq).collect()
     camper = df.filter(pl.col("account_id") == 43)
 
-    assert camper["distance"][0] == pytest.approx(0.0)
-    assert camper["stationary_percent"][0] == pytest.approx(100.0)
+    assert camper.get_column("distance")[0] == pytest.approx(0.0)
+    assert camper.get_column("stationary_percent")[0] == pytest.approx(100.0)
 
 
 def test_movement_profile_single_sample_track(tmp_path):
@@ -1348,16 +1977,16 @@ def test_movement_profile_single_sample_track(tmp_path):
     df = queries.movement_profile(tmp_path).collect()
     lone = df.filter(pl.col("account_id") == 99)
 
-    assert lone["moving_s"][0] == 0
-    assert lone["distance_min"][0] is None
-    assert lone["souls_per_1000_units"][0] is None
+    assert lone.get_column("moving_s")[0] == 0
+    assert lone.get_column("distance_min")[0] is None
+    assert lone.get_column("souls_per_1000_units")[0] is None
 
 
 def test_movement_intervals_buckets(movement_pq):
     df = queries.movement_intervals(100, 42, 300, parquet_dir=movement_pq)
 
     assert len(df) == 6
-    assert df["end_s"].to_list() == [300, 600, 900, 1200, 1500, 1800]
+    assert df.get_column("end_s").to_list() == [300, 600, 900, 1200, 1500, 1800]
 
     first = df.row(0, named=True)
     assert first["alive_s"] == 10
@@ -1379,20 +2008,20 @@ def test_movement_intervals_whole_match_matches_profile(movement_pq):
 
     assert len(df) == 1
     assert row["end_s"] == 1800
-    assert row["distance"] == pytest.approx(me["distance"][0])
-    assert row["stationary_percent"] == pytest.approx(me["stationary_percent"][0])
-    assert row["distance_min"] == pytest.approx(me["distance_min"][0])
-    assert row["combat_percent"] == pytest.approx(me["combat_percent"][0])
+    assert row["distance"] == pytest.approx(me.get_column("distance")[0])
+    assert row["stationary_percent"] == pytest.approx(me.get_column("stationary_percent")[0])
+    assert row["distance_min"] == pytest.approx(me.get_column("distance_min")[0])
+    assert row["combat_percent"] == pytest.approx(me.get_column("combat_percent")[0])
 
 
 def test_movement_scoreboard_sums_lobby(movement_pq):
     df = queries.movement_scoreboard(100, parquet_dir=movement_pq).collect()
     me = df.filter(pl.col("account_id") == 42)
 
-    assert set(df["account_id"].to_list()) == {42, 43, 44}
-    assert me["hero"][0] == "Mirage"
-    assert me["alive_s"][0] == 10
-    assert me["slide_percent"][0] == pytest.approx(20.0)
+    assert set(df.get_column("account_id").to_list()) == {42, 43, 44}
+    assert me.get_column("hero")[0] == "Mirage"
+    assert me.get_column("alive_s")[0] == 10
+    assert me.get_column("slide_percent")[0] == pytest.approx(20.0)
 
 
 def test_movement_intervals_unknown_match(movement_pq):
@@ -1422,79 +2051,79 @@ def test_movement_profile_without_raw_movement(tmp_path):
     df = queries.movement_profile(tmp_path).collect()
     me = df.filter(pl.col("account_id") == 42)
 
-    assert me["alive_s"][0] == 10
-    assert me["slide_percent"][0] == pytest.approx(20.0)
+    assert me.get_column("alive_s")[0] == 10
+    assert me.get_column("slide_percent")[0] == pytest.approx(20.0)
 
 
 def test_movement_profile_farm(movement_pq):
     df = queries.movement_profile(movement_pq).collect()
     me = df.filter(pl.col("account_id") == 42)
 
-    assert me["farm_souls"][0] == 700
-    assert me["farm_min"][0] == pytest.approx(700 / 30)
-    assert me["souls_per_1000_units"][0] == pytest.approx(1000.0)
+    assert me.get_column("farm_souls")[0] == 700
+    assert me.get_column("farm_min")[0] == pytest.approx(700 / 30)
+    assert me.get_column("souls_per_1000_units")[0] == pytest.approx(1000.0)
 
 
 def test_item_games_joins_buy_and_damage(pq):
     df = queries.item_games("Mystic Shot", "Mirage", pq, accounts=[42]).collect()
 
     assert df.height == 1
-    assert df["game_time_s"][0] == 300
-    assert df["owned_s"][0] == 1500
-    assert df["won"][0] is True
-    assert df["damage"][0] == 90
+    assert df.get_column("game_time_s")[0] == 300
+    assert df.get_column("owned_s")[0] == 1500
+    assert df.get_column("won")[0] is True
+    assert df.get_column("damage")[0] == 90
 
 
 def test_item_games_adds_purchase_order_columns(pq):
     df = queries.item_games("Mystic Shot", "Mirage", pq, accounts=[42]).collect()
 
-    assert df["buy_n"][0] == 1
-    assert df["tier_buy_n"][0] == 1
-    assert df["first_tier_item"][0] == "Mystic Shot"
-    assert df["first_tier_time_s"][0] == 300
-    assert df["is_first_tier_item"][0] is True
+    assert df.get_column("buy_n")[0] == 1
+    assert df.get_column("tier_buy_n")[0] == 1
+    assert df.get_column("first_tier_item")[0] == "Mystic Shot"
+    assert df.get_column("first_tier_time_s")[0] == 300
+    assert df.get_column("is_first_tier_item")[0] is True
 
 
 def test_item_games_marks_first_tier_item(pq):
     df = queries.item_games("Echo Shard", "Mirage", pq, accounts=[42]).collect()
 
-    assert df["buy_n"][0] == 2
-    assert df["tier_buy_n"][0] == 1
-    assert df["first_tier_item"][0] == "Echo Shard"
-    assert df["is_first_tier_item"][0] is True
+    assert df.get_column("buy_n")[0] == 2
+    assert df.get_column("tier_buy_n")[0] == 1
+    assert df.get_column("first_tier_item")[0] == "Echo Shard"
+    assert df.get_column("is_first_tier_item")[0] is True
 
 
 def test_item_games_order_columns_null_when_unbuilt(pq):
     df = queries.item_games("Healbane", "Mirage", pq, accounts=[42]).collect()
 
-    assert df["buy_n"][0] is None
-    assert df["tier_buy_n"][0] is None
-    assert df["first_tier_item"][0] == "Mystic Shot"
-    assert df["is_first_tier_item"][0] is False
+    assert df.get_column("buy_n")[0] is None
+    assert df.get_column("tier_buy_n")[0] is None
+    assert df.get_column("first_tier_item")[0] == "Mystic Shot"
+    assert df.get_column("is_first_tier_item")[0] is False
 
 
 def test_item_games_sold_buy_still_built(sold_pq):
     df = queries.item_games("Mystic Shot", "Mirage", sold_pq, accounts=[42]).collect()
 
     assert df.height == 1
-    assert df["game_time_s"][0] == 300
-    assert df["owned_s"][0] == 600
-    assert df["damage"][0] == 90
-    assert df["dealt_after_buy"][0] == 1300
+    assert df.get_column("game_time_s")[0] == 300
+    assert df.get_column("owned_s")[0] == 600
+    assert df.get_column("damage")[0] == 90
+    assert df.get_column("dealt_after_buy")[0] == 1300
 
 
 def test_item_games_dealt_after_buy(pq):
     df = queries.item_games("Mystic Shot", "Mirage", pq, accounts=[42]).collect()
 
-    assert df["dealt_after_buy"][0] == 1300
+    assert df.get_column("dealt_after_buy")[0] == 1300
 
 
 def test_item_games_keeps_unbuilt_games(pq):
     df = queries.item_games("Healbane", "Mirage", pq, accounts=[42]).collect()
 
     assert df.height == 1
-    assert df["game_time_s"][0] is None
-    assert df["dealt_after_buy"][0] is None
+    assert df.get_column("game_time_s")[0] is None
+    assert df.get_column("dealt_after_buy")[0] is None
 
 
 def test_item_games_unknown_item(pq):
@@ -1519,15 +2148,15 @@ def test_item_games_since_filters_days(pq):
 def test_ability_upgrades_maps_ability_rows(pq):
     df = queries.ability_upgrades("Mirage", pq, accounts=[42], tz="America/Chicago").collect()
 
-    assert df["ability"].to_list() == ["Dust Devil"]
-    assert df["game_time_s"].to_list() == [60]
-    assert df["ability_upgrade_n"].to_list() == [1]
-    assert df["ability_point_cost"].to_list() == [0]
-    assert df["ability_points_spent"].to_list() == [0]
-    assert df["ability_unlock_n"].to_list() == [1]
-    assert df["reward"].to_list() == ["ability_unlocks"]
-    assert df["level"].to_list() == [1]
-    assert df["required_souls"].to_list() == [0]
+    assert df.get_column("ability").to_list() == ["Dust Devil"]
+    assert df.get_column("game_time_s").to_list() == [60]
+    assert df.get_column("ability_upgrade_n").to_list() == [1]
+    assert df.get_column("ability_point_cost").to_list() == [0]
+    assert df.get_column("ability_points_spent").to_list() == [0]
+    assert df.get_column("ability_unlock_n").to_list() == [1]
+    assert df.get_column("reward").to_list() == ["ability_unlocks"]
+    assert df.get_column("level").to_list() == [1]
+    assert df.get_column("required_souls").to_list() == [0]
 
 
 def test_ability_upgrades_tracks_order_and_souls(pq):
@@ -1537,7 +2166,7 @@ def test_ability_upgrades_tracks_order_and_souls(pq):
     assert row.is_empty()
 
     dust = df.filter(pl.col("ability") == "Dust Devil")
-    assert dust["ability_upgrade_n"].to_list() == [1]
+    assert dust.get_column("ability_upgrade_n").to_list() == [1]
 
 
 def test_ability_upgrades_maps_tier_costs_to_soul_thresholds(tmp_path):
@@ -1572,10 +2201,27 @@ def test_ability_upgrades_maps_tier_costs_to_soul_thresholds(tmp_path):
 
     df = queries.ability_upgrades("Mirage", tmp_path, accounts=[42], tz="America/Chicago").collect()
 
-    assert df["ability_point_cost"].to_list() == [0, 1, 0, 0, 2, 1, 0, 2, 1, 2, 5, 5, 5, 1, 2, 5]
-    assert df["ability_points_spent"].to_list()[-1] == 32
-    assert df["required_souls"].to_list()[-1] == 48600
-    assert df["level"].to_list()[-1] == 36
+    assert df.get_column("ability_point_cost").to_list() == [
+        0,
+        1,
+        0,
+        0,
+        2,
+        1,
+        0,
+        2,
+        1,
+        2,
+        5,
+        5,
+        5,
+        1,
+        2,
+        5,
+    ]
+    assert df.get_column("ability_points_spent").to_list()[-1] == 32
+    assert df.get_column("required_souls").to_list()[-1] == 48600
+    assert df.get_column("level").to_list()[-1] == 36
 
 
 def _dust_match(match_id, start_ts, n_events):
@@ -1606,7 +2252,7 @@ def test_ability_upgrades_uses_era_correct_soul_thresholds(tmp_path, monkeypatch
     df = queries.ability_upgrades("Mirage", tmp_path, accounts=[42]).collect()
     pts = df.filter(pl.col("ability_point_cost") > 0).sort("match_id")
 
-    assert pts["required_souls"].to_list() == [500, 800]
+    assert pts.get_column("required_souls").to_list() == [500, 800]
 
 
 def test_hero_games_filters_hero_and_queue(tmp_path):
@@ -1622,7 +2268,7 @@ def test_hero_games_filters_hero_and_queue(tmp_path):
 
     games = queries.hero_games("Mirage", out, accounts=[42]).collect()
 
-    assert games["match_id"].to_list() == [100]
+    assert games.get_column("match_id").to_list() == [100]
 
 
 def test_hero_games_since_window(movement_pq):
@@ -1633,7 +2279,7 @@ def test_hero_games_since_window(movement_pq):
     ).collect()
 
     assert late.is_empty()
-    assert early["match_id"].to_list() == [100]
+    assert early.get_column("match_id").to_list() == [100]
 
 
 def test_hero_games_unknown_hero(movement_pq):
@@ -1645,15 +2291,15 @@ def test_compare_intervals_column_gains(movement_pq):
     games = pl.LazyFrame({"match_id": [100], "account_id": [42]})
     gains = queries.compare_intervals(games, "souls", 300, movement_pq).collect().sort("interval")
 
-    assert gains["interval"].to_list() == [0, 1, 2, 3, 4, 5]
-    assert gains["gain"].to_list() == [1800, 4200, 0, 0, 0, 0]
+    assert gains.get_column("interval").to_list() == [0, 1, 2, 3, 4, 5]
+    assert gains.get_column("gain").to_list() == [1800, 4200, 0, 0, 0, 0]
 
 
 def test_compare_intervals_source_composite(movement_pq):
     games = pl.LazyFrame({"match_id": [100], "account_id": [42]})
     gains = queries.compare_intervals(games, "farm", 300, movement_pq).collect().sort("interval")
 
-    assert gains["gain"].to_list() == [0, 700, 0, 0, 0, 0]
+    assert gains.get_column("gain").to_list() == [0, 700, 0, 0, 0, 0]
 
 
 def test_compare_intervals_counts_kills_and_deaths_from_the_deaths_table(movement_pq):
@@ -1682,9 +2328,9 @@ def test_game_rates_whole_match(movement_pq):
     killer = pl.LazyFrame({"match_id": [100], "account_id": [43]})
     kills = queries.game_rates(killer, "kills", movement_pq).collect()
 
-    assert souls["rate"].to_list() == [6000 * 60 / 1800]
-    assert farm["rate"].to_list() == [700 * 60 / 1800]
-    assert kills["rate"].to_list() == [1 * 60 / 1800]
+    assert souls.get_column("rate").to_list() == [6000 * 60 / 1800]
+    assert farm.get_column("rate").to_list() == [700 * 60 / 1800]
+    assert kills.get_column("rate").to_list() == [1 * 60 / 1800]
 
 
 def test_game_totals_whole_match(movement_pq):
@@ -1694,9 +2340,9 @@ def test_game_totals_whole_match(movement_pq):
     killer = pl.LazyFrame({"match_id": [100], "account_id": [43]})
     kills = queries.game_totals(killer, "kills", movement_pq).collect()
 
-    assert souls["total"].to_list() == [6000]
-    assert souls["duration_s"].to_list() == [1800]
-    assert kills["total"].to_list() == [1]
+    assert souls.get_column("total").to_list() == [6000]
+    assert souls.get_column("duration_s").to_list() == [1800]
+    assert kills.get_column("total").to_list() == [1]
 
 
 def test_compare_stats_sum_the_rift_urn_source(tmp_path):
@@ -1714,7 +2360,7 @@ def test_compare_stats_sum_the_rift_urn_source(tmp_path):
     games = pl.LazyFrame({"match_id": [300], "account_id": [42]})
     rift_urn = queries.compare_intervals(games, "rift_urn", 300, out).collect()
 
-    assert rift_urn["gain"].sum() == 450
+    assert rift_urn.get_column("gain").sum() == 450
 
     with pytest.raises(ValueError, match="Unknown compare stat"):
         queries.compare_intervals(games, "treasure", 300, out)
@@ -1733,46 +2379,46 @@ def test_cumulative_at_skips_marks_past_match_end(movement_pq):
     games = pl.LazyFrame({"match_id": [100], "account_id": [42]})
     souls = queries.cumulative_at(games, "souls", [900, 7200], movement_pq).collect()
 
-    assert souls["mark_s"].to_list() == [900]
+    assert souls.get_column("mark_s").to_list() == [900]
 
 
 def test_match_intervals_gains_per_interval(interval_pq):
     df = queries.match_intervals(500, 42, parquet_dir=interval_pq)
 
-    assert df["start_s"].to_list() == [0, 300, 600, 900]
-    assert df["souls"].to_list() == [3000, 2000, 0, 3000]
-    assert df["damage"].to_list() == [1000, 500, 0, 2500]
-    assert df["damage_taken"].to_list() == [500, 400, 0, 1100]
-    assert df["creeps"].to_list() == [20, 10, 0, 25]
-    assert df["neutrals"].to_list() == [2, 3, 0, 4]
-    assert df["denies"].to_list() == [4, 0, 0, 2]
-    assert df["assists"].to_list() == [2, 1, 0, 4]
-    assert df["obj_damage"].to_list() == [300, 0, 0, 1200]
-    assert df["healing"].to_list() == [200, 300, 0, 400]
-    assert df["heal_prevented"].to_list() == [0, 150, 0, 250]
+    assert df.get_column("start_s").to_list() == [0, 300, 600, 900]
+    assert df.get_column("souls").to_list() == [3000, 2000, 0, 3000]
+    assert df.get_column("damage").to_list() == [1000, 500, 0, 2500]
+    assert df.get_column("damage_taken").to_list() == [500, 400, 0, 1100]
+    assert df.get_column("creeps").to_list() == [20, 10, 0, 25]
+    assert df.get_column("neutrals").to_list() == [2, 3, 0, 4]
+    assert df.get_column("denies").to_list() == [4, 0, 0, 2]
+    assert df.get_column("assists").to_list() == [2, 1, 0, 4]
+    assert df.get_column("obj_damage").to_list() == [300, 0, 0, 1200]
+    assert df.get_column("healing").to_list() == [200, 300, 0, 400]
+    assert df.get_column("heal_prevented").to_list() == [0, 150, 0, 250]
 
 
 def test_match_intervals_kills_and_deaths_from_death_record(interval_pq):
     df = queries.match_intervals(500, 42, parquet_dir=interval_pq)
 
-    assert df["kills"].to_list() == [1, 0, 0, 2]
-    assert df["deaths"].to_list() == [1, 0, 0, 1]
+    assert df.get_column("kills").to_list() == [1, 0, 0, 2]
+    assert df.get_column("deaths").to_list() == [1, 0, 0, 1]
 
 
 def test_match_intervals_last_interval_ends_at_match_end(interval_pq):
     df = queries.match_intervals(500, 42, parquet_dir=interval_pq)
 
-    assert df["end_s"].to_list() == [300, 600, 900, 1190]
-    assert df["souls_min"][0] == pytest.approx(600.0)
-    assert df["souls_min"][-1] == pytest.approx(3000 * 60 / 290)
+    assert df.get_column("end_s").to_list() == [300, 600, 900, 1190]
+    assert df.get_column("souls_min")[0] == pytest.approx(600.0)
+    assert df.get_column("souls_min")[-1] == pytest.approx(3000 * 60 / 290)
 
 
 def test_match_intervals_interval_size(interval_pq):
     df = queries.match_intervals(500, 42, interval_s=600, parquet_dir=interval_pq)
 
-    assert df["start_s"].to_list() == [0, 600]
-    assert df["end_s"].to_list() == [600, 1190]
-    assert df["souls"].to_list() == [5000, 3000]
+    assert df.get_column("start_s").to_list() == [0, 600]
+    assert df.get_column("end_s").to_list() == [600, 1190]
+    assert df.get_column("souls").to_list() == [5000, 3000]
 
 
 def test_match_intervals_unknown_match(interval_pq):
@@ -1791,26 +2437,26 @@ def test_damage_intervals_gains_ordered_by_total(interval_pq):
     gun = df.slice(0, 2)
     shot = df.slice(2, 2)
 
-    assert gun["damage"].to_list() == [50, 100]
-    assert gun["start_s"].to_list() == [0, 600]
-    assert gun["end_s"].to_list() == [600, 1190]
-    assert gun["total"].to_list() == [150, 150]
-    assert shot["damage"].to_list() == [40, 50]
-    assert shot["total"].to_list() == [90, 90]
+    assert gun.get_column("damage").to_list() == [50, 100]
+    assert gun.get_column("start_s").to_list() == [0, 600]
+    assert gun.get_column("end_s").to_list() == [600, 1190]
+    assert gun.get_column("total").to_list() == [150, 150]
+    assert shot.get_column("damage").to_list() == [40, 50]
+    assert shot.get_column("total").to_list() == [90, 90]
 
 
 def test_damage_intervals_details_on_heroes_only(interval_pq):
     df = queries.damage_intervals(500, 42, interval_s=600, parquet_dir=interval_pq)
 
-    assert df["source_name"].n_unique() == 2
-    assert df["damage"].sum() == 240
-    assert set(df["delivery"]) == {"gun", "gun_proc"}
+    assert df.get_column("source_name").n_unique() == 2
+    assert df.get_column("damage").sum() == 240
+    assert set(df.get_column("delivery")) == {"gun", "gun_proc"}
 
 
 def test_damage_intervals_other_stats(interval_pq):
     df = queries.damage_intervals(500, 42, interval_s=600, parquet_dir=interval_pq, stat="healing")
 
-    assert df["damage"].to_list() == [0, 30]
+    assert df.get_column("damage").to_list() == [0, 30]
 
 
 def test_damage_intervals_no_rows_for_account(interval_pq):
@@ -1821,12 +2467,12 @@ def test_damage_intervals_no_rows_for_account(interval_pq):
 def test_enemy_damage_intervals_taken(interval_pq):
     df = queries.enemy_damage_intervals(500, 43, interval_s=600, parquet_dir=interval_pq)
 
-    assert df["enemy"].to_list() == ["Mirage", "Mirage"]
-    assert df["enemy_account_id"].to_list() == [42, 42]
-    assert df["damage"].to_list() == [90, 150]
-    assert df["start_s"].to_list() == [0, 600]
-    assert df["end_s"].to_list() == [600, 1190]
-    assert df["total"].to_list() == [240, 240]
+    assert df.get_column("enemy").to_list() == ["Mirage", "Mirage"]
+    assert df.get_column("enemy_account_id").to_list() == [42, 42]
+    assert df.get_column("damage").to_list() == [90, 150]
+    assert df.get_column("start_s").to_list() == [0, 600]
+    assert df.get_column("end_s").to_list() == [600, 1190]
+    assert df.get_column("total").to_list() == [240, 240]
 
 
 def test_enemy_damage_intervals_dealt(interval_pq):
@@ -1834,9 +2480,9 @@ def test_enemy_damage_intervals_dealt(interval_pq):
         500, 42, interval_s=600, parquet_dir=interval_pq, dealt=True
     )
 
-    assert df["enemy_account_id"].to_list() == [43, 43]
-    assert df["damage"].to_list() == [90, 150]
-    assert df["total"].to_list() == [240, 240]
+    assert df.get_column("enemy_account_id").to_list() == [43, 43]
+    assert df.get_column("damage").to_list() == [90, 150]
+    assert df.get_column("total").to_list() == [240, 240]
 
 
 def test_enemy_damage_intervals_no_rows(interval_pq):
@@ -2018,7 +2664,7 @@ def test_source_intervals_skips_unknown_players(interval_pq):
     games = pl.DataFrame({"match_id": [500, 500], "account_id": [42, 99]})
     df = queries.source_intervals(games, interval_s=600, parquet_dir=interval_pq).collect()
 
-    assert df["account_id"].unique().to_list() == [42]
+    assert df.get_column("account_id").unique().to_list() == [42]
 
 
 def test_source_intervals_flags_short_tail(interval_pq):
@@ -2035,29 +2681,29 @@ def test_source_intervals_other_stats(interval_pq):
         games, interval_s=600, parquet_dir=interval_pq, stat="healing"
     ).collect()
 
-    assert df["damage"].to_list() == [0, 30]
+    assert df.get_column("damage").to_list() == [0, 30]
 
 
 def test_ability_upgrades_maps_events_to_level_rewards(pq):
     df = queries.ability_upgrades("Mirage", pq, accounts=[42], tz="America/Chicago").collect()
 
-    assert df["ability"].to_list() == ["Dust Devil"]
-    assert df["game_time_s"].to_list() == [60]
-    assert df["ability_upgrade_n"].to_list() == [1]
-    assert df["ability_event_n"].to_list() == [1]
-    assert df["reward"].to_list() == ["ability_unlocks"]
-    assert df["level"].to_list() == [1]
-    assert df["required_souls"].to_list() == [0]
+    assert df.get_column("ability").to_list() == ["Dust Devil"]
+    assert df.get_column("game_time_s").to_list() == [60]
+    assert df.get_column("ability_upgrade_n").to_list() == [1]
+    assert df.get_column("ability_event_n").to_list() == [1]
+    assert df.get_column("reward").to_list() == ["ability_unlocks"]
+    assert df.get_column("level").to_list() == [1]
+    assert df.get_column("required_souls").to_list() == [0]
 
 
 def test_team_intervals_gains_and_lead(pq):
     df = queries.team_intervals(100, 300, pq)
 
-    assert df["start_s"].to_list() == [0, 300]
-    assert df["end_s"].to_list() == [300, 600]
-    assert df["souls_team1"].to_list() == [1800, 4200]
-    assert df["souls_team0"].to_list() == [0, 0]
-    assert df["lead"].to_list() == [-1800, -6000]
+    assert df.get_column("start_s").to_list() == [0, 300]
+    assert df.get_column("end_s").to_list() == [300, 600]
+    assert df.get_column("souls_team1").to_list() == [1800, 4200]
+    assert df.get_column("souls_team0").to_list() == [0, 0]
+    assert df.get_column("lead").to_list() == [-1800, -6000]
 
 
 def test_team_intervals_unknown_match(pq):
@@ -2071,10 +2717,10 @@ def test_skill_rating_labels_badge_columns():
         schema={"average_badge_team0": pl.Int64},
     ).with_columns(queries.skill_rating("average_badge_team0").alias("label"))
 
-    assert df["label"].to_list() == ["Archon 6", "Oracle 3", "Obscurus", None]
+    assert df.get_column("label").to_list() == ["Archon 6", "Oracle 3", "Obscurus", None]
 
 
-def _write_item_history(parquet_dir):
+def _write_upgrade_t_history(parquet_dir):
     rows = [
         {
             "item_id": 7,
@@ -2096,7 +2742,7 @@ def _write_item_history(parquet_dir):
 
 
 def test_scan_routes_asset_tables_into_subfolder(tmp_path):
-    _write_item_history(tmp_path)
+    _write_upgrade_t_history(tmp_path)
 
     assert queries.table_exists("item_history", tmp_path)
     assert not queries.table_exists("matches", tmp_path)
@@ -2104,7 +2750,7 @@ def test_scan_routes_asset_tables_into_subfolder(tmp_path):
 
 
 def test_asset_asof_picks_the_era_in_effect(tmp_path):
-    _write_item_history(tmp_path)
+    _write_upgrade_t_history(tmp_path)
     left = pl.LazyFrame(
         {
             "item_id": [7, 7],
@@ -2118,18 +2764,18 @@ def test_asset_asof_picks_the_era_in_effect(tmp_path):
     out = queries.asset_asof(left, "item_history", by="item_id", parquet_dir=tmp_path)
     out = out.sort("start_time").collect()
 
-    assert out["cost"].to_list() == [500, 800]
-    assert out["client_version"].to_list() == [100, 200]
+    assert out.get_column("cost").to_list() == [500, 800]
+    assert out.get_column("client_version").to_list() == [100, 200]
 
 
 def test_asset_asof_older_than_all_eras_gets_earliest(tmp_path):
-    _write_item_history(tmp_path)
+    _write_upgrade_t_history(tmp_path)
     left = pl.LazyFrame({"item_id": [7], "start_time": [dt.datetime(2025, 1, 1, tzinfo=dt.UTC)]})
 
     out = queries.asset_asof(left, "item_history", by="item_id", parquet_dir=tmp_path).collect()
 
-    assert out["cost"].to_list() == [500]
-    assert out["client_version"].to_list() == [100]
+    assert out.get_column("cost").to_list() == [500]
+    assert out.get_column("client_version").to_list() == [100]
 
 
 @pytest.fixture

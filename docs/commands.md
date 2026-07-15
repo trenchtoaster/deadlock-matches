@@ -35,10 +35,10 @@ deadlock history
 - matches you only viewed in game stay hidden unless you name their players with `--account`
 
 ```
-  Account    Hero           Result  K/D/A        Souls   Damage  Timestamp         Match ID
-  main       Mirage         win     10/5/15     58,210   57,784  2026-07-03 20:28  12345678
-  main       Mirage         loss    9/12/11     43,912   38,102  2026-07-03 21:22  12345731
-  alt1       Vindicta       win     11/2/9      51,004   62,220  2026-07-03 22:37  12345802
+  Day         Time   Account    Hero           Result  K/D/A        Souls   Damage  Match ID
+  2026-07-03  20:28  main       Mirage         win     10/5/15     58,210   57,784  12345678
+              21:22  main       Mirage         loss    9/12/11     43,912   38,102  12345731
+              22:37  alt1       Vindicta       win     11/2/9      51,004   62,220  12345802
 ```
 
 ### One match
@@ -86,7 +86,7 @@ Each flag below swaps the interval table for a different view of the same match.
 
 #### `--souls`: souls by source
 
-- the in-game souls graph as a table, souls by source per interval, then grouped into lane (troopers and denies), roaming (jungle and breakables), combat, objectives (bosses and the Rift & Urn), and catch-up
+- the in-game souls graph as a table, souls by source per interval, then grouped into waves (troopers and denies), roaming (jungle and breakables), combat, objectives (bosses and the Rift & Urn), and catch-up
 
 ```
 Souls by source, 5-minute intervals
@@ -103,7 +103,7 @@ Souls by source, 5-minute intervals
   Denies                    26        0        0        0        0        0        0        0       26     0%
   Total                  1,164    3,747    8,442    3,898    7,307   10,868    9,464    2,162   47,052
 
-  Lane                   1,150    2,831    2,863    2,683    2,500    4,606    3,075      272   19,980    42%
+  Waves                  1,150    2,831    2,863    2,683    2,500    4,606    3,075      272   19,980    42%
   Roaming                    0      427    1,769      479    1,852    1,435    1,518        0    7,480    16%
   Combat                    14      347    2,763      736    1,829    3,146    3,391    1,890   14,116    30%
   Objectives                 0        0      872        0      819    1,500    1,424        0    4,615    10%
@@ -134,9 +134,9 @@ Damage to heroes by source, 5-minute intervals
   Total                       877    2,550    4,482    1,804    6,353    8,674    8,598    6,807   40,145
 
   Abilities                   339    1,242    1,806    1,440    4,251    5,870    5,205    2,872   23,025    57%
-  Items (gun)                 175      523    1,316      106    1,114    1,375    1,106      334    6,049    15%
+  Items (bullet procs)        175      523    1,316      106    1,114    1,375    1,106      334    6,049    15%
   Gun                         363      785    1,360      258      988      769      403      858    5,784    14%
-  Items (spirit)                0        0        0        0        0      660    1,884    2,743    5,287    13%
+  Items (standalone)            0        0        0        0        0      660    1,884    2,743    5,287    13%
 
 Damage dealt to enemy, 5-minute intervals
 
@@ -177,8 +177,8 @@ Healing by source, 5-minute intervals
   Total                 244      969    1,635    1,111    1,701    3,321    2,828    1,323   13,132
 
   Abilities             244      728    1,051      422      895    1,666    1,308      282    6,596    50%
-  Items (spirit)          0        0      329      622      548    1,211    1,228      800    4,738    36%
-  Items (gun)             0      241      255       67      258      444      292      241    1,798    14%
+  Items (standalone)      0        0      329      622      548    1,211    1,228      800    4,738    36%
+  Items (bullet procs)    0      241      255       67      258      444      292      241    1,798    14%
 
 Healing prevented, 5-minute intervals
 
@@ -638,8 +638,11 @@ deadlock damage --hero Mirage
 ```
 
 - every game of a hero rolled into one table: a row per gun, ability, or item source with the games it appeared in, its total, per minute, and share of your hero damage
-- the delivery block on top splits the total into gun, abilities, and item procs (procs that need a landed shot count as gun procs, spirit items with their own damage lines as spirit procs)
-- `/min` for gun and ability rows divides by the combined length of every listed game. Item rows divide by the minutes the item was owned, so a late buy is not diluted by the minutes before it existed
+- the delivery block on top splits the total into gun, abilities, and item procs (bullet procs fire when your shot lands, standalone items bring their own trigger). The grouping follows what carries the damage, not the shop color — Siphon Bullets is a vitality item but procs on hit, so it counts as a bullet proc
+- Mercurial Magnum sits under standalone: its on-cast proc has its own trigger, and while the until-next-reload bonus rides on bullets, the game reports both under one line, so it groups by its primary mechanic
+- `/game` divides a delivery row by every listed game and a source row by the games it appeared in, so an item bought in a handful of games is not averaged over the whole window
+- `/min` divides a delivery row by the combined length of every listed game and a source row by the minutes of its own games. `/min owned` divides item rows by the minutes the item was owned instead, so a late buy is not diluted by the minutes before it existed
+- `/1k souls` divides item rows by every 1,000 souls the item actually cost, using shop prices from the patch the game was on. Building through a component does not count those souls twice
 - a per game table follows with the delivery shares per game, so a build shift shows up as drift. It always prints the last 10 games of the window, `--games N` prints more
 - the archive counterpart of `match --damage`, which shows the same sources for one game in intervals
 - `--days`, `--since`, and `--account` filter like `winrate`
@@ -647,23 +650,25 @@ deadlock damage --hero Mirage
 ```
 Damage to heroes by source, 47 games of Mirage
 
-  Delivery                 Total     /min      %
-  Abilities              840,309    525.2    60%
-  Gun                    350,102    218.8    25%
-  Items (gun)            150,240     93.9    11%
-  Items (spirit)          60,177     37.6     4%
-  Total                1,400,828    875.5
+  Delivery                    Total    /game     /min      %
+  Abilities                 840,309   17,879    525.2    60%
+  Gun                       350,102    7,449    218.8    25%
+  Items (bullet procs)      150,240    3,197     93.9    11%
+  Items (standalone)         60,177    1,280     37.6     4%
+  Total                   1,400,828   29,805    875.5
 
-  Games  Source               Delivery             Total     /min      %
-     47  Fire Scarabs         Abilities          401,220    250.8  28.6%
-     47  Promises Kept        Gun                270,466    169.0  19.3%
-     47  Djinn's Mark         Abilities          260,118    162.6  18.6%
-     46  Dust Devil           Abilities          150,377     94.0  10.7%
-     21  Toxic Bullets        Items (gun)         60,242    148.3   4.3%
-     33  Escalating Exposure  Items (spirit)      55,101    155.6   3.9%
+  Games  Source               Delivery               Total    /game     /min  /min owned  /1k souls      %
+     47  Fire Scarabs         Abilities            401,220    8,537    250.8           -          -  28.6%
+     47  Promises Kept        Gun                  270,466    5,755    169.0           -          -  19.3%
+     47  Djinn's Mark         Abilities            260,118    5,534    162.6           -          -  18.6%
+     46  Dust Devil           Abilities            150,377    3,269     96.0           -          -  10.7%
+     21  Toxic Bullets        Items (bullet procs)  60,242    2,869     84.3       148.3      956.2   4.3%
+     33  Escalating Exposure  Items (standalone)    55,101    1,670     49.0       155.6      269.3   3.9%
 
-  Item rows divide /min by the minutes the item was owned, not the whole game.
-  Gun, ability, and delivery /min divide by the combined length of every game.
+  /game divides a delivery row by every game and a source row by the games it appeared in.
+  /min divides the same way with the minutes of those games.
+  /min owned divides an item row by the minutes the item was owned instead.
+  /1k souls divides an item row by every 1,000 souls it actually cost, so an upgrade does not recount the components you already bought.
 
 Per game, the last 10 of 47 (--games N lists more), newest last
 
@@ -681,35 +686,143 @@ deadlock healing --hero Mirage
 
 - the same shape as `damage` for your healing: a row per ability or item source with the games it appeared in, its total, per minute, and share of your healing
 - the totals match the scoreboard healing number exactly, item lifesteal and regen included
-- the per game table swaps the gun share for `Self %`, the share of your healing that landed on you instead of a teammate, so a support game reads differently from a sustain build
+- a second table lists the healing your anti-heal denied the enemy, source by source, with its own share column; it only prints when at least one game has any
+- the per game table swaps the gun share for `Self %`, the share of your healing that landed on you instead of a teammate, so a support game reads differently from a sustain build, and adds the prevented total per game
 - `--days`, `--since`, `--account`, and `--games` filter like `damage`
 
 ```
 Healing by source, 47 games of Mirage
 
-  Delivery                        Total     /min      %
-  Abilities                     310,376    187.6    55%
-  Items (spirit)                194,458    117.5    34%
-  Items (gun)                    61,068     36.9    11%
-  Total                         565,902    342.0
+  Delivery                    Total    /game     /min      %
+  Abilities                 310,376    6,604    187.6    55%
+  Items (standalone)        194,458    4,137    117.5    34%
+  Items (bullet procs)       61,068    1,299     36.9    11%
+  Total                     565,902   12,040    342.0
 
-  Games  Source                   Delivery               Total     /min      %
-     47  Fire Scarabs             Abilities            308,255    186.3  54.5%
-     43  Healbane                 Items (spirit)        76,078     67.8  13.4%
-     26  Mystic Regeneration      Items (spirit)        52,931     71.0   9.4%
-     29  Dispel Magic             Items (spirit)        37,977     84.6   6.7%
-     17  Headhunter               Items (gun)           27,452     61.8   4.9%
-     14  Siphon Bullets           Items (gun)           20,421    374.4   3.6%
+  Games  Source               Delivery               Total    /game     /min  /min owned  /1k souls      %
+     47  Fire Scarabs         Abilities            308,255    6,559    186.3           -          -  54.5%
+     43  Healbane             Items (standalone)    76,078    1,769     50.3        67.8    1,415.4  13.4%
+     26  Mystic Regeneration  Items (standalone)    52,931    2,036     57.8        71.0    1,628.6   9.4%
+     29  Dispel Magic         Items (standalone)    37,977    1,310     37.2        84.6      436.5   6.7%
+     17  Headhunter           Items (bullet procs)  27,452    1,615     45.9        61.8      504.6   4.9%
+     14  Siphon Bullets       Items (bullet procs)  20,421    1,459     41.4       374.4      235.3   3.6%
 
-  Item rows divide /min by the minutes the item was owned, not the whole game.
-  Ability and delivery /min divide by the combined length of every game.
+Healing prevented:
+
+  Games  Source               Delivery               Total    /game     /min  /min owned  /1k souls      %
+     43  Healbane             Items (standalone)    64,204    1,493     42.4        57.2    1,194.5  91.7%
+     31  Toxic Bullets        Items (bullet procs)   4,761      154      4.4        11.2       62.7   6.8%
+     12  Inhibitor            Items (standalone)     1,033       86      2.4        14.9       16.4   1.5%
+
+  /game divides a delivery row by every game and a source row by the games it appeared in.
+  /min divides the same way with the minutes of those games.
+  /min owned divides an item row by the minutes the item was owned instead.
+  /1k souls divides an item row by every 1,000 souls it actually cost, so an upgrade does not recount the components you already bought.
 
 Per game, the last 10 of 47 (--games N lists more), newest last
 
-  Account    Day        Result  K/D/A       Abil %  Items %  Self %   Healing  Match ID
-  main       2026-07-02 win     10/5/15       40.4     59.6   100.0     8,044  12345678
-  main       2026-07-03 loss    9/12/11       59.7     40.3    91.2    15,206  12345731
-  main       2026-07-03 win     7/3/16        50.0     50.0   100.0    16,558  12345802
+  Account    Day        Result  K/D/A       Abil %  Items %  Self %   Healing  Prevented  Match ID
+  main       2026-07-02 win     10/5/15       40.4     59.6   100.0     8,044      1,317  12345678
+  main       2026-07-03 loss    9/12/11       59.7     40.3    91.2    15,206      3,082  12345731
+  main       2026-07-03 win     7/3/16        50.0     50.0   100.0    16,558      2,074  12345802
+```
+
+### Souls by source across your games
+
+```
+deadlock souls --hero Mirage
+```
+
+- gross souls by income source across every game of a hero, grouped the same way as `match --souls`: waves (troopers and denies), roaming (jungle and breakables), combat, objectives, and catch-up
+- the per game table shows the four group shares plus souls per minute, so a farm-heavy stretch or a fight-heavy stretch reads as drift
+- `--days`, `--since`, `--account`, and `--games` filter like `damage`
+
+```
+Souls by source, 47 games of Mirage
+
+  Group                     Total    /game     /min      %
+  Waves                   902,542   19,203    520.5    46%
+  Combat                  366,689    7,802    212.1    19%
+  Roaming                 352,913    7,509    200.0    18%
+  Objectives              290,655    6,184    163.2    14%
+  Catch-Up                 74,118    1,577     42.8     4%
+  Total                 1,988,075   42,300  1,139.2
+
+  Games  Source             Group              Souls    /game     /min      %
+     47  Troopers           Waves            894,199   19,025    516.2  45.3%
+     47  Enemy Kills        Combat           241,233    5,133    138.1  12.1%
+     47  Neutral Enemies    Roaming          203,151    4,322    118.7  10.4%
+     47  Objectives         Objectives       156,574    3,331     89.9   7.9%
+     47  Breakable Pickups  Roaming          139,762    2,974     81.3   7.1%
+     46  Kill Assists       Combat           125,456    2,727     73.5   6.5%
+     43  Rift & Urn         Objectives       124,081    2,886     77.7   6.4%
+     40  Team Catch-Up      Catch-Up          74,118    1,853     49.9   3.8%
+     44  Denies             Waves              7,343      167      4.5   0.4%
+
+  /game divides a group row by every game and a source row by the games it appeared in.
+  /min divides the same way with the minutes of those games.
+
+Per game, the last 10 of 47 (--games N lists more), newest last
+
+  Account    Day        Result  K/D/A      Waves %  Roam %  Combat %  Obj %     Souls   /min  Match ID
+  main       2026-07-02 win     10/5/15       36.2    23.8      16.1   18.0    27,770    984  12345678
+  main       2026-07-03 loss    9/12/11       50.9    17.2      22.8    8.5    48,375  1,173  12345731
+  main       2026-07-03 win     7/3/16        34.2    30.2      24.4   11.1    55,762  1,226  12345802
+```
+
+### Combat counters across your games
+
+```
+deadlock combat --hero Mirage
+```
+
+- the hidden fight counters summed across every game of a hero, the archive counterpart of `match --combat`
+- aim totals in both directions: your fire at enemy heroes and the whole enemy team's fire at you, with hit and headshot rates. The familiar all-target accuracy prints under the tables so the vs-hero rate never reads as a bug
+- damage by range band with the falloff splits and parries follow as whole-window sums. Comeback souls and unspent balances stay in `match --combat`, where a single game gives them meaning
+- heroes with stack counters get their uptime tables at the end, time summed across every game
+- the per game table shows the vs-hero hit and headshot rates with shot volume and parries, so an aim slump reads as drift
+- `--days`, `--since`, `--account`, and `--games` filter like `damage`
+
+```
+Combat stats, 47 games of Mirage
+
+  Aim vs heroes                    Total    /game    Rate
+  Shots                           35,251    1,006        
+  Hits                            15,266      436   43.3%
+  Headshots                        3,118       89   20.4%
+  Lucky shots                         51        1        
+
+  Enemy fire at you                Total    /game    Rate
+  Shots                          103,869    2,997        
+  Hits                            20,242      585   19.5%
+  Headshots                        2,776       80   13.7%
+
+  Accuracy with troopers and everything else included: 69%
+  Rates count heroes only, troopers and other NPCs left out.
+
+  Damage by range
+                  Gun dealt   Ability dealt       Gun taken   Ability taken
+  0-10m       144,389 (29%)   429,911 (39%)   152,209 (33%)   414,436 (39%)
+  10-20m      186,344 (38%)   283,331 (25%)   163,681 (37%)   314,968 (30%)
+  20-30m      105,837 (21%)   158,581 (14%)    77,137 (17%)   148,121 (14%)
+  30-40m       50,584 (10%)     90,250 (9%)     45,248 (9%)     83,973 (8%)
+  40-50m        10,172 (2%)     53,025 (5%)     12,476 (3%)     49,244 (4%)
+  50-75m         1,805 (0%)     57,622 (5%)      2,885 (1%)     31,083 (3%)
+  75-100m           17 (0%)     15,859 (2%)         38 (0%)      5,426 (1%)
+  100m+              2 (0%)     26,852 (2%)               -     11,472 (1%)
+
+  Falloff on your hits: 8% none, 86% partial, 6% max
+  Falloff on hits taken: 29% none, 61% partial, 10% max
+
+  Parries 98 landed, 117 missed, 2.1 landed per game
+  Counterspell auto-parries count as landed parries.
+
+Per game, the last 10 of 47 (--games N lists more), newest last
+
+  Account    Day        Result  K/D/A       Hit %   HS %    Shots  Parry  Match ID
+  main       2026-07-02 win     10/5/15      36.2   21.9      629      1  12345678
+  main       2026-07-03 loss    9/12/11      48.2   22.0      925      0  12345731
+  main       2026-07-03 win     7/3/16       44.0   23.6    1,009      2  12345802
 ```
 
 ## Heroes, abilities, and items
@@ -1130,6 +1243,7 @@ deadlock sync
 - report commands also do a quiet sync first, so `deadlock history` after a session usually shows the new games without a separate command
 - the row counts it prints are what the new matches added on that run, not table totals
 - `--source api` pulls your match history from deadlock-api.com and downloads any missing matches into the archive without opening them in game
+- after a game update, sync pulls the new item data once and re-exports the matches that came in with the old data. It reads the installed version from steam.inf, so between patches it never calls the assets API, and offline it just skips
 - `--full` rebuilds every table from scratch, needed after a schema change or a backfill
 - `--dry-run` shows what would happen without writing anything
 

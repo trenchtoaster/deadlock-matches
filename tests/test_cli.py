@@ -17,6 +17,7 @@ from deadlock_matches import (
 from deadlock_matches.assets import (
     abilities,
     heroes,
+    history,
     items,
     snapshots,
 )
@@ -273,6 +274,120 @@ def write_cache_entry(
     f.write_bytes(header + bz2.compress(meta.SerializeToString()))
 
     return f
+
+
+@pytest.fixture(autouse=True)
+def no_installed_client(monkeypatch):
+    """Keep the asset gate closed so no test can reach the live assets API."""
+    monkeypatch.setattr(extract, "installed_client_version", lambda cache_dir=None: None)
+
+
+def _heal_args(tmp_path):
+    return argparse.Namespace(
+        parquet=str(tmp_path / "pq"),
+        cache=str(tmp_path / "cache"),
+        archive=str(tmp_path / "arc"),
+    )
+
+
+def test_heal_assets_skips_without_a_newer_build(tmp_path, monkeypatch):
+    calls = []
+    monkeypatch.setattr(data, "_extend_asset_history", lambda: calls.append(1) or True)
+    monkeypatch.setattr(extract, "installed_client_version", lambda cache_dir=None: 6600)
+    monkeypatch.setattr(history, "eras", lambda path: [("2026-06-01T00:00:00", 6600)])
+    (tmp_path / "pq").mkdir()
+
+    data.heal_assets(_heal_args(tmp_path), [42], ())
+
+    assert calls == []
+    assert export.read_stamp(tmp_path / "pq") == {}
+
+
+def test_heal_assets_backfills_once_per_build(tmp_path, monkeypatch):
+    calls = []
+    monkeypatch.setattr(data, "_extend_asset_history", lambda: calls.append(1) or True)
+    monkeypatch.setattr(extract, "installed_client_version", lambda cache_dir=None: 6700)
+    monkeypatch.setattr(history, "eras", lambda path: [("2026-06-01T00:00:00", 6600)])
+    (tmp_path / "pq").mkdir()
+
+    data.heal_assets(_heal_args(tmp_path), [42], ())
+    data.heal_assets(_heal_args(tmp_path), [42], ())
+
+    assert len(calls) == 1
+    assert export.read_stamp(tmp_path / "pq")["checked_build"] == 6700
+
+
+def test_heal_assets_offline_skips_quietly(tmp_path, monkeypatch):
+    def boom():
+        raise OSError("offline")
+
+    monkeypatch.setattr(data, "_extend_asset_history", boom)
+    monkeypatch.setattr(extract, "installed_client_version", lambda cache_dir=None: 6700)
+    monkeypatch.setattr(history, "eras", lambda path: [("2026-06-01T00:00:00", 6600)])
+    (tmp_path / "pq").mkdir()
+
+    data.heal_assets(_heal_args(tmp_path), [42], ())
+
+    assert export.read_stamp(tmp_path / "pq") == {}
+
+
+def test_heal_assets_reexports_past_the_old_horizon(tmp_path, monkeypatch):
+    pq = tmp_path / "pq"
+    pq.mkdir()
+    export.update_stamp(
+        pq,
+        logic_version=export.EXPORT_LOGIC_VERSION,
+        asset_horizon="2026-06-01T00:00:00",
+    )
+    pl.DataFrame(
+        {
+            "match_id": [1, 2],
+            "start_time": [
+                dt.datetime(2026, 5, 15, tzinfo=dt.UTC),
+                dt.datetime(2026, 6, 15, tzinfo=dt.UTC),
+            ],
+        }
+    ).write_parquet(pq / "matches.parquet")
+    monkeypatch.setattr(
+        history,
+        "eras",
+        lambda path: [("2026-06-01T00:00:00", 6600), ("2026-06-10T00:00:00", 6700)],
+    )
+    healed = []
+    monkeypatch.setattr(export, "reexport_matches", lambda ids, *a: healed.extend(ids))
+    refreshed = []
+    monkeypatch.setattr(export, "refresh_asset_tables", lambda out: refreshed.append(out))
+
+    data.heal_assets(_heal_args(tmp_path), [42], ())
+
+    assert healed == [2]
+    assert refreshed
+    assert export.read_stamp(pq)["asset_horizon"] == "2026-06-10T00:00:00"
+
+
+def test_heal_assets_no_reexport_when_horizon_is_current(tmp_path, monkeypatch):
+    pq = tmp_path / "pq"
+    pq.mkdir()
+    export.update_stamp(
+        pq,
+        logic_version=export.EXPORT_LOGIC_VERSION,
+        asset_horizon="2026-06-10T00:00:00",
+    )
+    monkeypatch.setattr(
+        history,
+        "eras",
+        lambda path: [("2026-06-10T00:00:00", 6700)],
+    )
+
+    def boom(*a):
+        raise AssertionError("reexport should not run")
+
+    monkeypatch.setattr(export, "reexport_matches", boom)
+    monkeypatch.setattr(export, "refresh_asset_tables", boom)
+
+    data.heal_assets(_heal_args(tmp_path), [42], ())
+
+    assert export.read_stamp(pq)["asset_horizon"] == "2026-06-10T00:00:00"
 
 
 def run_main(tmp_path, *args, accounts="you = 42", extra=""):
@@ -1056,11 +1171,35 @@ def test_history_lists_one_line_per_game(capsys, tmp_path):
     out = capsys.readouterr().out
 
     assert re.search(
-        r"Account\s+Hero\s+Result\s+K/D/A\s+Souls\s+Damage\s+Timestamp\s+Match ID", out
+        r"Day\s+Time\s+Account\s+Hero\s+Result\s+K/D/A\s+Souls\s+Damage\s+Match ID", out
     )
-    assert re.search(r"main\s+Mirage\s+win\s+5/2/8\s+5,000\s+\S+\s+\S+ \S+\s+100", out)
+    assert re.search(
+        r"\d{4}-\d\d-\d\d\s+\d\d:\d\d\s+main\s+Mirage\s+win\s+5/2/8\s+5,000\s+\S+\s+100", out
+    )
     assert "42" not in out
     assert "77" not in out
+
+
+def test_history_prints_day_once_per_local_day(capsys, tmp_path):
+    cache = tmp_path / "cache"
+    cache.mkdir()
+    write_cache_entry(cache, match_id=100, start_time=1783000000)
+    write_cache_entry(cache, match_id=101, start_time=1783000000 + 3600)
+    write_cache_entry(cache, match_id=102, start_time=1783000000 + 2 * 86400)
+
+    run_main(tmp_path, "history")
+
+    out = capsys.readouterr().out
+    tz = zoneinfo.ZoneInfo("America/Chicago")
+    first_day = dt.datetime.fromtimestamp(1783000000, dt.UTC).astimezone(tz).date()
+    later_day = dt.datetime.fromtimestamp(1783000000 + 2 * 86400, dt.UTC).astimezone(tz).date()
+
+    assert out.count(first_day.isoformat()) == 1
+    assert out.count(later_day.isoformat()) == 1
+
+    line_101 = next(line for line in out.splitlines() if line.rstrip().endswith("101"))
+
+    assert first_day.isoformat() not in line_101
 
 
 def test_history_without_account_prints_hint(capsys, tmp_path):
@@ -1451,6 +1590,32 @@ def test_match_items_upgrade_note_without_a_matching_buy(capsys, tmp_path):
     )
 
 
+def test_match_items_upgrade_note_follows_a_tier_skip(capsys, tmp_path):
+    cache = tmp_path / "cache"
+    cache.mkdir()
+    compress_cooldown = 380806748
+    transcendent_cooldown = 915014646
+    write_cache_entry(
+        cache,
+        match_id=100,
+        stats=[(300, 3000)],
+        item_events=[
+            (compress_cooldown, 60, 300, 1),
+            (transcendent_cooldown, 300, 0, 0),
+        ],
+    )
+
+    run_main(tmp_path, "match", "--account", "42", "--items")
+
+    out = capsys.readouterr().out
+
+    assert re.search(
+        r"1:00\s+1\s+Compress Cooldown\s+spirit\s+2\s+[\d,]+\s+"
+        r"into Transcendent Cooldown at 5:00",
+        out,
+    )
+
+
 def test_match_accolades_flag_prints_stat_awards(capsys, tmp_path):
     cache = tmp_path / "cache"
     cache.mkdir()
@@ -1779,7 +1944,7 @@ def test_match_combat_flag_souls_lines_and_exclusions(capsys, tmp_path):
     out = capsys.readouterr().out
 
     assert "Comeback souls: 1,200" in out
-    assert "Unstable Rift comeback: 267" in out
+    assert "Unstable Rift comeback souls: 267" in out
     assert "Souls held unspent on average: 2,000" in out
     assert "Ability points held unspent on average: 1.5" in out
     assert "PowerUp" not in out
@@ -1878,7 +2043,7 @@ def test_match_souls_flag_prints_source_and_group_table(capsys, tmp_path):
     assert re.search(r"Bounty\s+0\s+400\s+400\s+10%", out)
     assert re.search(r"Cultist Sacrifice\s+0\s+600\s+600\s+15%", out)
     assert re.search(r"Total\s+1,000\s+3,000\s+4,000", out)
-    assert re.search(r"Lane\s+1,000\s+1,000\s+2,000\s+50%", out)
+    assert re.search(r"Waves\s+1,000\s+1,000\s+2,000\s+50%", out)
     assert re.search(r"Objectives\s+0\s+1,000\s+1,000\s+25%", out)
     assert re.search(r"Other\s+0\s+1,000\s+1,000\s+25%", out)
     assert "gross souls earned by source" in out
@@ -2542,7 +2707,10 @@ def test_damage_command_prints_delivery_source_and_game_tables(capsys, tmp_path)
     assert "Delivery" in out
     assert "Gun" in out
     assert "Abilities" in out
-    assert "Items (gun)" in out
+    assert "Items (bullet procs)" in out
+    assert "/min owned" in out
+    assert "/1k souls" in out
+    assert "/game" in out
     assert "Per game, newest last" in out
     assert "win" in out
     assert "5/2/8" in out
@@ -2634,6 +2802,7 @@ def test_healing_command_prints_delivery_source_and_game_tables(capsys, tmp_path
         damage=(
             ("mirage_tornado", [50, 100], 1),
             ("upgrade_toxic_bullets", [40, 60], 1, 1, 1),
+            ("upgrade_toxic_bullets", [15, 45], 2, 1, 2),
         ),
     )
 
@@ -2643,14 +2812,38 @@ def test_healing_command_prints_delivery_source_and_game_tables(capsys, tmp_path
 
     assert "Healing by source, 1 games of Mirage" in out
     assert "Abilities" in out
-    assert "Items (gun)" in out
-    assert "Ability and delivery /min" in out
+    assert "Items (bullet procs)" in out
+    assert "/min owned" in out
+    assert "/1k souls" in out
+    assert "/game" in out
+    assert "/min divides the same way with the minutes of those games" in out
     assert "Self %" in out
+    assert "Healing prevented:" in out
+    assert "Prevented" in out
+    assert "45" in out
     assert "Per game, newest last" in out
     assert "win" in out
     assert "5/2/8" in out
     assert "62.5" in out
     assert "37.5" in out
+
+
+def test_healing_command_without_prevented_rows_skips_the_table(capsys, tmp_path):
+    cache = tmp_path / "cache"
+    cache.mkdir()
+    write_cache_entry(
+        cache,
+        match_id=100,
+        stats=((300, 3000),),
+        damage=(("mirage_tornado", [50, 100], 1),),
+    )
+
+    run_main(tmp_path, "healing", "--hero", "Mirage", "--account", "42")
+
+    out = capsys.readouterr().out
+
+    assert "Healing by source, 1 games of Mirage" in out
+    assert "Healing prevented" not in out
 
 
 def test_healing_command_caps_the_per_game_table(capsys, tmp_path):
@@ -2696,6 +2889,162 @@ def test_healing_command_unknown_hero_prints_error(capsys, tmp_path):
 
 def test_healing_command_without_account_prints_hint(capsys, tmp_path):
     run_main(tmp_path, "healing", "--hero", "Mirage", accounts=None)
+
+    out = capsys.readouterr().out
+
+    assert "No account set" in out
+
+
+def test_souls_command_prints_group_source_and_game_tables(capsys, tmp_path):
+    g = export.GoldSource
+    cache = tmp_path / "cache"
+    cache.mkdir()
+    write_cache_entry(
+        cache,
+        match_id=100,
+        stats=((300, 3000), (600, 6000)),
+        gold_sources=(
+            (300, g.LANE_CREEPS, 800, 200),
+            (600, g.LANE_CREEPS, 2000, 500),
+            (600, g.PLAYERS, 600, 0),
+            (600, g.BOSSES, 800, 0),
+            (600, g.TEAM_BONUS, 100, 0),
+        ),
+    )
+
+    run_main(tmp_path, "souls", "--hero", "Mirage", "--account", "42")
+
+    out = capsys.readouterr().out
+
+    assert "Souls by source, 1 games of Mirage" in out
+    assert "Group" in out
+    assert "Waves" in out
+    assert "Objectives" in out
+    assert "Catch-Up" in out
+    assert "Troopers" in out
+    assert "Enemy Kills" in out
+    assert "Team Catch-Up" in out
+    assert "Per game, newest last" in out
+    assert "win" in out
+    assert "5/2/8" in out
+    assert "62.5" in out
+    assert "15.0" in out
+    assert "20.0" in out
+    assert "4,000" in out
+
+
+def test_souls_command_unknown_hero_prints_error(capsys, tmp_path):
+    cache = tmp_path / "cache"
+    cache.mkdir()
+    write_cache_entry(cache, match_id=100, stats=((300, 3000),))
+
+    run_main(tmp_path, "souls", "--hero", "Nobody", "--account", "42")
+
+    out = capsys.readouterr().out
+
+    assert "Unknown hero 'Nobody'" in out
+
+
+def test_souls_command_without_account_prints_hint(capsys, tmp_path):
+    run_main(tmp_path, "souls", "--hero", "Mirage", accounts=None)
+
+    out = capsys.readouterr().out
+
+    assert "No account set" in out
+
+
+def test_combat_command_prints_aim_and_game_tables(capsys, tmp_path):
+    cache = tmp_path / "cache"
+    cache.mkdir()
+    write_cache_entry(
+        cache,
+        match_id=100,
+        stats=[(300, 3000)],
+        custom_stats=[
+            ("Enemy Hero Accuracy##Shots", 1000),
+            ("Enemy Hero Accuracy##Hits", 250),
+            ("Enemy Hero Accuracy##Headshots", 50),
+            ("Enemy Hero Accuracy - Incoming##Shots", 800),
+            ("Enemy Hero Accuracy - Incoming##Hits", 200),
+            ("Outgoing Bullet Dist##10", 3000),
+            ("Outgoing Bullet Dist##20", 1000),
+            ("Enemy Hero Falloff##No Falloff", 75),
+            ("Enemy Hero Falloff##Partial Falloff", 25),
+            ("Parry Success", 3),
+            ("Parry Miss", 2),
+        ],
+        shots=(1400, 600),
+    )
+
+    run_main(tmp_path, "combat", "--hero", "Mirage", "--account", "42")
+
+    out = capsys.readouterr().out
+
+    assert "Combat stats, 1 games of Mirage" in out
+    assert "Aim vs heroes" in out
+    assert "1,000" in out
+    assert "25.0%" in out
+    assert "20.0%" in out
+    assert "Enemy fire at you" in out
+    assert "Accuracy with troopers and everything else included: 70%" in out
+    assert "Damage by range" in out
+    assert "Falloff on your hits: 75% none, 25% partial, 0% max" in out
+    assert "Parries 3 landed, 2 missed, 3.0 landed per game" in out
+    assert "Per game, newest last" in out
+    assert "Hit %" in out
+    assert "HS %" in out
+    assert "5/2/8" in out
+
+
+def test_leftover_sections_drops_strays_without_bare(capsys):
+    stats: dict[tuple[str | None, str], int] = {
+        ("Wraith", "FullAutoTimeAt_1_stacks"): 30,
+        (None, "Some Engine Counter"): 24,
+    }
+
+    performance._leftover_sections(stats, bare=False)
+
+    out = capsys.readouterr().out
+
+    assert out == (
+        "\n  Wraith\n  Full Auto uptime\n  Stacks      Time  Share\n  1           0:30   100%\n"
+    )
+
+
+def test_leftover_sections_prints_strays_by_default(capsys):
+    performance._leftover_sections({(None, "Some Engine Counter"): 24})
+
+    out = capsys.readouterr().out
+
+    assert out == "\n  Other\n  Some Engine Counter: 24\n"
+
+
+def test_combat_command_without_any_counters(capsys, tmp_path):
+    cache = tmp_path / "cache"
+    cache.mkdir()
+    write_cache_entry(cache, match_id=100, stats=[(300, 3000)])
+
+    run_main(tmp_path, "combat", "--hero", "Mirage", "--account", "42")
+
+    out = capsys.readouterr().out
+
+    assert "No combat stats in 1 games of Mirage" in out
+
+
+def test_combat_command_unknown_hero_prints_error(capsys, tmp_path):
+    cache = tmp_path / "cache"
+    cache.mkdir()
+    write_cache_entry(cache, match_id=100, stats=((300, 3000),))
+
+    run_main(tmp_path, "combat", "--hero", "Nobody", "--account", "42")
+
+    out = capsys.readouterr().out
+
+    assert "Unknown hero 'Nobody'" in out
+
+
+def test_combat_command_without_account_prints_hint(capsys, tmp_path):
+    run_main(tmp_path, "combat", "--hero", "Mirage", accounts=None)
 
     out = capsys.readouterr().out
 
@@ -3412,6 +3761,7 @@ def test_item_command_games_table_collapses_not_built(monkeypatch, capsys, tmp_p
             "owned_s": [900, None, None],
             "damage": [1200, None, None],
             "dealt_after_buy": [12000, None, None],
+            "effective_cost": [1600, None, None],
         }
     )
     monkeypatch.setattr(cli_items.queries, "item_games", lambda *a, **kw: rows)
@@ -3457,6 +3807,7 @@ def test_item_command_notes_when_tracked_players_never_bought_it(monkeypatch, ca
             "owned_s": [900],
             "damage": [1200],
             "dealt_after_buy": [12000],
+            "effective_cost": [1600],
         }
     )
     monkeypatch.setattr(cli_items.queries, "item_games", lambda *a, **kw: rows)
@@ -3502,6 +3853,7 @@ def test_item_command_header_uses_account_names(monkeypatch, capsys, tmp_path):
             "owned_s": [900],
             "damage": [1200],
             "dealt_after_buy": [12000],
+            "effective_cost": [1600],
         }
     )
     monkeypatch.setattr(cli_items.queries, "item_games", lambda *a, **kw: rows)
@@ -3541,6 +3893,7 @@ def test_item_command_quotes_hero_in_download_hint(monkeypatch, capsys, tmp_path
             "owned_s": [900],
             "damage": [1200],
             "dealt_after_buy": [12000],
+            "effective_cost": [1600],
         }
     )
     monkeypatch.setattr(cli_items.queries, "item_games", lambda *a, **kw: rows)

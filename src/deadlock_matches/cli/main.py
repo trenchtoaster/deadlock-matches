@@ -36,7 +36,9 @@ COMMAND_HELP = {
     "laning": "whether winning your lane or a feeding teammate decides your games",
     "deaths": "how you die: when, to whom, alone or ganked",
     "damage": "where your damage to heroes comes from: gun, abilities, item procs",
-    "healing": "where your healing comes from: abilities, item procs, self or teammates",
+    "healing": "where your healing comes from and what your anti-heal denied the enemy",
+    "souls": "where your souls come from: waves, roaming, combat, objectives",
+    "combat": "the fight counters the game never shows: aim, range, parries",
     "leaderboard": "the current top players of a hero, with paste-ready lines for config.toml",
     "download": "fetch recent games from your tracked players into their own tables",
     "compare": "your stats vs your tracked players, minute by minute",
@@ -56,7 +58,18 @@ COMMAND_HELP = {
 SECTIONS = (
     (
         "your matches",
-        ("sync", "history", "match", "winrate", "laning", "deaths", "damage", "healing"),
+        (
+            "sync",
+            "history",
+            "match",
+            "winrate",
+            "laning",
+            "deaths",
+            "damage",
+            "healing",
+            "souls",
+            "combat",
+        ),
     ),
     (
         "the players you track (config.toml [players], data via download)",
@@ -500,7 +513,7 @@ def build_parser(config: str | Path | None = None) -> argparse.ArgumentParser:
         help="laning window in minutes, default 9 like match --laning",
     )
 
-    for name in ("damage", "healing"):
+    for name in ("damage", "healing", "souls", "combat"):
         dg = command(name)
         dg.add_argument("--hero", required=True, help="hero display name, like Mirage")
         dg.add_argument(
@@ -708,6 +721,8 @@ def main(argv: Sequence[str] | None = None, config: str | Path | None = None) ->
             "deaths",
             "damage",
             "healing",
+            "souls",
+            "combat",
             "movement",
             "match",
         )
@@ -732,6 +747,8 @@ def main(argv: Sequence[str] | None = None, config: str | Path | None = None) ->
         "deaths",
         "damage",
         "healing",
+        "souls",
+        "combat",
         "movement",
     ) or (args.cmd == "match" and (args.match_id is None or args.hero is None))
 
@@ -769,6 +786,10 @@ def main(argv: Sequence[str] | None = None, config: str | Path | None = None) ->
         performance.damage_games_report(args, config)
     elif args.cmd == "healing":
         performance.healing_games_report(args, config)
+    elif args.cmd == "souls":
+        performance.souls_games_report(args, config)
+    elif args.cmd == "combat":
+        performance.combat_games_report(args, config)
     elif args.cmd == "movement":
         performance.movement_report(args, config)
     elif args.cmd == "hero":
