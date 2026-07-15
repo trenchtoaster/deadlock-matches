@@ -23,7 +23,9 @@ def scan(table: str, parquet_dir: str | Path | None = None) -> pl.LazyFrame:
     """Lazily scan one exported table by name (one of schemas.TABLES).
 
     parquet_dir defaults to the standard export directory, here and in every
-    query below.
+    query below. An asset table missing from parquet_dir is read from the
+    standard export directory instead, so secondary stores like
+    parquet-players share one copy.
     """
     if table not in schemas.TABLES:
         known = ", ".join(schemas.TABLES)
@@ -38,11 +40,19 @@ def scan(table: str, parquet_dir: str | Path | None = None) -> pl.LazyFrame:
         if directory.is_dir():
             return pl.scan_parquet(str(directory / "*.parquet"))
 
-    return pl.scan_parquet(schemas.table_path(table, parquet_dir))
+    path = schemas.table_path(table, parquet_dir)
+
+    if table in schemas.ASSET_TABLES and not path.exists():
+        path = schemas.table_path(table, export.PARQUET_DIR)
+
+    return pl.scan_parquet(path)
 
 
 def table_exists(table: str, parquet_dir: str | Path | None = None) -> bool:
-    """Whether a table is on disk, as a month-partitioned directory or a single parquet file."""
+    """Whether a table is on disk, as a month-partitioned directory or a single parquet file.
+
+    Asset tables fall back to the standard export directory like scan.
+    """
     if table not in schemas.TABLES:
         known = ", ".join(schemas.TABLES)
         msg = f"Unknown table {table!r}, tables: {known}"
@@ -56,7 +66,10 @@ def table_exists(table: str, parquet_dir: str | Path | None = None) -> bool:
         if directory.is_dir() and next(directory.glob("*.parquet"), None) is not None:
             return True
 
-    return schemas.table_path(table, parquet_dir).exists()
+    if schemas.table_path(table, parquet_dir).exists():
+        return True
+
+    return table in schemas.ASSET_TABLES and schemas.table_path(table, export.PARQUET_DIR).exists()
 
 
 def _asof_era_join(

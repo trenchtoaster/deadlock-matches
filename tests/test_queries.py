@@ -1181,6 +1181,23 @@ def test_delivery_follows_item_era(tmp_path):
     assert out.get_column("delivery").to_list() == ["gun_proc", "spirit_proc"]
 
 
+def test_asset_tables_fall_back_to_the_main_store(tmp_path, monkeypatch):
+    main = tmp_path / "main"
+    other = tmp_path / "players"
+    other.mkdir()
+    _write_item_history(main)
+    monkeypatch.setattr(export, "PARQUET_DIR", main)
+
+    assert queries.table_exists("item_history", other)
+
+    slots = queries.scan("item_history", other).collect()
+
+    assert slots.get_column("class_name").to_list() == [
+        "upgrade_crackshot",
+        "upgrade_toxic_bullets",
+    ]
+
+
 def test_hero_damage_delivery_column(pq):
     df = queries.hero_damage(parquet_dir=pq, tz="America/Chicago").collect()
     got = dict(df.select("source_class", "delivery").iter_rows())
@@ -1454,7 +1471,9 @@ def test_item_games_effective_cost(effective_pq):
     assert df.get_column("effective_cost").to_list() == [1750]
 
 
-def test_item_games_effective_cost_null_without_history(pq):
+def test_item_games_effective_cost_null_without_history(pq, monkeypatch):
+    monkeypatch.setattr(export, "PARQUET_DIR", pq)
+
     df = queries.item_games("Echo Shard", parquet_dir=pq, accounts=[42]).collect()
 
     assert df.get_column("effective_cost").to_list() == [None]
