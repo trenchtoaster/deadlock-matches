@@ -1,11 +1,23 @@
 # Changelog
 
 All notable changes to this project are documented here.
-## [Unreleased]
+## [0.7.0] - 2026-07-16
+
+### Added
+
+- Rework compare into source and timeline reports ([d2b6c2c](https://github.com/trenchtoaster/deadlock-matches/commit/d2b6c2c90ed5895e144f0cf71156dc812e97f6a7))
+
+
+### Documentation
+
+- Update compare source totals ([19418df](https://github.com/trenchtoaster/deadlock-matches/commit/19418df867e8c4aea7a53c3b68e41456dab37251))
+
 
 ### Fixed
 
 - Asset tables missing from a store fall back to the main export copy so the players tables share them ([af33e7e](https://github.com/trenchtoaster/deadlock-matches/commit/af33e7e346d465549a44e4a7696f25367a2b6140))
+
+- Organize command docs and leaderboard output ([543aece](https://github.com/trenchtoaster/deadlock-matches/commit/543aece44aa82d03efcc491173c550867fb8d788))
 
 
 ## [0.6.0] - 2026-07-15

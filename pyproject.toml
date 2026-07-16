@@ -1,6 +1,6 @@
 [project]
 name = "deadlock-matches"
-version = "0.6.0"
+version = "0.7.0"
 description = "Analyze your Deadlock match data locally"
 readme = "README.md"
 license = "MIT"
