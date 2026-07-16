@@ -1,0 +1,48 @@
+[changelog]
+header = """
+# Changelog
+
+All notable changes to this project are documented here.
+"""
+body = """
+{% if version -%}
+## [{{ version | trim_start_matches(pat="v") }}] - {{ timestamp | date(format="%Y-%m-%d") }}
+{% else -%}
+## [Unreleased]
+{% endif -%}
+{% if version == "v0.1.0" %}
+### Added
+
+- Initial release with local match archive reading, protobuf decoding, parquet export, CLI reports, reusable Polars queries, Deadlock assets, and tracked-player downloads.
+{% else -%}
+{% for group, commits in commits | group_by(attribute="group") %}
+### {{ group | striptags | trim | upper_first }}
+{% for commit in commits %}
+- {{ commit.message | upper_first }} ([{{ commit.id | truncate(length=7, end="") }}](https://github.com/trenchtoaster/deadlock-matches/commit/{{ commit.id }}))
+{% endfor %}
+{% endfor %}
+{% endif %}
+"""
+trim = true
+footer = ""
+
+[git]
+conventional_commits = true
+filter_unconventional = true
+split_commits = false
+tag_pattern = "v[0-9].*"
+sort_commits = "oldest"
+
+commit_preprocessors = [
+  { pattern = " \\(#([0-9]+)\\)", replace = " ([#${1}](https://github.com/trenchtoaster/deadlock-matches/issues/${1}))" },
+]
+
+commit_parsers = [
+  { message = "^feat", group = "Added" },
+  { message = "^fix", group = "Fixed" },
+  { message = "^perf", group = "Performance" },
+  { message = "^docs", group = "Documentation" },
+  { message = "^refactor", group = "Internal" },
+  { message = "^ci", group = "Internal" },
+  { message = "^chore", group = "Internal", skip = true },
+]

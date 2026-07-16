@@ -27,13 +27,21 @@ lint: install-uv
     @echo "-----------------------------------"
     @echo "- Linting code -"
     @echo "-----------------------------------"
-    uv run --group lint ruff check --fix
+    uv run --group lint ruff check .
+    uv run --group lint ruff format --check .
+    uv run --group lint ty check
 
 typecheck: install-uv
     @echo "-----------------------------------"
     @echo "- Running type checker -"
     @echo "-----------------------------------"
     uv run --group lint ty check
+
+changelog:
+    @echo "-----------------------------------"
+    @echo "- Updating changelog -"
+    @echo "-----------------------------------"
+    git-cliff --output CHANGELOG.md
 
 test: install-uv
     @echo "-----------------------------------"
@@ -48,7 +56,7 @@ sweep *args: install-uv
     @test -f tests/cli_sweep.sh || (echo "tests/cli_sweep.sh is a local maintainer script, skip this recipe" && exit 1)
     bash tests/cli_sweep.sh {{args}}
 
-check: lint typecheck test
+check: lint test
 
 clean:
     @echo "-----------------------------------"
