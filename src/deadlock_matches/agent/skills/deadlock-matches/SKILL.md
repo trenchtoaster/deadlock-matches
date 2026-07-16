@@ -277,7 +277,7 @@ Prefer `deadlock sync` + polars over looping protobufs for win rates, damage tot
 
 Importing the package pins the polars engine affinity to streaming (`engine.py`), so every collect stays memory-bounded on the big tables. Do not rely on output row order after joins or group_by — sort explicitly before printing or asserting on order, and use `maintain_order=True` only when the query really needs original group order. Within an aggregation, make order-dependent intent explicit too: if `first()` means "earliest", sort after any joins that could disturb order or use a `sort_by(...)`/min-key expression inside the group. Float sums can also differ in the last bits between runs.
 
-### queries.py helper catalog
+### queries helper catalog
 
 Start ad-hoc polars from these instead of rewriting boilerplate. This is the canonical list — the module map points here.
 
@@ -337,7 +337,7 @@ queries.my_games().group_by("hero").agg(pl.len().alias("games"), pl.col("won").m
 
 Tables: `matches`, `players`, `stats`, `soul_sources`, `item_events`, `accolades`, `buffs`, `stacks`, `custom_stats`, `damage`, `damage_sources`, `damage_targets`, `objectives`, `mid_boss`, `movement`, `movement_intervals`, `deaths` (`deadlock schema <table>` prints columns). Other players' games are the SAME tables under the sibling `parquet-players/` dir via `deadlock download` — read `queries.scan(table, players.PARQUET_DIR)` and `players.tracked_player_games(...)`.
 
-The CLI commands and the `queries.py` helpers above already apply every per-table caveat — relaying their output or reusing a helper needs nothing more. **Read `references/schema-caveats.md` BEFORE hand-writing raw polars against a table no helper covers** — it has each table's columns and verified traps. The four that bite most, always in force:
+The CLI commands and the `queries` helpers above already apply every per-table caveat — relaying their output or reusing a helper needs nothing more. **Read `references/schema-caveats.md` BEFORE hand-writing raw polars against a table no helper covers** — it has each table's columns and verified traps. The four that bite most, always in force:
 
 - `soul_sources`: the in-game number is `souls + souls_orbs` — ALWAYS sum both (`souls` alone drops the orb-confirm share, a big chunk of trooper income that drifts by patch)
 - `damage`/`damage_sources`: filter `target_account_id.is_not_null()` for hero damage (null = creeps/objectives; skipping it inflated gun-crit 9×), and never sum `category == "total"` rows together with detail rows (double-counts)
@@ -411,16 +411,16 @@ Notes:
 
 ## Module map
 
-Modules are organized by data source, not by layer: `queries.py` answers questions about YOUR games from the local parquet (works offline); `players.py`/`meta.py` answer questions about other players / the global item meta from the deadlock-api (network via `api.py`, or its warm cache). New analysis helpers go where their data comes from; code mixing both worlds (like `compare`) belongs in the `cli/` package.
+Modules are organized by data source, not by layer: the `queries/` package answers questions about YOUR games from the local parquet (works offline); `players.py`/`meta.py` answer questions about other players / the global item meta from the deadlock-api (network via `api.py`, or its warm cache). New analysis helpers go where their data comes from; code mixing both worlds (like `compare`) belongs in the `cli/` package.
 
 Everything in `src/deadlock_matches/`:
 
 - `extract.py` — cache walking, archive sync, protobuf decode (`iter_matches`, `archive`, `load`), local Steam accounts (`steam_accounts`), and `player_party` (recovers the removed party wire field from old matches, see the players caveats)
 - `cli/` — the `deadlock` entry point, one module per command group: `main.py` (parser, dispatch, `schema`), `data.py` (`history`, `download`, `sync`, `assets` plus the archive snapshot), `performance.py` (`compare`, `winrate`, `laning`, `deaths`, `damage`, `movement`), `items.py` (`item`, `builds`), `cards.py` (`hero`, `ability`)
 - `config.py` — config.toml reading and the starter file (`config_accounts`, `config_account_names`, `format_accounts`, `config_players`, `config_exclude`, `config_timezone`, `ensure_config`)
-- `export.py` — parquet tables (`build_tables`), faithful decode only, judgment lives in queries.py
+- `export.py` — parquet tables (`build_tables`), faithful decode only, judgment lives in the queries package
 - `schemas.py` — the table models: one class per parquet table, dtype + description per column
-- `queries.py` — polars helpers over the local parquet, works offline. Full catalog under "Aggregate questions → queries.py helper catalog"; that is the one place to keep current when adding a helper
+- `queries/` — polars helpers over the local parquet, works offline. One module per report area (`core`, `delivery`, `items`, `records`, `stats`, `games`, `intervals`, `laning`, `movement`, `scaling`), all public names re-exported through `__init__.py` so callers keep writing `queries.foo`. Full catalog under "Aggregate questions → queries helper catalog"; that is the one place to keep current when adding a helper
 - `assets.py` — downloads heroes/items/abilities json from the assets API
 - `damage.py` — per-source damage from the damage matrix
 - `api.py` — deadlock-api HTTP client with disk cache (`get_json`), the only network code; its docstring lists every endpoint in use and which function wraps it — keep that list current when adding endpoints

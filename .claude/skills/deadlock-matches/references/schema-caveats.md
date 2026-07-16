@@ -1,6 +1,6 @@
 # Parquet table schema caveats
 
-Per-table columns and verified traps for **hand-writing raw polars**. Read this before querying a table directly when no `queries.py` helper covers what you need. If you are relaying CLI output or reusing a helper, you do not need this file — the command and the helper already apply every caveat below.
+Per-table columns and verified traps for **hand-writing raw polars**. Read this before querying a table directly when no `queries` helper covers what you need. If you are relaying CLI output or reusing a helper, you do not need this file — the command and the helper already apply every caveat below.
 
 Tables live in `~/.local/share/deadlock-matches/parquet/`; `deadlock schema <table>` prints the columns for any of them.
 
@@ -24,7 +24,7 @@ Tables live in `~/.local/share/deadlock-matches/parquet/`; `deadlock schema <tab
 - `soul_sources` — per income source per snapshot (`source_name` = troopers/jungle/breakables/...). The in-game number is `souls + souls_orbs`, ALWAYS sum both. `souls` is the guaranteed portion; `souls_orbs` is the deniable flying-orb portion you SECURED. Two different quantities, don't conflate them:
   - design ratio (share of trooper bounty placed in the orb): 40% before the 2026-06-30 patch, 50% after (from the patch notes)
   - secured share (`souls_orbs / (souls + souls_orbs)`, what you actually kept): lower, because orbs get denied/missed — measured medians run ~27% before, ~30% after, with individual matches swinging past 40%
-  - never pin a fixed figure — the sum-both rule is invariant, the magnitude drifts by patch and by how well the player confirms orbs. The `queries.py` soul helpers already sum both, this applies to ad-hoc polars
+  - never pin a fixed figure — the sum-both rule is invariant, the magnitude drifts by patch and by how well the player confirms orbs. The `queries` soul helpers already sum both, this applies to ad-hoc polars
   - source 7 (denies, screen label "Denies") is TEAM-shared income: every teammate gets ~9-10 souls per denied orb, and it hits zero only when the whole team never denies (verified across the archive, flat `souls_denied` equals it exactly and its `souls_orbs` is always 0). A player with 0 scoreboard denies still earns these, so never read it as personal denying — the scoreboard `denies` column is the personal count
 
 - `item_events` — buys with names/cost/tier. `attribution` marks how an item's value shows up: `proc` = has its own damage rows (Scourge, Escalating Exposure), `stat` = never appears as a source, value hides inside other rows (Boundless Spirit, Echo Shard). `cost`/`tier`/`slot` resolve as-of match time from dated asset snapshots (`assets_date` says which; null = no history covered that match yet), so a balance patch doesn't reprice history

@@ -1401,6 +1401,7 @@ def test_compare_command_milestones(tmp_path, monkeypatch, capsys):
 
 
 def test_compare_command_damage_stat_prints_sources_first(tmp_path, monkeypatch, capsys):
+    monkeypatch.setattr(export, "PARQUET_DIR", tmp_path / "pq")
     cache = tmp_path / "cache"
     cache.mkdir()
 
@@ -1469,6 +1470,7 @@ def test_compare_command_damage_stat_prints_sources_first(tmp_path, monkeypatch,
 
 
 def test_compare_command_healing_stat_prints_sources_first(tmp_path, monkeypatch, capsys):
+    monkeypatch.setattr(export, "PARQUET_DIR", tmp_path / "pq")
     cache = tmp_path / "cache"
     cache.mkdir()
 
