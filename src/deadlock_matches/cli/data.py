@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import datetime as dt
 import json
+import unicodedata
 from importlib import resources
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
@@ -50,43 +51,62 @@ TEAMS = {0: "The Hidden King", 1: "The Archmother"}
 
 MVP_LABELS = {1: "1 (MVP)", 2: "2 (Key)", 3: "3 (Key)"}
 
-CLAUDE_SKILL_RESOURCE = "agent/claude/deadlock-matches/SKILL.md"
+AGENT_SKILL_RESOURCE = "agent/skills/deadlock-matches/SKILL.md"
+LEADERBOARD_NAME_WIDTH = 20
 
 
-def _claude_skill_target(base: str | Path | None = None) -> Path:
-    """Return the Claude Code skill destination file."""
-    root = Path(base).expanduser() if base is not None else Path.home() / ".claude" / "skills"
+def _fit_display(text: str, width: int) -> str:
+    out = ""
+    used = 0
+
+    for char in text:
+        char_width = 2 if unicodedata.east_asian_width(char) in "WF" else 1
+
+        if used + char_width > width:
+            break
+
+        out += char
+        used += char_width
+
+    return out + " " * (width - used)
+
+
+def _skill_install_path(skills_dir: str | Path | None = None) -> Path:
+    root = (
+        Path(skills_dir).expanduser()
+        if skills_dir is not None
+        else Path.home() / ".claude" / "skills"
+    )
     return root / "deadlock-matches" / "SKILL.md"
 
 
-def _bundled_claude_skill() -> resources.abc.Traversable:
-    """Return the packaged Claude Code skill resource."""
-    return resources.files("deadlock_matches").joinpath(CLAUDE_SKILL_RESOURCE)
+def _bundled_skill() -> resources.abc.Traversable:
+    return resources.files("deadlock_matches").joinpath(AGENT_SKILL_RESOURCE)
 
 
 def skill_report(args: argparse.Namespace) -> None:
-    """Install or print the bundled Claude Code skill."""
+    """Handle `deadlock skill`."""
     action = args.skill_action or "path"
-    target = _claude_skill_target(getattr(args, "dir", None))
+    target = _skill_install_path(getattr(args, "dir", None))
 
     if action == "path":
         print(_tilde(target))
         return
 
-    skill = _bundled_claude_skill()
+    skill = _bundled_skill()
 
     if action == "print":
         print(skill.read_text(encoding="utf-8"), end="")
         return
 
     if target.exists() and not args.force:
-        print(f"Claude Code skill already exists at {_tilde(target)}")
+        print(f"Agent skill already exists at {_tilde(target)}")
         print("Run `deadlock skill install --force` to replace it.")
         return
 
     target.parent.mkdir(parents=True, exist_ok=True)
     target.write_text(skill.read_text(encoding="utf-8"), encoding="utf-8")
-    print(f"Installed Claude Code skill at {_tilde(target)}")
+    print(f"Installed agent skill at {_tilde(target)}")
 
 
 def final_stats(match_ids: pl.LazyFrame, parquet_dir: str | Path) -> pl.LazyFrame:
@@ -665,7 +685,8 @@ def leaderboard_report(args: argparse.Namespace, config: str | Path | None = Non
         if m["account_id"] in set(watchlist.values()) and m.get("rank"):
             where += "  tracked"
 
-        print(f"  {m['name']:<20} {m['account_id']:<12} {where}")
+        name = _fit_display(str(m["name"]), LEADERBOARD_NAME_WIDTH)
+        print(f"  {name} {m['account_id']:<12} {where}")
 
         if args.matches:
             for row in players.recent_hero_matches(m["account_id"], hero_id, n=args.matches):

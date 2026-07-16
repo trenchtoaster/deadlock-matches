@@ -56,7 +56,7 @@ COMMAND_HELP = {
     "assets": "redownload heroes.json / items.json (run after a patch)",
     "accounts": "Steam accounts on this PC that have run Deadlock, for config.toml",
     "config": "where config.toml lives and the settings it holds",
-    "skill": "install or inspect the bundled Claude Code skill",
+    "skill": "install or inspect the bundled agent skill",
     "schema": "column docs for the parquet tables (the data dictionary)",
 }
 
@@ -637,28 +637,28 @@ def build_parser(config: str | Path | None = None) -> argparse.ArgumentParser:
 
     sk = command("skill")
     sk_sub = sk.add_subparsers(dest="skill_action", metavar="<action>")
-    sk_path = sk_sub.add_parser("path", help="print where the Claude Code skill installs")
+    sk_path = sk_sub.add_parser("path", help="print where the agent skill installs")
     sk_path.add_argument(
         "--dir",
         default=None,
-        help="use this Claude skills directory instead of the default",
+        help="use this skills directory instead of the default",
     )
-    sk_print = sk_sub.add_parser("print", help="print the bundled Claude Code skill")
+    sk_print = sk_sub.add_parser("print", help="print the bundled agent skill")
     sk_print.add_argument(
         "--dir",
         default=None,
         help=argparse.SUPPRESS,
     )
-    sk_install = sk_sub.add_parser("install", help="install the Claude Code skill")
+    sk_install = sk_sub.add_parser("install", help="install the agent skill")
     sk_install.add_argument(
         "--dir",
         default=None,
-        help="use this Claude skills directory instead of the default",
+        help="use this skills directory instead of the default",
     )
     sk_install.add_argument(
         "--force",
         action="store_true",
-        help="replace an existing deadlock-matches Claude Code skill",
+        help="replace an existing deadlock-matches agent skill",
     )
 
     at = command("assets")

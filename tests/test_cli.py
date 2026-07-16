@@ -3,6 +3,7 @@ import bz2
 import datetime as dt
 import re
 import shutil
+import unicodedata
 import zoneinfo
 
 import polars as pl
@@ -26,6 +27,10 @@ from deadlock_matches.cli import items as cli_items
 from deadlock_matches.cli import meta as cli_meta
 from deadlock_matches.cli.main import build_parser, main, parse_accounts, resolve_store
 from deadlock_matches.extract import STEAM64_BASE, pb
+
+
+def display_width(text):
+    return sum(2 if unicodedata.east_asian_width(c) in "WF" else 1 for c in text)
 
 
 def write_cache_entry(
@@ -916,7 +921,11 @@ def test_leaderboard_command_lists_players_and_match_ids(tmp_path, monkeypatch, 
     monkeypatch.setattr(
         players,
         "top_players",
-        lambda hero_id, limit: [{"account_id": 11, "name": "lead", "rank": 1, "region": "Asia"}],
+        lambda hero_id, limit: [
+            {"account_id": 11, "name": "lead", "rank": 1, "region": "Asia"},
+            {"account_id": 12, "name": "小曦不是小兮", "rank": 1, "region": "Asia"},
+            {"account_id": 13, "name": "스노우맨", "rank": 2, "region": "Asia"},
+        ],
     )
     monkeypatch.setattr(
         players,
@@ -939,6 +948,8 @@ def test_leaderboard_command_lists_players_and_match_ids(tmp_path, monkeypatch, 
     out = capsys.readouterr().out
 
     assert "lead" in out
+    assert "小曦不是小兮" in out
+    assert "스노우맨" in out
     assert "11" in out
     assert "rank 1" in out
     assert "friend" in out
@@ -947,6 +958,21 @@ def test_leaderboard_command_lists_players_and_match_ids(tmp_path, monkeypatch, 
     assert "5022" in out
     assert "win" in out
     assert "10/2/8" in out
+
+    rows = [
+        line
+        for line in out.splitlines()
+        if line.startswith("  ") and ("rank " in line or line.endswith("tracked"))
+    ]
+    account_starts = []
+
+    for line in rows:
+        match = re.search(r"\d+", line)
+        assert match is not None
+        account = match.group()
+        account_starts.append(display_width(line[: line.index(account)]))
+
+    assert len(set(account_starts)) == 1
 
 
 def test_leaderboard_command_prints_paste_ready_lines(tmp_path, monkeypatch, capsys):
@@ -1665,7 +1691,18 @@ def test_help_sweep_includes_nested_skill_commands(tmp_path, capsys):
     parser = build_parser(tmp_path / "config.toml")
     sub = next(a for a in parser._actions if isinstance(a, argparse._SubParsersAction))
 
-    commands = [[], ["skill"], ["skill", "path"], ["skill", "print"], ["skill", "install"]]
+    commands = [
+        [],
+        ["compare", "souls"],
+        ["compare", "damage"],
+        ["compare", "healing"],
+        ["compare", "combat"],
+        ["compare", "movement"],
+        ["skill"],
+        ["skill", "path"],
+        ["skill", "print"],
+        ["skill", "install"],
+    ]
     commands.extend([[name] for name in sub.choices])
 
     for command in commands:
@@ -1676,12 +1713,12 @@ def test_help_sweep_includes_nested_skill_commands(tmp_path, capsys):
 
     out = capsys.readouterr().out
 
-    assert "install or inspect the bundled Claude Code skill" in out
+    assert "install or inspect the bundled agent skill" in out
     assert "--against" in out
     assert "--pool-since" in out
     assert "--milestones" in out
     assert "--step" in out
-    assert "replace an existing deadlock-matches Claude Code skill" in out
+    assert "replace an existing deadlock-matches agent skill" in out
 
 
 def test_winrate_without_account_prints_hint(capsys, tmp_path):
@@ -1829,7 +1866,7 @@ def test_skill_command_prints_install_path(capsys, tmp_path):
     assert "skills/deadlock-matches/SKILL.md" in out
 
 
-def test_skill_command_installs_bundled_claude_skill(capsys, tmp_path):
+def test_skill_command_installs_bundled_agent_skill(capsys, tmp_path):
     root = tmp_path / "skills"
 
     main(["skill", "install", "--dir", str(root)], config=tmp_path / "none.json")

@@ -10,6 +10,15 @@ These commands answer common data questions after setup: syncing matches, inspec
 
 The sections below group the commands by what they read. **Match analysis** reads your local match archive and parquet tables. **Heroes, abilities, and items** reads the included asset data. **Tracked players and public stats** covers the comparisons, which read games `deadlock download` fetched from [deadlock-api](https://api.deadlock-api.com), plus the public meta numbers. **Setup and maintenance** keeps the archive, config, and asset data current.
 
+Jump to:
+
+- [Match history](#match-history), [one match](#one-match), [win rate](#win-rate-by-day)
+- [Historical performance](#does-winning-the-lane-win-the-game): laning, deaths, damage, healing, souls, combat, movement
+- [Compare against other players](#compare-against-your-tracked-players)
+- [Items](#item-card), [abilities](#ability-card), [heroes](#hero-card)
+- [Meta](#hero-meta-by-rating)
+- [Setup and maintenance](#setup-and-maintenance)
+
 A few flags repeat across commands:
 
 - `--help` is by far the most important flag since it describes all the options
@@ -561,12 +570,13 @@ Not scored: 1 game left out of the table (safe to leave), 0-1 in match history.
 deadlock laning --account main --hero Mirage
 ```
 
-- every scored game bucketed by where your lane stood at 9:00: your lane's souls minus the enemy side's, both read from the stats snapshots
-- your own deaths in that window get a table too, with finer buckets since one early death already moves the number
-- a second table splits the same games by the worst teammate death count in that window, games with an ally abandon are left out of it since a leaver feeds by definition
-- the last table crosses the two, so a lost lane can be read with and without a feeding teammate
+- scored games only
+- lane result means your lane's souls minus the enemy lane's souls at 9:00
+- also shows your deaths by 9:00
+- teammate deaths use the worst teammate in the same window; ally-abandon games are left out
+- the last table crosses lane result with a feeding teammate
 - `--days`, `--since`, `--hero`, and `--account` filter like `winrate`
-- `--minutes` moves the mark, default 9 like `match --laning`
+- `--minutes` changes the mark, default 9 like `match --laning`
 
 ```
 Lane result at 9:00: your lane's souls minus the enemy side's, scored games only.
@@ -1413,13 +1423,14 @@ deadlock assets --backfill
 
 It fetches only the patches newer than what shipped and appends them.
 
-### The Claude Code skill
+### The agent skill
 
 ```
 deadlock skill install
 ```
 
-- writes the bundled Claude Code skill to your Claude skills directory, teaching an agent the CLI, schemas, query helpers, and data pitfalls
+- writes the bundled agent skill to your skills directory, teaching an agent the CLI, schemas, query helpers, and data pitfalls
+- defaults to Claude Code's `.claude/skills` directory
 - existing local edits are left alone unless you pass `--force`
 - `deadlock skill path` prints the destination, `--dir` uses a different one
 - `deadlock skill print` writes the skill to stdout for a quick read or for other agents
