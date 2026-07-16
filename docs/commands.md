@@ -1187,6 +1187,8 @@ deadlock compare souls --hero Mirage --milestones
      6400      9.6      8.0     +1.6    63/48
 ```
 
+Narrow the tracked side to one player when you want a direct head-to-head:
+
 ```
 deadlock compare souls --hero Mirage --milestones --against tracked1
 ```
@@ -1196,35 +1198,55 @@ deadlock compare damage --hero Mirage --against tracked1 --since 2026-07-14 --po
 
 Damage to heroes by source
 
-  Delivery                 You/min  Them/min   Gap/min   You %  Them %
-  Abilities                    509       709      -200     55%     47%
-  Gun                          226       433      -208     24%     29%
+  Delivery                 You/game  Them/game  Gap/game  You/min  Them/min   Gap/min   You %  Them %
+  Abilities                  18,271     24,006    -5,735      509       709      -200     55%     47%
+  Gun                         8,092     14,679    -6,587      226       433      -208     24%     29%
+  Total                      33,434     51,032   -17,598      932     1,506      -575
 
-  Source                 Delivery                You/min  Them/min   Gap/min   You/1k  Them/1k    Games
-  Djinn's Mark           Abilities                   185       352      -168        -        -     57/9
-  Promises Kept          Gun                         157       330      -174        -        -     58/9
-  Toxic Bullets          Items (bullet procs)         70       136       -65      786    1,435     28/9
+  Source                 Delivery                You/game  Them/game  Gap/game  You/min  Them/min   Gap/min   You/1k  Them/1k    Games
+  Djinn's Mark           Abilities                  6,721     11,939    -5,218      185       352      -168        -        -     57/9
+  Promises Kept          Gun                        5,627     11,189    -5,562      157       330      -174        -        -     58/9
+  Toxic Bullets          Items (bullet procs)       2,604      4,593    -1,989       70       136       -65      786    1,435     28/9
+  Total                                             33,434     51,032   -17,598      932     1,506      -575        -        -     58/9
 
 Damage over time
 ```
 
-### Leaderboard
+### Movement vs your tracked players
 
 ```
-deadlock leaderboard --hero Mirage
+deadlock compare movement --hero Mirage
 ```
 
-- the current top players of a hero from the per-hero leaderboard, with their account IDs and paste-ready config lines for the ones you are not tracking yet ([Tracked players](#tracked-players-and-public-stats))
-- `--matches` (optionally `--matches 10`) lists each one's recent ranked match ids, win or loss, so you can pick a game to pull
-- tracked `[players.<Hero>]` entries show up too, marked `tracked`
+- whole-game movement averages instead of intervals: the tracked player list, the pooled gap table, and one row per tracked player
+- the Tracked column comes from past `deadlock download` runs for the players you track on the hero, nothing is fetched by this command
+- Rank is their hero ladder rank when they were downloaded, `-` for players who were never on the board
+- long or wide names (Korean, Cyrillic) are cut to a fixed width so the table stays aligned
+- the Tracked averages can blend playstyles: here every tracked player beats the you row on meters and stationary, while in air ranges from 13% to 31% because ground and air Mirages are both viable
 
 ```
-Mirage leaderboard:
-  tracked2           111222333    rank 1    Europe
-      12345678  2026-07-05  win   14/2/23
-      12345670  2026-07-05  win   19/5/20
-  tracked3          444555666    rank 24   SAmerica
-      12340013  2026-07-03  win   13/7/17
+You (111222333, 50 games) vs 3 tracked Mirage players (34 games): movement
+
+  Player             Games  Rank  Last download
+  tracked1            14     1  2026-07-01
+  tracked2            10     -  2026-07-01
+  tracked3             10    23  2026-07-01
+
+  Metric                        You  Tracked      Gap
+  meters /min                 388.3    430.0    +41.7
+  stationary %                  9.9      7.1     -2.8
+  slide %                       3.9      8.3     +4.4
+  in air %                      8.1     21.2    +13.1
+  zipline %                     6.7      8.5     +1.8
+  fighting players %           24.3     26.7     +2.4
+  ground dashes /min            1.7      2.4     +0.7
+  air dashes /min               0.2      0.8     +0.6
+
+  Player            Account  Games    Rank   m /min  Stationary   Slide  In air  Zipline  Fighting  Dash/min  Air dash
+  you                     -     50       -    388.3        9.9%    3.9%    8.1%     6.7%     24.3%       1.7       0.2
+  tracked1      111222333     14       1    453.2        5.4%    7.0%   13.3%     8.8%     26.4%       2.8       0.3
+  tracked2      444555666     10       -    451.7        7.2%    9.2%   31.0%     8.2%     28.2%       1.8       1.8
+  tracked3       555666777     10      23    420.1        7.2%    7.4%   23.1%     8.6%     30.3%       1.9       1.9
 ```
 
 ### Download matches from other players
@@ -1285,42 +1307,25 @@ Bought together (win rate of games with both, vs the item alone):
   Transcendent Cooldown       62.3%     +5.5    1,638
 ```
 
-### Movement vs your tracked players
+### Leaderboard
 
 ```
-deadlock compare movement --hero Mirage
+deadlock leaderboard --hero Mirage
 ```
 
-- whole-game movement averages instead of intervals: the tracked player list, the pooled gap table, and one row per tracked player
-- the Tracked column comes from past `deadlock download` runs for the players you track on the hero, nothing is fetched by this command
-- Rank is their hero ladder rank when they were downloaded, `-` for players who were never on the board
-- long or wide names (Korean, Cyrillic) are cut to a fixed width so the table stays aligned
-- the Tracked averages can blend playstyles: here every tracked player beats the you row on meters and stationary, while in air ranges from 13% to 31% because ground and air Mirages are both viable
+- the current top players of a hero from the per-hero leaderboard, with their account IDs and paste-ready config lines for the ones you are not tracking yet ([Tracked players](#tracked-players-and-public-stats))
+- `--matches` (optionally `--matches 10`) lists each one's recent ranked match ids, win or loss, so you can pick a game to pull
+- tracked `[players.<Hero>]` entries show up too, marked `tracked`
 
 ```
-You (111222333, 50 games) vs 3 tracked Mirage players (34 games): movement
-
-  Player             Games  Rank  Last download
-  tracked1            14     1  2026-07-01
-  tracked2            10     -  2026-07-01
-  tracked3             10    23  2026-07-01
-
-  Metric                        You  Tracked      Gap
-  meters /min                 388.3    430.0    +41.7
-  stationary %                  9.9      7.1     -2.8
-  slide %                       3.9      8.3     +4.4
-  in air %                      8.1     21.2    +13.1
-  zipline %                     6.7      8.5     +1.8
-  fighting players %           24.3     26.7     +2.4
-  ground dashes /min            1.7      2.4     +0.7
-  air dashes /min               0.2      0.8     +0.6
-
-  Player            Account  Games    Rank   m /min  Stationary   Slide  In air  Zipline  Fighting  Dash/min  Air dash
-  you                     -     50       -    388.3        9.9%    3.9%    8.1%     6.7%     24.3%       1.7       0.2
-  tracked1      111222333     14       1    453.2        5.4%    7.0%   13.3%     8.8%     26.4%       2.8       0.3
-  tracked2      444555666     10       -    451.7        7.2%    9.2%   31.0%     8.2%     28.2%       1.8       1.8
-  tracked3       555666777     10      23    420.1        7.2%    7.4%   23.1%     8.6%     30.3%       1.9       1.9
+Mirage leaderboard:
+  tracked2           111222333    rank 1    Europe
+      12345678  2026-07-05  win   14/2/23
+      12345670  2026-07-05  win   19/5/20
+  tracked3          444555666    rank 24   SAmerica
+      12340013  2026-07-03  win   13/7/17
 ```
+
 ## Setup and maintenance
 
 ### Sync new matches
