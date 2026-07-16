@@ -66,9 +66,25 @@ def config_account_names(path: str | Path | None = None) -> dict[str, int]:
     return {name: int(a) for name, a in _accounts_table(path).items()}
 
 
+def config_player_names(path: str | Path | None = None) -> dict[str, int]:
+    """Read every tracked player across the [players.<hero>] tables as name = id pairs."""
+    return {player: a for ids in config_players_all(path).values() for player, a in ids.items()}
+
+
+def account_labels(path: str | Path | None = None) -> dict[int, str]:
+    """Map account IDs to config names.
+
+    - [accounts] names win over tracked player names
+    """
+    names = {a: name for name, a in config_player_names(path).items()}
+    names |= {a: name for name, a in config_account_names(path).items()}
+
+    return names
+
+
 def format_accounts(ids: Iterable[int], path: str | Path | None = None) -> str:
     """Format account IDs for report headers, swapping in config names where known."""
-    names = {a: name for name, a in config_account_names(path).items()}
+    names = account_labels(path)
 
     return ", ".join(names.get(int(a), str(a)) for a in ids)
 
@@ -131,12 +147,13 @@ timezone = "{_detect_timezone()}"
 # "old alt" = 123456789
 
 # the players every comparison runs against, per hero: top ladder accounts, rivals,
-# one-tricks. compare, movement, builds, and item read only games downloaded from the
+# one-tricks. compare, builds, and item read only games downloaded from the
 # players listed here. `deadlock leaderboard --hero X` prints paste-ready lines, then
 # `deadlock download --hero X` fetches their recent games - nothing is ever downloaded
 # from the leaderboard on its own. removing a line here removes the player from every
 # comparison, the downloaded data just stops being read.
-# the player name is just a label for the reports, paste their real name or make one up.
+# the player name labels the reports and works with --account to read their games,
+# like --account someplayer. paste their real name or make one up.
 # quotes around hero and player names are always safe, and required when a name has spaces.
 # [players."Mirage"]
 # "someplayer" = 111222333

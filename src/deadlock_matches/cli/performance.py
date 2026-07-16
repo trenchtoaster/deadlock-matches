@@ -7,6 +7,8 @@ import itertools
 import re
 import statistics as st
 import unicodedata
+from collections.abc import Sequence
+from contextlib import suppress
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
@@ -30,7 +32,7 @@ from deadlock_matches.assets import (
 from deadlock_matches.cli.cards import UNITS_PER_METER
 from deadlock_matches.cli.data import MVP_LABELS, TEAMS, final_stats, no_pool_hint
 from deadlock_matches.config import (
-    config_account_names,
+    account_labels,
     config_timezone,
     format_accounts,
 )
@@ -143,9 +145,302 @@ def sources_report(
     )
 
 
+def _compare_source_frame(
+    side: str,
+    sources: pl.DataFrame,
+) -> pl.DataFrame:
+    """Keep the source columns used by the compare tables."""
+    return sources.select(
+        "source_name",
+        "delivery",
+        pl.col("games").alias(f"{side}_games"),
+        (pl.col("total") / pl.col("games")).alias(f"{side}_game"),
+        pl.col("per_min").alias(f"{side}_min"),
+        pl.col("per_min_owned").alias(f"{side}_owned"),
+        pl.col("per_1k").alias(f"{side}_1k"),
+        pl.col("percent").alias(f"{side}_percent"),
+    )
+
+
+def _player_game_minutes(games: pl.DataFrame, parquet_dir: str | Path | None) -> float:
+    """Sum duration over player-games, not unique matches."""
+    minutes = (
+        games.lazy()
+        .join(queries.scan("matches", parquet_dir).select("match_id", "duration_s"), on="match_id")
+        .select((pl.col("duration_s").sum() / 60).alias("minutes"))
+        .collect()
+        .item()
+    )
+
+    return float(minutes or 0)
+
+
+def _delivery_compare_rows(
+    you: pl.DataFrame,
+    them: pl.DataFrame,
+    you_minutes: float,
+    them_minutes: float,
+    you_games: int,
+    them_games: int,
+) -> pl.DataFrame:
+    """Build delivery-level compare rows for damage or healing."""
+    totals = (
+        pl.concat(
+            [
+                you.select("delivery", pl.col("total").alias("you_total")).with_columns(
+                    pl.lit(0, dtype=pl.Int64).alias("them_total")
+                ),
+                them.select("delivery", pl.col("total").alias("them_total")).with_columns(
+                    pl.lit(0, dtype=pl.Int64).alias("you_total")
+                ),
+            ],
+            how="diagonal",
+        )
+        .group_by("delivery")
+        .agg(pl.col("you_total").sum(), pl.col("them_total").sum())
+    )
+    you_total = float(you.get_column("total").sum())
+    them_total = float(them.get_column("total").sum())
+
+    return (
+        totals.with_columns(
+            (pl.col("you_total") / you_games).alias("you_game"),
+            (pl.col("them_total") / them_games).alias("them_game"),
+            (pl.col("you_total") / you_minutes).alias("you_min"),
+            (pl.col("them_total") / them_minutes).alias("them_min"),
+            (pl.col("you_total") / you_total * 100).alias("you_percent"),
+            (pl.col("them_total") / them_total * 100).alias("them_percent"),
+        )
+        .with_columns(
+            (pl.col("you_game") - pl.col("them_game")).alias("gap_game"),
+            (pl.col("you_min") - pl.col("them_min")).alias("gap_min"),
+        )
+        .sort("them_total", descending=True)
+    )
+
+
+def _compare_damage_sources(
+    mine: pl.DataFrame,
+    pool: pl.DataFrame,
+    args: argparse.Namespace,
+    hero: str,
+    stat: str,
+) -> None:
+    """Print damage or healing by source before the interval table."""
+    label = {
+        "damage": "Damage to heroes",
+        "healing": "Healing",
+        "heal_prevented": "Healing prevented",
+    }[stat]
+    you = queries.damage_by_source(
+        hero,
+        accounts=args.account,
+        matches=mine.get_column("match_id").to_list(),
+        parquet_dir=args.parquet,
+        stat=stat,
+    )
+    them = queries.damage_by_source(
+        hero,
+        accounts=pool.get_column("account_id").unique().to_list(),
+        matches=pool.get_column("match_id").to_list(),
+        parquet_dir=players.PARQUET_DIR,
+        stat=stat,
+    )
+
+    you_minutes = _player_game_minutes(mine, args.parquet)
+    them_minutes = _player_game_minutes(pool, players.PARQUET_DIR)
+    you_total = float(you.get_column("total").sum())
+    them_total = float(them.get_column("total").sum())
+    you_total_game = you_total / len(mine)
+    them_total_game = them_total / len(pool)
+    you_total_min = you_total / you_minutes
+    them_total_min = them_total / them_minutes
+    delivery = _delivery_compare_rows(you, them, you_minutes, them_minutes, len(mine), len(pool))
+    print(f"\n{label} by source\n")
+    print(
+        f"  {'Delivery':<23}{'You/game':>10}{'Them/game':>11}{'Gap/game':>10}"
+        f"{'You/min':>9}{'Them/min':>10}{'Gap/min':>10}{'You %':>8}{'Them %':>8}"
+    )
+
+    for r in delivery.iter_rows(named=True):
+        name = DELIVERY_LABELS.get(r["delivery"], r["delivery"])
+        print(
+            f"  {name:<23}{r['you_game']:>10,.0f}{r['them_game']:>11,.0f}"
+            f"{r['gap_game']:>+10,.0f}{r['you_min']:>9,.0f}{r['them_min']:>10,.0f}"
+            f"{r['gap_min']:>+10,.0f}{r['you_percent']:>7.0f}%{r['them_percent']:>7.0f}%"
+        )
+
+    print(
+        f"  {'Total':<23}{you_total_game:>10,.0f}{them_total_game:>11,.0f}"
+        f"{you_total_game - them_total_game:>+10,.0f}{you_total_min:>9,.0f}"
+        f"{them_total_min:>10,.0f}{you_total_min - them_total_min:>+10,.0f}"
+    )
+
+    rows = (
+        _compare_source_frame("you", you)
+        .join(_compare_source_frame("them", them), on=["source_name", "delivery"], how="full")
+        .with_columns(
+            pl.coalesce("source_name", "source_name_right").alias("source_name"),
+            pl.coalesce("delivery", "delivery_right").alias("delivery"),
+            (pl.col("you_game").fill_null(0) - pl.col("them_game").fill_null(0)).alias("gap_game"),
+            (pl.col("you_min").fill_null(0) - pl.col("them_min").fill_null(0)).alias("gap_min"),
+            pl.max_horizontal(
+                pl.col("you_min").fill_null(0), pl.col("them_min").fill_null(0)
+            ).alias("sort_min"),
+        )
+        .sort("sort_min", descending=True)
+    )
+    width = max(max(len(n) for n in rows.get_column("source_name")), 14) + 2
+    dwidth = max(len(label) for label in DELIVERY_LABELS.values()) + 2
+
+    print(
+        f"\n  {'Source':<{width}}{'Delivery':<{dwidth}}"
+        f"{'You/game':>10}{'Them/game':>11}{'Gap/game':>10}"
+        f"{'You/min':>9}{'Them/min':>10}{'Gap/min':>10}"
+        f"{'You/1k':>9}{'Them/1k':>9}{'Games':>9}"
+    )
+
+    for r in rows.iter_rows(named=True):
+        delivery_label = DELIVERY_LABELS.get(r["delivery"], r["delivery"])
+        you_1k = "-" if r["you_1k"] is None else f"{r['you_1k']:,.0f}"
+        them_1k = "-" if r["them_1k"] is None else f"{r['them_1k']:,.0f}"
+        games = f"{r['you_games'] or 0:.0f}/{r['them_games'] or 0:.0f}"
+        print(
+            f"  {r['source_name']:<{width}}{delivery_label:<{dwidth}}"
+            f"{_cell(r['you_game'], 10)}{_cell(r['them_game'], 11)}"
+            f"{_cell(r['gap_game'], 10, sign=True)}"
+            f"{_cell(r['you_min'], 9)}{_cell(r['them_min'], 10)}{_cell(r['gap_min'], 10, sign=True)}"
+            f"{you_1k:>9}{them_1k:>9}{games:>9}"
+        )
+
+    games = f"{len(mine)}/{len(pool)}"
+    print(
+        f"  {'Total':<{width}}{'':<{dwidth}}"
+        f"{_cell(you_total_game, 10)}{_cell(them_total_game, 11)}"
+        f"{_cell(you_total_game - them_total_game, 10, sign=True)}"
+        f"{_cell(you_total_min, 9)}{_cell(them_total_min, 10)}"
+        f"{_cell(you_total_min - them_total_min, 10, sign=True)}"
+        f"{'-':>9}{'-':>9}{games:>9}"
+    )
+
+
 def _mark_medians(values: pl.LazyFrame) -> pl.LazyFrame:
     """Aggregate a cumulative_at frame to the median value per mark."""
     return values.group_by("mark_s").agg(pl.col("value").median())
+
+
+MILESTONE_MIN_GAMES = 3
+MILESTONE_CAP = 80000
+
+
+def _hero_games(n: int, hero: str) -> str:
+    """Format a game count with the hero name."""
+    noun = "game" if n == 1 else "games"
+    return f"{n} {hero} {noun}"
+
+
+def _tracked_players(n: int, hero: str) -> str:
+    """Format the tracked player count."""
+    noun = "player" if n == 1 else "players"
+    return f"{n} tracked {hero} {noun}"
+
+
+def _pool_since_filter(pool: pl.LazyFrame, since: dt.date, tz: str) -> pl.LazyFrame:
+    """Filter tracked games by local match date."""
+    return (
+        pool.join(
+            queries.scan("matches", players.PARQUET_DIR).select("match_id", "start_time"),
+            on="match_id",
+        )
+        .filter(pl.col("start_time").dt.convert_time_zone(tz).dt.date() >= since)
+        .select("match_id", "account_id", "rank", "downloaded_at")
+    )
+
+
+def _milestone_targets(step: int) -> list[int]:
+    """Net-worth targets to print."""
+    return list(range(step, MILESTONE_CAP + 1, step))
+
+
+def _milestone_medians(target_times: pl.LazyFrame) -> pl.LazyFrame:
+    """Median minute and game count for each target."""
+    return target_times.group_by("target").agg(
+        (pl.col("target_time_s").median() / 60).alias("minutes"),
+        pl.len().alias("games"),
+    )
+
+
+def _milestone_map(medians: pl.DataFrame) -> dict[int, tuple[float, int]]:
+    """Map target to median minute and game count."""
+    return {r["target"]: (r["minutes"], r["games"]) for r in medians.iter_rows(named=True)}
+
+
+def souls_milestones_report(
+    games: pl.DataFrame, args: argparse.Namespace, ids: str, hero: str
+) -> None:
+    """Print the median minute you reach each net-worth mark across your games."""
+    targets = _milestone_targets(args.step)
+    you = _milestone_map(
+        _milestone_medians(
+            queries.cumulative_stat_target_times(games.lazy(), targets, "souls", args.parquet)
+        ).collect()
+    )
+
+    print("  Minutes to reach a net worth, median across games")
+    print(f"  You: {ids}, {_hero_games(len(games), hero)}\n")
+    print(f"  {'Souls':>7}  {'Minute':>7}  {'games':>5}")
+
+    for target in targets:
+        row = you.get(target)
+
+        if row is None or row[1] < MILESTONE_MIN_GAMES:
+            n = 0 if row is None else row[1]
+            print(f"\n  Stopped before {target:,}: only {n} games reached it.")
+            break
+
+        minutes, n = row
+        print(f"  {target:>7}  {minutes:>7.1f}  {n:>5}")
+
+
+def compare_milestones_report(
+    mine: pl.DataFrame,
+    pool: pl.DataFrame,
+    args: argparse.Namespace,
+    ids: str,
+    hero: str,
+) -> None:
+    """Print your median minute to each net-worth mark against the tracked pool."""
+    targets = _milestone_targets(args.step)
+    you_frame, them_frame = pl.collect_all(
+        [
+            _milestone_medians(
+                queries.cumulative_stat_target_times(mine.lazy(), targets, "souls", args.parquet)
+            ),
+            _milestone_medians(
+                queries.cumulative_stat_target_times(
+                    pool.lazy(), targets, "souls", players.PARQUET_DIR
+                )
+            ),
+        ]
+    )
+    you = _milestone_map(you_frame)
+    them = _milestone_map(them_frame)
+
+    print("  Minutes to reach a net worth, median across games")
+    print(
+        f"  You: {ids}, {_hero_games(len(mine), hero)}     Them: {_hero_games(len(pool), hero)}\n"
+    )
+    print(f"  {'Souls':>7}  {'You':>7}  {'Them':>7}  {'Behind':>7}  {'Games':>7}")
+
+    for target in targets:
+        y = you.get(target)
+        t = them.get(target)
+
+        if y is None or t is None or y[1] < MILESTONE_MIN_GAMES or t[1] < MILESTONE_MIN_GAMES:
+            break
+
+        behind = y[0] - t[0]
+        print(f"  {target:>7}  {y[0]:>7.1f}  {t[0]:>7.1f}  {behind:>+7.1f}  {y[1]:>3}/{t[1]:<3}")
 
 
 def _gap(you: dict[int, float], them: dict[int, float], mark_s: int) -> float | None:
@@ -158,13 +453,21 @@ def _gap(you: dict[int, float], them: dict[int, float], mark_s: int) -> float | 
 
 def compare_report(args: argparse.Namespace, config: str | Path | None = None) -> None:
     """Compare a stat between the player and the tracked players, interval by interval."""
-    if args.stat not in (*queries.COMPARE_STATS, "soul_sources", "movement"):
-        print(f"Unknown stat: {args.stat}")
-        print("Stats: " + ", ".join(queries.COMPARE_STATS) + ", soul_sources, movement")
+    if args.stat not in ("souls", "damage", "healing", "combat", "movement"):
+        print(f"Unknown compare report: {args.stat}")
+        print("Reports: souls, damage, healing, combat, movement")
         return
 
     if args.interval <= 0:
         print("--interval must be at least 1 minute")
+        return
+
+    if args.step < 1:
+        print("--step must be at least 1")
+        return
+
+    if args.milestones and args.stat != "souls":
+        print("--milestones only works with --stat souls")
         return
 
     hero_id = heroes.hero_id_by_name(args.hero)
@@ -173,32 +476,67 @@ def compare_report(args: argparse.Namespace, config: str | Path | None = None) -
         return
 
     since = dt.date.fromisoformat(args.since) if args.since else None
+    pool_since = dt.date.fromisoformat(args.pool_since) if args.pool_since else None
     mine = queries.hero_games(args.hero, args.parquet, args.account, since=since).collect()
     ids = format_accounts(args.account, config)
     window = f" since {args.since}" if args.since else ""
+    pool_window = f" since {args.pool_since}" if args.pool_since else ""
 
     if mine.is_empty():
         print(f"No ranked games for accounts {ids} on {args.hero}{window}")
         return
 
-    members = players.pool_members(args.hero, config_path=config)
+    hero = heroes.hero_name(hero_id)
+    subject_accounts = set(args.account)
+    against = set(args.against or [])
+    members = [
+        member
+        for member in players.pool_members(args.hero, config_path=config)
+        if member["account_id"] not in subject_accounts
+        and (not against or member["account_id"] in against)
+    ]
 
     if not members:
-        print(no_pool_hint(args.hero, tracked_in_config=False))
+        if against:
+            ids = format_accounts(args.against, config)
+            print(f"No tracked {args.hero} players match --against {ids}")
+        else:
+            print(no_pool_hint(args.hero, tracked_in_config=False))
         return
 
-    if not any(m["games"] for m in members):
-        print(no_pool_hint(args.hero, tracked_in_config=True))
+    pool_lf = players.pool_games(args.hero, config_path=config).filter(
+        ~pl.col("account_id").is_in(args.account)
+    )
+    if against:
+        pool_lf = pool_lf.filter(pl.col("account_id").is_in(args.against))
+    if pool_since:
+        pool_lf = _pool_since_filter(pool_lf, pool_since, config_timezone(config))
+    pool = pool_lf.collect()
+
+    if pool.is_empty():
+        if pool_since:
+            print(f"No tracked {args.hero} games since {args.pool_since}")
+        else:
+            print(no_pool_hint(args.hero, tracked_in_config=True))
         return
 
-    pool = players.pool_games(args.hero, config_path=config).collect()
+    counts = {
+        r["account_id"]: r["games"]
+        for r in pool.group_by("account_id")
+        .agg(pl.col("match_id").n_unique().alias("games"))
+        .iter_rows(named=True)
+    }
+    members = [
+        {**m, "games": counts[m["account_id"]]} for m in members if m["account_id"] in counts
+    ]
 
     print(
-        f"You ({ids}, {len(mine)} games{window}) vs "
-        f"{len(members)} tracked {args.hero} players ({len(pool)} games): {args.stat}"
+        f"You ({ids}, {_hero_games(len(mine), hero)}{window}) vs "
+        f"{_tracked_players(len(members), hero)} ({_hero_games(len(pool), hero)}{pool_window}): "
+        f"{args.stat}"
     )
 
-    if args.stat in ("soul_sources", "movement"):
+    if args.stat in ("combat", "movement"):
         print(f"\n  {'Player':<18} {'Games':>5} {'Rank':>5}  Last download")
 
         for m in members:
@@ -206,12 +544,36 @@ def compare_report(args: argparse.Namespace, config: str | Path | None = None) -
             when = f"{m['downloaded_at']:%Y-%m-%d}" if m["downloaded_at"] else "never"
             print(f"  {m['name']:<18} {m['games']:>5} {rank:>5}  {when}")
 
-        if args.stat == "movement":
-            _movement_compare(mine, pool, members, args)
+        if args.stat == "combat":
+            _combat_compare(mine, pool, args)
         else:
-            sources_report(mine.lazy(), pool.lazy(), args.parquet, players.PARQUET_DIR)
+            _movement_compare(mine, pool, members, args)
 
         return
+
+    if args.milestones:
+        print()
+        compare_milestones_report(mine, pool, args, ids, hero)
+        return
+
+    if args.stat == "souls":
+        if queries.table_exists("soul_sources", args.parquet) and queries.table_exists(
+            "soul_sources", players.PARQUET_DIR
+        ):
+            sources_report(mine.lazy(), pool.lazy(), args.parquet, players.PARQUET_DIR)
+        print("\nSouls over time")
+
+    elif args.stat in ("damage", "healing"):
+        try:
+            _compare_damage_sources(mine, pool, args, hero, args.stat)
+            if args.stat == "healing":
+                with suppress(ValueError):
+                    _compare_damage_sources(mine, pool, args, hero, "heal_prevented")
+        except ValueError as e:
+            print(e)
+            return
+
+        print(f"\n{args.stat.capitalize()} over time")
 
     interval_s = args.interval * 60
     my_rates, pool_rates, my_medians, pool_medians = pl.collect_all(
@@ -2641,7 +3003,7 @@ def _per_game_lines(
     values: tuple[tuple[str, str, int], ...],
 ) -> None:
     """Print the newest games one per line with the given percent and total columns."""
-    names = {a: name for name, a in config_account_names(config).items()}
+    names = account_labels(config)
     shown = games.tail(max(args.games, 0))
     header = "Per game, newest last"
 
@@ -2832,6 +3194,10 @@ def souls_games_report(args: argparse.Namespace, config: str | Path | None = Non
         print("No soul_sources table yet, run `deadlock sync`")
         return
 
+    if args.step < 1:
+        print("--step must be at least 1")
+        return
+
     tz = config_timezone(config)
 
     try:
@@ -2844,6 +3210,15 @@ def souls_games_report(args: argparse.Namespace, config: str | Path | None = Non
             since=args.since,
         )
         hero = games.item(0, "hero")
+    except ValueError as e:
+        print(e)
+        return
+
+    if args.milestones:
+        souls_milestones_report(games, args, format_accounts(args.account, config), hero)
+        return
+
+    try:
         sources = queries.souls_by_source(
             hero,
             accounts=args.account,
@@ -2984,6 +3359,149 @@ def _combat_parry_lines(games: pl.DataFrame, stats: dict[tuple[str | None, str],
         f" {success / len(games):.1f} landed per game"
         "\n  Counterspell auto-parries count as landed parries."
     )
+
+
+def _combat_total(rows: pl.DataFrame, group: str | None, stat: str) -> float:
+    """Read one custom stat total from custom_stat_totals output."""
+    found = rows.filter(
+        pl.col("group").is_null() if group is None else pl.col("group") == group,
+        pl.col("stat") == stat,
+    )
+
+    if found.is_empty():
+        return 0.0
+
+    return float(found.item(0, "total") or 0)
+
+
+def _combat_rate(rows: pl.DataFrame, group: str, numerator: str, denominator: str) -> float | None:
+    """Calculate one percent rate from custom stat totals."""
+    den = _combat_total(rows, group, denominator)
+
+    if not den:
+        return None
+
+    return 100 * _combat_total(rows, group, numerator) / den
+
+
+def _combat_cell(value: float, *, percent: bool = False, sign: bool = False) -> str:
+    """Format one combat compare cell."""
+    prefix = "+" if sign and value > 0 else ""
+    suffix = "%" if percent else ""
+    return f"{prefix}{value:,.1f}{suffix}"
+
+
+def _combat_gun_damage(
+    accounts: Sequence[int],
+    matches: Sequence[int],
+    parquet_dir: str | Path | None,
+) -> float:
+    """Sum gun damage to heroes for the combat compare window."""
+    if not queries.table_exists("damage", parquet_dir):
+        return 0.0
+
+    total = (
+        queries.scan("damage", parquet_dir)
+        .filter(
+            pl.col("match_id").is_in(list(matches)),
+            pl.col("dealer_account_id").is_in(list(accounts)),
+            pl.col("stat") == "damage",
+            queries.damage_category() == "gun",
+            pl.col("target_account_id").is_not_null(),
+        )
+        .select(pl.col("damage").sum())
+        .collect()
+        .item()
+    )
+
+    return float(total or 0)
+
+
+def _combat_compare(mine: pl.DataFrame, pool: pl.DataFrame, args: argparse.Namespace) -> None:
+    """Print combat counters for both sides."""
+    if not queries.table_exists("custom_stats", args.parquet):
+        print("\nNo custom_stats table yet, run `deadlock sync --full`")
+        return
+
+    if not queries.table_exists("custom_stats", players.PARQUET_DIR):
+        print("\nNo downloaded combat stats yet: run `deadlock download --hero " + args.hero + "`")
+        return
+
+    you = queries.custom_stat_totals(
+        args.account, mine.get_column("match_id").to_list(), parquet_dir=args.parquet
+    )
+    them = queries.custom_stat_totals(
+        pool.get_column("account_id").unique().to_list(),
+        pool.get_column("match_id").to_list(),
+        parquet_dir=players.PARQUET_DIR,
+    )
+    you_hits = _combat_total(you, "Enemy Hero Accuracy", "Hits")
+    them_hits = _combat_total(them, "Enemy Hero Accuracy", "Hits")
+    you_gun = _combat_gun_damage(args.account, mine.get_column("match_id").to_list(), args.parquet)
+    them_gun = _combat_gun_damage(
+        pool.get_column("account_id").unique().to_list(),
+        pool.get_column("match_id").to_list(),
+        players.PARQUET_DIR,
+    )
+    rows = [
+        (
+            "Hero hit %",
+            _combat_rate(you, "Enemy Hero Accuracy", "Hits", "Shots"),
+            _combat_rate(them, "Enemy Hero Accuracy", "Hits", "Shots"),
+        ),
+        (
+            "Hero headshot %",
+            _combat_rate(you, "Enemy Hero Accuracy", "Headshots", "Hits"),
+            _combat_rate(them, "Enemy Hero Accuracy", "Headshots", "Hits"),
+        ),
+        (
+            "Hero shots /game",
+            _combat_total(you, "Enemy Hero Accuracy", "Shots") / len(mine),
+            _combat_total(them, "Enemy Hero Accuracy", "Shots") / len(pool),
+        ),
+        (
+            "Gun damage /game",
+            you_gun / len(mine),
+            them_gun / len(pool),
+        ),
+        (
+            "Gun damage /hit",
+            you_gun / you_hits if you_hits else None,
+            them_gun / them_hits if them_hits else None,
+        ),
+        (
+            "Incoming hit %",
+            _combat_rate(you, "Enemy Hero Accuracy - Incoming", "Hits", "Shots"),
+            _combat_rate(them, "Enemy Hero Accuracy - Incoming", "Hits", "Shots"),
+        ),
+        (
+            "Parries /game",
+            _combat_total(you, None, "Parry Success") / len(mine),
+            _combat_total(them, None, "Parry Success") / len(pool),
+        ),
+        (
+            "Missed parries /game",
+            _combat_total(you, None, "Parry Miss") / len(mine),
+            _combat_total(them, None, "Parry Miss") / len(pool),
+        ),
+    ]
+
+    print(f"\n  {'Metric':<22}{'You':>11}{'Them':>11}{'Gap':>11}")
+
+    for label, yours, theirs in rows:
+        if yours is None and theirs is None:
+            continue
+
+        y = 0.0 if yours is None else yours
+        t = 0.0 if theirs is None else theirs
+        percent = label.endswith("%")
+        gap = y - t
+        print(
+            f"  {label:<22}"
+            f"{_combat_cell(y, percent=percent):>11}"
+            f"{_combat_cell(t, percent=percent):>11}"
+            f"{_combat_cell(gap, percent=percent, sign=True):>11}"
+        )
 
 
 def combat_games_report(args: argparse.Namespace, config: str | Path | None = None) -> None:

@@ -2444,6 +2444,53 @@ def cumulative_at(
     )
 
 
+def cumulative_stat_target_times(
+    games: pl.LazyFrame,
+    targets: Sequence[int],
+    stat: str = "souls",
+    parquet_dir: str | Path | None = None,
+) -> pl.LazyFrame:
+    """Return when each game first crosses each target.
+
+    - times are linearly interpolated between cumulative stat snapshots
+    - targets that a game never reaches are left out
+    """
+    if stat not in INTERVAL_STATS:
+        known = ", ".join(INTERVAL_STATS)
+        msg = f"Unknown cumulative target stat {stat!r}, one of: {known}"
+        raise ValueError(msg)
+
+    target_frame = pl.LazyFrame(
+        {"target": sorted(set(targets))},
+        schema={"target": pl.Int64},
+    )
+    value = pl.col(INTERVAL_STATS[stat]).alias("value")
+
+    samples = (
+        scan("stats", parquet_dir)
+        .join(games.select(_KEYS).unique(), on=_KEYS)
+        .select(*_KEYS, "time_stamp_s", value)
+        .sort(*_KEYS, "time_stamp_s")
+        .with_columns(
+            pl.col("time_stamp_s").shift().over(_KEYS).fill_null(0).alias("prev_t"),
+            pl.col("value").shift().over(_KEYS).fill_null(0).alias("prev_v"),
+        )
+    )
+
+    span = pl.col("value") - pl.col("prev_v")
+    frac = pl.when(span > 0).then((pl.col("target") - pl.col("prev_v")) / span).otherwise(0)
+    target_time_s = pl.col("prev_t") + frac * (pl.col("time_stamp_s") - pl.col("prev_t"))
+
+    return (
+        samples.join(target_frame, how="cross")
+        .filter(pl.col("value") >= pl.col("target"), pl.col("prev_v") < pl.col("target"))
+        .with_columns(target_time_s.alias("target_time_s"))
+        .group_by(*_KEYS, "target")
+        .agg(pl.col("target_time_s").min())
+        .select(*_KEYS, "target", "target_time_s")
+    )
+
+
 INTERVAL_STATS = {
     "souls": "net_worth",
     "assists": "assists",

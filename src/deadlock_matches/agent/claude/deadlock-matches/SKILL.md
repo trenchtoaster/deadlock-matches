@@ -11,6 +11,7 @@ Reads match metadata from Steam's HTTP cache and compares the user's games again
 
 - `config.toml` in the user config directory (`~/.config/deadlock-matches/` on Linux, `%APPDATA%\deadlock-matches\` on Windows — `deadlock config` prints the path) sets the `--account` default: an `[accounts]` table of `name = <steam32 id>` pairs (the only accepted shape — a plain list exits with the expected form). Every CLI run writes a commented starter config when the file is missing (`config.ensure_config`); the starter excludes the movement table (`exclude = ["movement"]`)
 - "your games" = union across all alt accounts; `--account` (comma-separated) overrides per-invocation and takes config names as well as ids (`--account main`), matched case-insensitively. Report headers print the names (`config.format_accounts`)
+- `--account` also takes a tracked player name from `[players.<Hero>]` (`--account someplayer`) or any downloaded account id — `history`, `match` (latest-game form), and the damage/healing/souls/combat/movement twins then read that player's downloaded games from the players store automatically (`cli.main.resolve_store`: flips when every account named is non-config and in the downloads ledger; a mix of yours and tracked stays on your tables, where the tracked games do not exist). `[accounts]` names win a name collision
 - accounts empty? run `deadlock accounts` — it lists the Steam accounts on this PC that have run Deadlock (userdata/ folder names = Steam32 ids, account/profile names from loginusers.vdf, archived game counts) and prints a paste-ready `[accounts]` block with neutral main/altN names; offer to fill config.toml in from it. `extract.steam_accounts()` is the underlying reader. Suggested names are deliberately NOT the Steam account names — those are half of the login credentials and config names print in report headers (output columns use Steam's terms: Account name = private login, Profile name = public persona)
 - `--hero` is always explicit — take it from the question or the user's recent `history` output
 - `config.toml` also holds the tracked players per hero as `[players.<Hero>]` tables (top ladder accounts, friends, anyone) — this is THE comparison pool: `compare`, `builds`, and the tracked part of `item` read only downloaded games whose account_id sits in this table, resolved at query time (`players.pool_members` / `pool_games` / `pool_builds`). Deleting a line removes the player from every comparison without touching data; there is no untrack command. A bare `deadlock download --hero X` downloads exactly these players — the leaderboard is never auto-downloaded, and old `--account` downloads stay in the ledger but never join comparisons. Read the table via `config.config_players("Mirage")` for ad-hoc analysis. Never hardcode or commit player names/ids; the config lives outside the repo for a reason
@@ -75,29 +76,21 @@ uv run deadlock builds --hero Mirage      # item builds of the tracked players, 
                                           # their downloaded games (item_events via
                                           # players.pool_builds); header = one row per config
                                           # player with downloaded games and record
-uv run deadlock compare --hero Mirage [--stat farm] [--interval 10] [--since 2026-06-30]
-                                          # your stats vs the tracked players, where you fall
-                                          # behind; both sides read parquet offline (yours from
-                                          # your tables, theirs from parquet-players filtered
-                                          # to the config pool), ranked games only on both
-                                          # sides; a summary table first (one row per player,
-                                          # whole-game avg and median per minute, you on top),
-                                          # then match-style intervals (5 min default): median
-                                          # of the per-game rates in each window for you and
-                                          # them, the gap, a cumulative gap column (running
-                                          # total of the gap, positive = ahead), and a
-                                          # you/them games column; rows stop once either side
-                                          # has fewer than 3 games reaching the window, a
-                                          # footer says so; medians of per-game rates, never
-                                          # diffs of the median curve; sparse stats (kills,
-                                          # denies) print 0 in most windows because the
-                                          # typical game gains nothing there — the summary
-                                          # and Total rows carry the overall signal;
-                                          # --since caps YOUR games to a patch window, the
-                                          # pool is already whatever download fetched
-uv run deadlock compare --hero Mirage --stat soul_sources
-                                          # the same gap split by income source
-uv run deadlock compare --hero Mirage --stat movement
+uv run deadlock compare souls --hero Mirage [--interval 10] [--milestones] [--since 2026-06-30] [--pool-since 2026-06-30] [--against someplayer]
+                                          # income-source gaps, then net worth over time;
+                                          # --milestones flips to target timing. both sides
+                                          # read parquet offline (yours from your tables,
+                                          # theirs from parquet-players filtered to config)
+uv run deadlock compare damage --hero Mirage --against someplayer
+                                          # damage sources side by side first, then damage over
+                                          # time underneath
+uv run deadlock compare healing --hero Mirage --against someplayer
+                                          # healing sources, healing prevented when present,
+                                          # then healing over time
+uv run deadlock compare combat --hero Mirage
+                                          # aim, incoming fire, and parries as whole-window
+                                          # counters
+uv run deadlock compare movement --hero Mirage
                                           # whole-game movement averages instead of intervals:
                                           # the member list, the pooled gap table, and one row
                                           # per tracked player (Rank = ladder rank at download
@@ -130,8 +123,10 @@ uv run deadlock download --hero Mirage [--account 111222333] [--match 12345678]
                                           # them, never joins comparisons). both comma-separate.
                                           # the current leaderboards only fill in rank/region/
                                           # missing names on the ledger rows (ladder_positions).
-                                          # then read a downloaded game with:
-                                          # deadlock --parquet <parquet-players dir> match <id> --hero Mirage
+                                          # then read their games by tracked name or id:
+                                          # deadlock damage --hero Mirage --account someplayer
+                                          # or a specific downloaded match directly by id:
+                                          # deadlock match 12345678 --hero Mirage
 uv run deadlock winrate [--days N] [--since 2026-07-01] [--by week] [--hero Mirage] [--min-rating Oracle]
                                           # daily W/L, MVP/Key Player counts, net wins, and a
                                           # Lobby column (average lobby rating, averaged in
@@ -198,7 +193,12 @@ uv run deadlock souls --hero Mirage [--days N] [--since 2026-07-01]
                                           # lines show Waves/Roam/Combat/Obj % shares plus
                                           # souls and /min; totals are gross souls with the
                                           # orb portions (the in-game figure); same flags
-                                          # as damage
+                                          # as damage. --milestones flips the axis: median
+                                          # minute to reach each net-worth mark (souls->time,
+                                          # the inverse of the interval views), stepping by
+                                          # --step souls (default 1600), the minute
+                                          # interpolated between the 5-minute snapshots via
+                                          # queries.cumulative_stat_target_times
 uv run deadlock combat --hero Mirage [--days N] [--since 2026-07-01]
                                           # match --combat at archive scale: aim totals both
                                           # directions (your shots/hits/headshots at heroes
@@ -224,7 +224,7 @@ uv run deadlock movement --hero Mirage [--account main] [--days 30] [--since 202
                                           # without movement rows prints "-" and stays out
                                           # of the averages; same flags as damage; the
                                           # tracked-player comparison moved to
-                                          # compare --stat movement
+                                          # compare movement
 uv run deadlock hero Mirage --souls 25000 # boon stats at a soul breakpoint (health, spirit,
                                           # melee, gun damage, AP), --level N works too,
                                           # no breakpoint = base card + per boon gains
@@ -269,13 +269,13 @@ uv run deadlock sync                      # rebuild parquet tables; --full from 
                                           # old patch era
 ```
 
-`compare --stat` accepts exactly `queries.COMPARE_STATS` plus `soul_sources` and `movement` — the match command vocabulary (`kills`, `deaths`, `assists`, `damage`, `damage_taken`, `obj_damage`, `healing`, `heal_prevented`, `creeps`, `neutrals`, `denies`) and the soul source groups (`souls` = net worth and the default, `farm` = kill/assist souls excluded, `troopers`, `jungle`, `breakables`, `combat`, `objectives`, `catch_up`, `other`). Raw wire field names were removed on purpose — never suggest them. `kills` and `deaths` print counts (per game in the summary, per interval below), every other stat prints per minute. `soul_sources` prints the income gap table with extra breakdown-only rows not offered as top-level stats: `deny_souls` (TEAM-shared, every teammate gets ~9-10 souls per denied orb, verified zero only when the whole team never denies — a player with 0 scoreboard denies still earns these; the `denies` stat is the personal deny COUNT) and `rift_urn` (the Unstable Rift + Soul Urn income, the wire source `treasure` — the parquet `source_name` still says treasure, a data-only name never shown to users, folded into `farm`). The souls row runs ~1% over the others summed, the game credits sell refunds etc. to no source. `movement` prints whole-game movement averages (member list, gap table, one row per tracked player) instead of intervals.
+`compare` has report subcommands: `souls`, `damage`, `healing`, `combat`, and `movement`. Do not suggest `--stat`, `soul_sources`, or individual soul groups as public compare modes. `compare souls` prints income-source gaps first, then net worth over time; `compare souls --milestones` prints target timing. `compare damage` prints source rows first, then damage over time. `compare healing` prints healing sources, healing prevented when present, then healing over time. `compare combat` prints aim/incoming/parry aggregate counters. `compare movement` prints whole-game movement averages. `--since` filters your games; `--pool-since` filters tracked games by local match date. `--against someplayer` narrows the tracked pool; `--account someplayer` instead makes that player the subject.
 
 ## Aggregate questions → parquet + polars
 
 Prefer `deadlock sync` + polars over looping protobufs for win rates, damage totals, souls curves, item timing. Tables rebuild automatically whenever a data command archives new matches, so run a quick `deadlock history` first and the tables are guaranteed fresh; `deadlock sync --full` forces a full rebuild. A column or table added to `schemas.py` needs no manual step — `export.schema_drift` compares every month file against the schema on each incremental export (both stores, footer reads only) and a mismatch triggers the full rebuild automatically, printing one "Rebuilt all tables" line. Never hand-patch a drifted month file; the rebuild streams one month at a time from the archive (parquet-players redownloads bodies the archive lacks), so it stays memory-bounded at any archive size. Sync filters to the config accounts — it refuses to run without an `[accounts]` table and refuses `--account` ids not in it. `--archive`/`--parquet` point any command at non-default dirs. Tables live in `~/.local/share/deadlock-matches/parquet/`.
 
-Importing the package pins the polars engine affinity to streaming (`engine.py`), so every collect stays memory-bounded on the big tables. The streaming engine does NOT keep row order through joins or group_by — sort explicitly before printing or asserting on order, never rely on file order surviving a join. Float sums can also differ in the last bits between runs.
+Importing the package pins the polars engine affinity to streaming (`engine.py`), so every collect stays memory-bounded on the big tables. Do not rely on output row order after joins or group_by — sort explicitly before printing or asserting on order, and use `maintain_order=True` only when the query really needs original group order. Within an aggregation, make order-dependent intent explicit too: if `first()` means "earliest", sort after any joins that could disturb order or use a `sort_by(...)`/min-key expression inside the group. Float sums can also differ in the last bits between runs.
 
 ### queries.py helper catalog
 
@@ -313,6 +313,7 @@ Start ad-hoc polars from these instead of rewriting boilerplate. This is the can
 - `compare_intervals(games, stat, interval_s=)` — per-game per-interval gains of one compare stat for any games frame, either store via `parquet_dir`. Same bucket rules as match_intervals, full intervals only, kills/deaths from the deaths table, soul composites forward-fill each source on its own clock. `deadlock compare` medians these per interval for both sides
 - `game_rates(games, stat)` — whole-game rate per minute of one compare stat, one row per game (the compare summary and Total rows)
 - `cumulative_at(games, stat, marks_s)` — cumulative value at given game times per game, last sample at or before the mark, only games that reach it (backs the `soul_sources` gap table)
+- `cumulative_stat_target_times(games, targets, stat="souls")` — when each game first crosses each target, interpolated between stats snapshots (backs `--milestones`)
 - `match_intervals(match_id, account_id, interval_s=300)` — one player's match as per-interval gains: souls/kills/deaths/assists/damage/damage_taken/obj_damage/healing/heal_prevented/creeps/neutrals/denies + souls_min, diffed from the cumulative snapshots. kills and deaths come from the deaths table instead (snapshot kills/deaths both drift). Backs `deadlock match`
 - `enemy_damage_intervals(match_id, account_id, interval_s=300, dealt=False)` — one player's damage exchange per enemy hero as per-interval gains from `damage_targets` (taken from each enemy by default, `dealt=True` flips to damage dealt to each enemy; hero dealers and targets only, per-source forward-fill before the per-enemy sum, enemies ordered by match total). Backs the per-enemy tables in `deadlock match --deaths/--kills/--damage`
 - `soul_intervals(match_id, account_id, interval_s=300)` — one player's souls as per-source interval gains from `soul_sources` (value = souls+souls_orbs, sources with any souls ordered by match total, same 3-min-sample forward-fill as `damage_intervals`). Backs `deadlock match --souls`; the cli maps `source_name` to in-game screen labels and the Waves/Roaming/Combat/Objectives/Catch-Up/Other groups

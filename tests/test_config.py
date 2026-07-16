@@ -65,6 +65,31 @@ def test_format_accounts_swaps_in_names(tmp_path):
     assert config.format_accounts([42, 99], p) == "main, 99"
 
 
+def test_format_accounts_swaps_in_tracked_player_names(tmp_path):
+    p = tmp_path / "config.toml"
+    p.write_text("[accounts]\nmain = 42\n\n[players.Mirage]\nsomeplayer = 22\n")
+
+    assert config.format_accounts([42, 22, 7], p) == "main, someplayer, 7"
+
+
+def test_format_accounts_account_names_win_over_player_names(tmp_path):
+    p = tmp_path / "config.toml"
+    p.write_text("[accounts]\nmain = 42\n\n[players.Mirage]\nsomeplayer = 42\n")
+
+    assert config.format_accounts([42], p) == "main"
+
+
+def test_config_player_names_flattens_every_hero(tmp_path):
+    p = tmp_path / "config.toml"
+    p.write_text('[players.Mirage]\nsomeplayer = 22\n\n[players."Grey Talon"]\nladderer = 11\n')
+
+    assert config.config_player_names(p) == {"someplayer": 22, "ladderer": 11}
+
+
+def test_config_player_names_missing_file(tmp_path):
+    assert config.config_player_names(tmp_path / "test.json") == {}
+
+
 def test_config_players_case_insensitive(tmp_path):
     p = tmp_path / "config.toml"
     p.write_text("[players.Mirage]\nsomeplayer = 111222333\n")

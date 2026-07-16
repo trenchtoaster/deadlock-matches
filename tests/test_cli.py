@@ -24,7 +24,7 @@ from deadlock_matches.assets import (
 from deadlock_matches.cli import cards, data, performance
 from deadlock_matches.cli import items as cli_items
 from deadlock_matches.cli import meta as cli_meta
-from deadlock_matches.cli.main import build_parser, main, parse_accounts
+from deadlock_matches.cli.main import build_parser, main, parse_accounts, resolve_store
 from deadlock_matches.extract import STEAM64_BASE, pb
 
 
@@ -432,6 +432,101 @@ def test_parse_accounts_unknown_name_lists_config_names():
 def test_parse_accounts_unknown_name_without_config():
     with pytest.raises(argparse.ArgumentTypeError, match="none set"):
         parse_accounts("main")
+
+
+def test_parser_resolves_tracked_player_names(tmp_path):
+    cfg = tmp_path / "config.toml"
+    cfg.write_text("[accounts]\nmain = 42\n\n[players.Mirage]\nsomeplayer = 22\n")
+
+    args = build_parser(cfg).parse_args(["damage", "--hero", "Mirage", "--account", "someplayer"])
+
+    assert args.account == [22]
+
+
+def test_parser_account_names_win_over_player_names(tmp_path):
+    cfg = tmp_path / "config.toml"
+    cfg.write_text("[accounts]\nmain = 42\n\n[players.Mirage]\nmain = 99\n")
+
+    args = build_parser(cfg).parse_args(["history", "--account", "main"])
+
+    assert args.account == [42]
+
+
+def _store_setup(tmp_path, monkeypatch, downloaded=(22,)):
+    main_store = tmp_path / "parquet"
+    players_store = tmp_path / "parquet-players"
+    players_store.mkdir()
+    monkeypatch.setattr(export, "PARQUET_DIR", main_store)
+    monkeypatch.setattr(players, "PARQUET_DIR", players_store)
+
+    if downloaded:
+        pl.DataFrame(
+            {
+                "match_id": list(range(len(downloaded))),
+                "account_id": list(downloaded),
+                "player": ["someplayer"] * len(downloaded),
+            }
+        ).write_parquet(players_store / "downloads.parquet")
+
+    cfg = tmp_path / "config.toml"
+    cfg.write_text("[accounts]\nmain = 42\n\n[players.Mirage]\nsomeplayer = 22\n")
+
+    return main_store, players_store, cfg
+
+
+def test_resolve_store_reads_tracked_accounts_from_the_players_store(tmp_path, monkeypatch):
+    main_store, players_store, cfg = _store_setup(tmp_path, monkeypatch)
+    args = argparse.Namespace(parquet=str(main_store), account=[22])
+
+    resolve_store(args, cfg)
+
+    assert args.parquet == str(players_store)
+
+
+def test_resolve_store_keeps_config_accounts_on_the_main_tables(tmp_path, monkeypatch):
+    main_store, _, cfg = _store_setup(tmp_path, monkeypatch)
+    args = argparse.Namespace(parquet=str(main_store), account=[42])
+
+    resolve_store(args, cfg)
+
+    assert args.parquet == str(main_store)
+
+
+def test_resolve_store_keeps_a_mixed_list_on_the_main_tables(tmp_path, monkeypatch):
+    main_store, _, cfg = _store_setup(tmp_path, monkeypatch)
+    args = argparse.Namespace(parquet=str(main_store), account=[42, 22])
+
+    resolve_store(args, cfg)
+
+    assert args.parquet == str(main_store)
+
+
+def test_resolve_store_ignores_accounts_missing_from_downloads(tmp_path, monkeypatch):
+    main_store, _, cfg = _store_setup(tmp_path, monkeypatch)
+    args = argparse.Namespace(parquet=str(main_store), account=[999])
+
+    resolve_store(args, cfg)
+
+    assert args.parquet == str(main_store)
+
+
+def test_resolve_store_respects_an_explicit_parquet_path(tmp_path, monkeypatch):
+    _, _, cfg = _store_setup(tmp_path, monkeypatch)
+    elsewhere = tmp_path / "elsewhere"
+    args = argparse.Namespace(parquet=str(elsewhere), account=[22])
+
+    resolve_store(args, cfg)
+
+    assert args.parquet == str(elsewhere)
+
+
+def test_resolve_store_without_a_downloads_ledger(tmp_path, monkeypatch):
+    main_store, _, cfg = _store_setup(tmp_path, monkeypatch, downloaded=())
+    args = argparse.Namespace(parquet=str(main_store), account=[22])
+
+    resolve_store(args, cfg)
+
+    assert args.parquet == str(main_store)
 
 
 def test_int_list_parses_commas_and_spaces():
@@ -917,29 +1012,23 @@ def test_parser_account_flag_overrides_config(tmp_path):
     p = tmp_path / "config.toml"
     p.write_text("[accounts]\nmain = 42\n")
 
-    args = build_parser(p).parse_args(["compare", "--hero", "Haze", "--account", "7,8"])
+    args = build_parser(p).parse_args(["compare", "souls", "--hero", "Haze", "--account", "7,8"])
 
     assert args.account == [7, 8]
 
 
-def test_compare_unknown_stat_lists_options(capsys, tmp_path):
-    run_main(tmp_path, "compare", "--hero", "Mirage", "--stat", "nonsense", "--account", "42")
+def test_compare_reports_are_subcommands(tmp_path):
+    parser = build_parser(tmp_path / "config.toml")
+    args = parser.parse_args(["compare", "damage", "--hero", "Mirage"])
 
-    out = capsys.readouterr().out
+    assert args.stat == "damage"
 
-    assert "Unknown stat: nonsense" in out
-    assert "souls" in out
-    assert "farm" in out
-    assert "denies" in out
-    assert "soul_sources" in out
-    assert "movement" in out
-    assert "souls_player" not in out
-    assert "ability_points" not in out
-    assert "gold_player" not in out
+    with pytest.raises(SystemExit):
+        parser.parse_args(["compare", "--hero", "Mirage"])
 
 
 def test_compare_without_account_prints_hint(capsys, tmp_path):
-    run_main(tmp_path, "compare", "--hero", "Haze", accounts=None)
+    run_main(tmp_path, "compare", "souls", "--hero", "Haze", accounts=None)
 
     out = capsys.readouterr().out
 
@@ -985,6 +1074,63 @@ def _pool_game(match_id, paths=False):
     return info
 
 
+def _pool_game_for_account(
+    match_id, account, stats, damage=(), custom_stats=(), start_time=1783000000
+):
+    info = pb.CMsgMatchMetaDataContents().match_info
+    info.match_id = match_id
+    info.start_time = start_time
+    info.duration_s = 1800
+    info.winning_team = pb.k_ECitadelLobbyTeam_Team1
+    info.match_mode = pb.k_ECitadelMatchMode_Unranked
+
+    player = info.players.add()
+    player.account_id = account
+    player.hero_id = 52
+    player.team = pb.k_ECitadelLobbyTeam_Team1
+    player.player_slot = 1
+
+    enemy = info.players.add()
+    enemy.account_id = 77
+    enemy.hero_id = 1
+    enemy.team = pb.k_ECitadelLobbyTeam_Team0
+    enemy.player_slot = 2
+
+    for t, worth in stats:
+        sample = player.stats.add()
+        sample.time_stamp_s = t
+        sample.net_worth = worth
+
+    for stat_id, (name, _) in enumerate(custom_stats, start=1):
+        reg = info.custom_user_stats.add()
+        reg.name = name
+        reg.id = stat_id
+
+    for stat_id, (_, value) in enumerate(custom_stats, start=1):
+        cs = player.stats[-1].custom_user_stats.add()
+        cs.id = stat_id
+        cs.value = value
+
+    if damage:
+        dm = info.damage_matrix
+        dm.sample_time_s.extend([300, 600])
+        dealer = dm.damage_dealers.add()
+        dealer.dealer_player_slot = 1
+
+        for j, entry in enumerate(damage):
+            name, values, *rest = entry
+            dm.source_details.source_name.append(name)
+            dm.source_details.stat_type.append(rest[0] if rest else 0)
+
+            src = dealer.damage_sources.add()
+            src.source_details_index = j
+            target = src.damage_to_players.add()
+            target.target_player_slot = 2
+            target.damage.extend(values)
+
+    return info
+
+
 def test_compare_command_reads_the_downloaded_pool(tmp_path, monkeypatch, capsys):
     cache = tmp_path / "cache"
     cache.mkdir()
@@ -1012,6 +1158,7 @@ def test_compare_command_reads_the_downloaded_pool(tmp_path, monkeypatch, capsys
     run_main(
         tmp_path,
         "compare",
+        "souls",
         "--hero",
         "Mirage",
         extra="[players.Mirage]\npro = 11\n",
@@ -1019,7 +1166,7 @@ def test_compare_command_reads_the_downloaded_pool(tmp_path, monkeypatch, capsys
 
     out = capsys.readouterr().out
 
-    assert "You (you, 3 games) vs 1 tracked Mirage players (3 games): souls" in out
+    assert "You (you, 3 Mirage games) vs 1 tracked Mirage player (3 Mirage games): souls" in out
     assert re.search(r"you\s+3\s+-\s+-\s+67\s+67", out)
     assert re.search(r"pro\s+3\s+2\s+2026-07-01\s+200\s+200", out)
     assert re.search(r"0-5\s+200\s+600\s+-400\s+-2,000\s+3/3", out)
@@ -1027,6 +1174,404 @@ def test_compare_command_reads_the_downloaded_pool(tmp_path, monkeypatch, capsys
     assert re.search(r"10-15\s+0\s+0\s+\+0\s+-4,000\s+3/3", out)
     assert re.search(r"Total\s+67\s+200\s+-133", out)
     assert "Biggest souls gap: 0-5m, you 200/min vs tracked players 600/min" in out
+
+
+def test_compare_command_excludes_the_subject_from_the_pool(tmp_path, monkeypatch, capsys):
+    monkeypatch.setattr(export, "PARQUET_DIR", tmp_path / "pq")
+
+    store = tmp_path / "players-pq"
+    monkeypatch.setattr(players, "PARQUET_DIR", store)
+
+    def downloaded_game(match_id, archive_dir=None):
+        if match_id < 910:
+            return _pool_game_for_account(match_id, 11, [(180, 1000), (360, 2000)])
+
+        return _pool_game_for_account(match_id, 12, [(180, 3000), (360, 6000)])
+
+    monkeypatch.setattr(players, "match_info", downloaded_game)
+    ledger = [
+        {
+            "match_id": match_id,
+            "account_id": account,
+            "player": player,
+            "hero_id": 52,
+            "rank": 2,
+            "region": "Asia",
+            "downloaded_at": dt.datetime(2026, 7, 1, tzinfo=dt.UTC),
+        }
+        for player, account, match_ids in (
+            ("pro", 11, (900, 901, 902)),
+            ("rival", 12, (910, 911, 912)),
+        )
+        for match_id in match_ids
+    ]
+    players.write_player_tables(ledger, out_dir=store)
+
+    run_main(
+        tmp_path,
+        "compare",
+        "souls",
+        "--hero",
+        "Mirage",
+        "--account",
+        "pro",
+        extra="[players.Mirage]\npro = 11\nrival = 12\n",
+    )
+
+    out = capsys.readouterr().out
+
+    assert "You (pro, 3 Mirage games) vs 1 tracked Mirage player (3 Mirage games): souls" in out
+    assert "you 200/min vs tracked players 600/min" in out
+
+
+def test_compare_command_against_filters_the_pool(tmp_path, monkeypatch, capsys):
+    cache = tmp_path / "cache"
+    cache.mkdir()
+
+    for match_id in (100, 101, 102):
+        write_cache_entry(cache, match_id=match_id, stats=[(180, 1000), (360, 2000)])
+
+    def downloaded_game(match_id, archive_dir=None):
+        if match_id < 910:
+            return _pool_game_for_account(match_id, 11, [(180, 1000), (360, 2000)])
+
+        return _pool_game_for_account(match_id, 12, [(180, 3000), (360, 6000)])
+
+    monkeypatch.setattr(players, "match_info", downloaded_game)
+    store = tmp_path / "players-pq"
+    ledger = [
+        {
+            "match_id": match_id,
+            "account_id": account,
+            "player": player,
+            "hero_id": 52,
+            "rank": 2,
+            "region": "Asia",
+            "downloaded_at": dt.datetime(2026, 7, 1, tzinfo=dt.UTC),
+        }
+        for player, account, match_ids in (
+            ("pro", 11, (900, 901, 902)),
+            ("rival", 12, (910, 911, 912)),
+        )
+        for match_id in match_ids
+    ]
+    players.write_player_tables(ledger, out_dir=store)
+    monkeypatch.setattr(players, "PARQUET_DIR", store)
+
+    run_main(
+        tmp_path,
+        "compare",
+        "souls",
+        "--hero",
+        "Mirage",
+        "--against",
+        "rival",
+        extra="[players.Mirage]\npro = 11\nrival = 12\n",
+    )
+
+    out = capsys.readouterr().out
+
+    assert "You (you, 3 Mirage games) vs 1 tracked Mirage player (3 Mirage games): souls" in out
+    assert "you 200/min vs tracked players 600/min" in out
+
+
+def test_compare_command_pool_since_filters_the_pool(tmp_path, monkeypatch, capsys):
+    cache = tmp_path / "cache"
+    cache.mkdir()
+
+    for match_id in (100, 101, 102):
+        write_cache_entry(cache, match_id=match_id, stats=[(180, 1000), (360, 2000)])
+
+    starts = {
+        900: int(dt.datetime(2026, 7, 13, 12, tzinfo=dt.UTC).timestamp()),
+        901: int(dt.datetime(2026, 7, 15, 12, tzinfo=dt.UTC).timestamp()),
+        902: int(dt.datetime(2026, 7, 16, 12, tzinfo=dt.UTC).timestamp()),
+        903: int(dt.datetime(2026, 7, 17, 12, tzinfo=dt.UTC).timestamp()),
+    }
+
+    monkeypatch.setattr(
+        players,
+        "match_info",
+        lambda match_id, archive_dir=None: _pool_game_for_account(
+            match_id,
+            11,
+            [(180, 3000), (360, 6000)],
+            start_time=starts[match_id],
+        ),
+    )
+    store = tmp_path / "players-pq"
+    ledger = [
+        {
+            "match_id": match_id,
+            "account_id": 11,
+            "player": "pro",
+            "hero_id": 52,
+            "rank": 2,
+            "region": "Asia",
+            "downloaded_at": dt.datetime(2026, 7, 1, tzinfo=dt.UTC),
+        }
+        for match_id in (900, 901, 902, 903)
+    ]
+    players.write_player_tables(ledger, out_dir=store)
+    monkeypatch.setattr(players, "PARQUET_DIR", store)
+
+    run_main(
+        tmp_path,
+        "compare",
+        "souls",
+        "--hero",
+        "Mirage",
+        "--pool-since",
+        "2026-07-15",
+        extra="[players.Mirage]\npro = 11\n",
+    )
+
+    out = capsys.readouterr().out
+
+    assert "vs 1 tracked Mirage player (3 Mirage games since 2026-07-15): souls" in out
+    assert re.search(r"pro\s+3\s+2\s+2026-07-01\s+200\s+200", out)
+    assert re.search(r"0-5\s+200\s+600\s+-400\s+-2,000\s+3/3", out)
+
+
+def test_compare_command_milestones(tmp_path, monkeypatch, capsys):
+    cache = tmp_path / "cache"
+    cache.mkdir()
+
+    for match_id in (100, 101, 102):
+        write_cache_entry(cache, match_id=match_id, stats=[(180, 1000), (360, 2000)])
+
+    monkeypatch.setattr(players, "match_info", lambda mid, archive_dir=None: _pool_game(mid))
+    store = tmp_path / "players-pq"
+    ledger = [
+        {
+            "match_id": match_id,
+            "account_id": 11,
+            "player": "pro",
+            "hero_id": 52,
+            "rank": 2,
+            "region": "Asia",
+            "downloaded_at": dt.datetime(2026, 7, 1, tzinfo=dt.UTC),
+        }
+        for match_id in (900, 901, 902)
+    ]
+    players.write_player_tables(ledger, out_dir=store)
+    monkeypatch.setattr(players, "PARQUET_DIR", store)
+
+    run_main(
+        tmp_path,
+        "compare",
+        "souls",
+        "--hero",
+        "Mirage",
+        "--milestones",
+        extra="[players.Mirage]\npro = 11\n",
+    )
+
+    out = capsys.readouterr().out
+
+    assert "Minutes to reach a net worth, median across games" in out
+    assert "You: you, 3 Mirage games     Them: 3 Mirage games" in out
+    assert re.search(r"1600\s+4\.8\s+1\.6\s+\+3\.2\s+3/3", out)
+
+
+def test_compare_command_damage_stat_prints_sources_first(tmp_path, monkeypatch, capsys):
+    cache = tmp_path / "cache"
+    cache.mkdir()
+
+    for match_id in (100, 101, 102):
+        write_cache_entry(
+            cache,
+            match_id=match_id,
+            stats=[(180, 1000), (360, 2000)],
+            damage=(
+                ("citadel_weapon_mirage", [100, 250]),
+                ("mirage_tornado", [50, 100]),
+                ("upgrade_toxic_bullets", [40, 50]),
+            ),
+        )
+
+    def downloaded_game(match_id, archive_dir=None):
+        return _pool_game_for_account(
+            match_id,
+            11,
+            [(180, 3000), (360, 6000)],
+            damage=(
+                ("citadel_weapon_mirage", [300, 600]),
+                ("mirage_tornado", [200, 400]),
+                ("upgrade_toxic_bullets", [100, 200]),
+            ),
+        )
+
+    monkeypatch.setattr(players, "match_info", downloaded_game)
+    store = tmp_path / "players-pq"
+    ledger = [
+        {
+            "match_id": match_id,
+            "account_id": 11,
+            "player": "pro",
+            "hero_id": 52,
+            "rank": 2,
+            "region": "Asia",
+            "downloaded_at": dt.datetime(2026, 7, 1, tzinfo=dt.UTC),
+        }
+        for match_id in (900, 901, 902)
+    ]
+    players.write_player_tables(ledger, out_dir=store)
+    monkeypatch.setattr(players, "PARQUET_DIR", store)
+
+    run_main(
+        tmp_path,
+        "compare",
+        "damage",
+        "--hero",
+        "Mirage",
+        extra="[players.Mirage]\npro = 11\n",
+    )
+
+    out = capsys.readouterr().out
+
+    assert "Damage to heroes by source" in out
+    assert re.search(
+        r"Delivery\s+You/game\s+Them/game\s+Gap/game\s+You/min\s+Them/min\s+Gap/min", out
+    )
+    assert re.search(r"Total\s+400\s+1,200\s+-800\s+13\s+40\s+-27", out)
+    assert "citadel_weapon_mirage" in out
+    assert "Toxic Bullets" in out
+    assert "Damage over time" in out
+    assert re.search(r"citadel_weapon_mirage\s+Gun\s+250\s+600\s+-350\s+8\.30\s+20\s+-12", out)
+    assert re.search(r"Total\s+400\s+1,200\s+-800\s+13\s+40\s+-27\s+-\s+-\s+3/3", out)
+
+
+def test_compare_command_healing_stat_prints_sources_first(tmp_path, monkeypatch, capsys):
+    cache = tmp_path / "cache"
+    cache.mkdir()
+
+    for match_id in (100, 101, 102):
+        write_cache_entry(
+            cache,
+            match_id=match_id,
+            stats=[(180, 1000), (360, 2000)],
+            damage=(("mirage_tornado", [50, 100], 1),),
+        )
+
+    def downloaded_game(match_id, archive_dir=None):
+        return _pool_game_for_account(
+            match_id,
+            11,
+            [(180, 3000), (360, 6000)],
+            damage=(("mirage_tornado", [100, 300], 1),),
+        )
+
+    monkeypatch.setattr(players, "match_info", downloaded_game)
+    store = tmp_path / "players-pq"
+    ledger = [
+        {
+            "match_id": match_id,
+            "account_id": 11,
+            "player": "pro",
+            "hero_id": 52,
+            "rank": 2,
+            "region": "Asia",
+            "downloaded_at": dt.datetime(2026, 7, 1, tzinfo=dt.UTC),
+        }
+        for match_id in (900, 901, 902)
+    ]
+    players.write_player_tables(ledger, out_dir=store)
+    monkeypatch.setattr(players, "PARQUET_DIR", store)
+
+    run_main(
+        tmp_path,
+        "compare",
+        "healing",
+        "--hero",
+        "Mirage",
+        extra="[players.Mirage]\npro = 11\n",
+    )
+
+    out = capsys.readouterr().out
+
+    assert "Healing by source" in out
+    assert "Dust Devil" in out
+    assert "Healing over time" in out
+    assert re.search(r"Dust Devil\s+Abilities\s+100\s+300\s+-200\s+3\.30\s+10\s+-6\.70", out)
+    assert re.search(r"Total\s+100\s+300\s+-200\s+3\.33\s+10\s+-6\.67\s+-\s+-\s+3/3", out)
+
+
+def test_compare_command_combat_stat_prints_aggregate_table(tmp_path, monkeypatch, capsys):
+    cache = tmp_path / "cache"
+    cache.mkdir()
+    mine_stats = [
+        ("Enemy Hero Accuracy##Shots", 100),
+        ("Enemy Hero Accuracy##Hits", 25),
+        ("Enemy Hero Accuracy##Headshots", 5),
+        ("Enemy Hero Accuracy - Incoming##Shots", 80),
+        ("Enemy Hero Accuracy - Incoming##Hits", 20),
+        ("Parry Success", 3),
+    ]
+
+    for match_id in (100, 101, 102):
+        write_cache_entry(
+            cache,
+            match_id=match_id,
+            stats=[(180, 1000), (360, 2000)],
+            damage=(("citadel_weapon_mirage", [100, 250]),),
+            custom_stats=mine_stats,
+        )
+
+    pool_stats = [
+        ("Enemy Hero Accuracy##Shots", 200),
+        ("Enemy Hero Accuracy##Hits", 100),
+        ("Enemy Hero Accuracy##Headshots", 30),
+        ("Enemy Hero Accuracy - Incoming##Shots", 60),
+        ("Enemy Hero Accuracy - Incoming##Hits", 15),
+        ("Parry Success", 6),
+    ]
+
+    monkeypatch.setattr(
+        players,
+        "match_info",
+        lambda match_id, archive_dir=None: _pool_game_for_account(
+            match_id,
+            11,
+            [(180, 3000), (360, 6000)],
+            damage=(("citadel_weapon_mirage", [300, 600]),),
+            custom_stats=pool_stats,
+        ),
+    )
+    store = tmp_path / "players-pq"
+    ledger = [
+        {
+            "match_id": match_id,
+            "account_id": 11,
+            "player": "pro",
+            "hero_id": 52,
+            "rank": 2,
+            "region": "Asia",
+            "downloaded_at": dt.datetime(2026, 7, 1, tzinfo=dt.UTC),
+        }
+        for match_id in (900, 901, 902)
+    ]
+    players.write_player_tables(ledger, out_dir=store)
+    monkeypatch.setattr(players, "PARQUET_DIR", store)
+
+    run_main(
+        tmp_path,
+        "compare",
+        "combat",
+        "--hero",
+        "Mirage",
+        extra="[players.Mirage]\npro = 11\n",
+    )
+
+    out = capsys.readouterr().out
+
+    assert "You (you, 3 Mirage games) vs 1 tracked Mirage player (3 Mirage games): combat" in out
+    assert re.search(r"Metric\s+You\s+Them\s+Gap", out)
+    assert re.search(r"Hero hit %\s+25\.0%\s+50\.0%\s+-25\.0%", out)
+    assert re.search(r"Hero shots /game\s+100\.0\s+200\.0\s+-100\.0", out)
+    assert re.search(r"Gun damage /game\s+250\.0\s+600\.0\s+-350\.0", out)
+    assert re.search(r"Gun damage /hit\s+10\.0\s+6\.0\s+\+4\.0", out)
+    assert re.search(r"Parries /game\s+3\.0\s+6\.0\s+-3\.0", out)
 
 
 def test_compare_command_movement_stat(tmp_path, monkeypatch, capsys):
@@ -1056,16 +1601,15 @@ def test_compare_command_movement_stat(tmp_path, monkeypatch, capsys):
     run_main(
         tmp_path,
         "compare",
+        "movement",
         "--hero",
         "Mirage",
-        "--stat",
-        "movement",
         extra="[players.Mirage]\npro = 11\n",
     )
 
     out = capsys.readouterr().out
 
-    assert "You (you, 1 games) vs 1 tracked Mirage players (3 games): movement" in out
+    assert "You (you, 1 Mirage game) vs 1 tracked Mirage player (3 Mirage games): movement" in out
     assert "Last download" in out
     assert re.search(r"pro\s+3\s+2\s+2026-07-01", out)
     assert "meters /min" in out
@@ -1076,55 +1620,13 @@ def test_compare_command_movement_stat(tmp_path, monkeypatch, capsys):
     assert re.search(r"pro\s+11\s+3\s+2", out)
 
 
-def test_compare_command_shows_deaths_as_counts(tmp_path, monkeypatch, capsys):
-    cache = tmp_path / "cache"
-    cache.mkdir()
-
-    for match_id in (100, 101, 102):
-        write_cache_entry(cache, match_id=match_id, stats=[(180, 1000), (360, 2000)])
-
-    monkeypatch.setattr(players, "match_info", lambda mid, archive_dir=None: _pool_game(mid))
-    store = tmp_path / "players-pq"
-    ledger = [
-        {
-            "match_id": match_id,
-            "account_id": 11,
-            "player": "pro",
-            "hero_id": 52,
-            "rank": 2,
-            "region": "Asia",
-            "downloaded_at": dt.datetime(2026, 7, 1, tzinfo=dt.UTC),
-        }
-        for match_id in (900, 901, 902)
-    ]
-    players.write_player_tables(ledger, out_dir=store)
-    monkeypatch.setattr(players, "PARQUET_DIR", store)
-
-    run_main(
-        tmp_path,
-        "compare",
-        "--hero",
-        "Mirage",
-        "--stat",
-        "deaths",
-        extra="[players.Mirage]\npro = 11\n",
-    )
-
-    out = capsys.readouterr().out
-
-    assert "Avg/game" in out
-    assert "Med/game" in out
-    assert "/min" not in out
-    assert re.search(r"Min\s+You\s+Them\s+Gap\s+Cumulative gap\s+Games", out)
-
-
 def test_compare_command_without_tracked_players_prints_hint(tmp_path, monkeypatch, capsys):
     monkeypatch.setattr(players, "PARQUET_DIR", tmp_path / "players-pq")
     cache = tmp_path / "cache"
     cache.mkdir()
     write_cache_entry(cache, match_id=100, stats=[(180, 1000)])
 
-    run_main(tmp_path, "compare", "--hero", "Mirage")
+    run_main(tmp_path, "compare", "souls", "--hero", "Mirage")
 
     out = capsys.readouterr().out
 
@@ -1138,7 +1640,7 @@ def test_compare_command_without_downloads_prints_hint(tmp_path, monkeypatch, ca
     cache.mkdir()
     write_cache_entry(cache, match_id=100, stats=[(180, 1000)])
 
-    run_main(tmp_path, "compare", "--hero", "Mirage", extra="[players.Mirage]\npro = 11\n")
+    run_main(tmp_path, "compare", "souls", "--hero", "Mirage", extra="[players.Mirage]\npro = 11\n")
 
     out = capsys.readouterr().out
 
@@ -1175,6 +1677,10 @@ def test_help_sweep_includes_nested_skill_commands(tmp_path, capsys):
     out = capsys.readouterr().out
 
     assert "install or inspect the bundled Claude Code skill" in out
+    assert "--against" in out
+    assert "--pool-since" in out
+    assert "--milestones" in out
+    assert "--step" in out
     assert "replace an existing deadlock-matches Claude Code skill" in out
 
 
@@ -2188,6 +2694,29 @@ def test_match_souls_flag_prints_source_and_group_table(capsys, tmp_path):
     assert re.search(r"Other\s+0\s+1,000\s+1,000\s+25%", out)
     assert "gross souls earned by source" in out
     assert "Assassinate" not in out
+
+
+def test_souls_command_milestones(capsys, tmp_path):
+    cache = tmp_path / "cache"
+    cache.mkdir()
+    g = export.GoldSource
+
+    for match_id in (100, 101, 102):
+        write_cache_entry(
+            cache,
+            match_id=match_id,
+            stats=[(300, 3000), (600, 5000)],
+            gold_sources=[(300, g.LANE_CREEPS, 800, 200), (600, g.LANE_CREEPS, 1600, 400)],
+        )
+
+    run_main(tmp_path, "souls", "--hero", "Mirage", "--milestones")
+
+    out = capsys.readouterr().out
+
+    assert "Minutes to reach a net worth, median across games" in out
+    assert "You: you, 3 Mirage games" in out
+    assert re.search(r"3200\s+5\.5\s+3", out)
+    assert re.search(r"4800\s+9\.5\s+3", out)
 
 
 def test_match_souls_flag_without_source_rows(capsys, tmp_path):

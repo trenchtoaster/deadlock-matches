@@ -16,6 +16,7 @@ A few flags repeat across commands:
   - `deadlock --help` prints the full help
   - `deadlock <command> --help` prints the help for that command
 - `--account` filters your games to one or more of your accounts, by ID or a name from `config.toml`, comma-separated for several (`--account main` or `--account "main, alt1"`). Every command that reads your games takes it and defaults to all accounts in the config
+  - a tracked player name (or any account ID you downloaded games from) reads their games instead: `deadlock damage --hero Mirage --account tracked2`. Works for `history`, `match`, and the damage/healing/souls/combat/movement commands
 - `--days N` filters your last N days of games (`--days 7`)
 - `--since YYYY-MM-DD` filters for data since a date (`--since 2026-07-01`)
 - `--hero Mirage` filters a report to one hero (required for the tracked player commands since players are tracked per hero). Quote names with spaces: `--hero "Mo & Krill"`, though capitals and punctuation are optional (`--hero "mo krill"` works too)
@@ -736,6 +737,20 @@ deadlock souls --hero Mirage
 - gross souls by income source across every game of a hero, grouped the same way as `match --souls`: waves (troopers and denies), roaming (jungle and breakables), combat, objectives, and catch-up
 - the per game table shows the four group shares plus souls per minute, so a farm-heavy stretch or a fight-heavy stretch reads as drift
 - `--days`, `--since`, `--account`, and `--games` filter like `damage`
+- `--milestones` flips the view around: the median minute each net-worth mark is first reached, stepping by `--step` souls (default 1600), with the minute interpolated between the 5-minute snapshots
+
+```
+deadlock souls --hero Mirage --milestones
+
+  Minutes to reach a net worth, median across games
+  You: main, 64 Mirage games
+
+    Souls      You  games
+     1600      2.8     64
+     3200      5.6     64
+     4800      7.7     63
+     6400      9.6     63
+```
 
 ```
 Souls by source, 47 games of Mirage
@@ -1039,14 +1054,14 @@ The comparison commands (`compare`, `builds`, and the top player part of `item`)
 
    ```
    Mirage leaderboard:
-     someplayer           111222333    rank 1    Europe
-     anothermain          444555666    rank 24   SAmerica
+     tracked2           111222333    rank 1    Europe
+     tracked3          444555666    rank 24   SAmerica
 
    Track players by pasting lines into config.toml, then `deadlock download --hero "Mirage"`:
 
    [players."Mirage"]
-   "someplayer" = 111222333
-   "anothermain" = 444555666
+   "tracked2" = 111222333
+   "tracked3" = 444555666
    ```
 
    Rank is their rank on that hero across regions, from the per-hero leaderboards on [deadlock-api](https://api.deadlock-api.com). The overall ranked ladder is not used here since it says nothing about a specific hero. Anyone works, not just ladder players: for a friend, take the Steam64 number from their Steam profile URL and subtract 76561197960265728, the difference is the Steam32 account ID. A match of theirs you already downloaded also holds the exact ID in the `players` table ([writing your own queries](../README.md#writing-your-own-queries)). Searching by name is unreliable, since the only name search is over current Steam persona names, which change often.
@@ -1055,7 +1070,7 @@ The comparison commands (`compare`, `builds`, and the top player part of `item`)
 
 3. **Download their games.** `deadlock download --hero Mirage` pulls recent ranked games from everyone tracked for the hero. Nothing is ever downloaded from the leaderboard on its own. Re-running adds new games without downloading old ones again.
 
-To stop comparing against someone, delete their line from `config.toml`. The downloaded matches stay on disk (they cost little space and a game can contain more than one tracked player), they just stop being read, and tracking the player again later needs no new downloads. `deadlock compare --hero Mirage --stat movement` shows who is in the pool with their games and account IDs.
+To stop comparing against someone, delete their line from `config.toml`. The downloaded matches stay on disk (they cost little space and a game can contain more than one tracked player), they just stop being read, and tracking the player again later needs no new downloads. `deadlock compare movement --hero Mirage` shows who is in the pool with their games and account IDs.
 
 ### Hero meta by rating
 
@@ -1100,9 +1115,9 @@ deadlock builds --hero Mirage
 Tracked Mirage players (30 downloaded games):
 
   Player             Games  Rank  Record
-  someplayer            10     1  8W 2L
-  anothermain           10    14  6W 4L
-  thirdmain             10     -  7W 3L
+  tracked2            10     1  8W 2L
+  tracked3           10    14  6W 4L
+  tracked4             10     -  7W 3L
 
 Shared core across 21 winning builds:
 
@@ -1118,24 +1133,30 @@ Shared core across 21 winning builds:
 ### Compare against your tracked players
 
 ```
-deadlock compare --hero Mirage
+deadlock compare souls --hero Mirage
 ```
 
-- your stats vs your tracked players, from their downloaded games, on the same 5-minute intervals the `match` command uses (`--interval 10` for wider rows). Only your ranked games count, matching the pool
-- `--stat souls` (default, net worth) takes the `match` column names — `kills`, `deaths`, `assists`, `damage`, `damage_taken`, `obj_damage`, `healing`, `heal_prevented`, `creeps`, `neutrals`, `denies` — and the soul source groups: `farm` (troopers + jungle + breakables + rift/urn souls + deny souls, kill and assist souls excluded), `troopers`, `jungle`, `breakables`, `combat`, `objectives`, `catch_up`, `other`, or `soul_sources` for every income source as one gap table (rift and urn souls show there as the `rift_urn` row). `--stat movement` prints whole-game movement averages and has its own section below
-- the summary table shows each player as one row with their whole-game rate (average and median per minute), you first for contrast. `kills` and `deaths` print as plain counts instead — per game in the summary, per interval in the table below it
+- your games vs your tracked players, from their downloaded games. Reports are `souls`, `damage`, `healing`, `combat`, and `movement`
+- `compare souls` starts with income-source gaps, then net worth over time. `--milestones` flips it to the median minute each side reaches each net-worth mark
+- `compare damage` and `compare healing` start with the source breakdown, grouped like the standalone commands, then print the interval table underneath. Healing includes a healing-prevented section when anti-heal rows exist
+- `compare combat` compares aim, incoming fire, and parries as whole-window counters. `compare movement` prints whole-game movement averages and has its own section below
+- the interval reports use the same 5-minute windows the `match` command uses (`--interval 10` for wider rows). Only your ranked games count, matching the pool
+- the summary table shows each player as one row with their whole-game rate, you first for contrast
 - every interval cell is the median of the per-game rates inside that window, so a game only counts while it lasts. The cumulative gap column keeps the running total of the gap column — positive means you are ahead by that point in a typical game, negative means you trail
 - late intervals are not shown once too few games reach them on either side, sparse records would skew the medians
 - `--since 2026-06-30` keeps only your games from that date, useful when a patch changed the soul economy and old games would drag your median
+- `--pool-since 2026-06-30` also filters the tracked comparison pool by match date. Use both flags when you want recent form vs recent form
+- `--against tracked1` compares you against only that tracked player. It takes tracked player names or account IDs, comma-separated for several
+- `compare souls --milestones` is the `souls --milestones` table against the pool: the median minute each side first reaches every net-worth mark, with a Behind column for how many minutes later you get there
 
 ```
 You (111222333, 50 games) vs 3 tracked Mirage players (30 games): souls
 
   Player             Games  Rank  Last download   Avg/min  Med/min
   you                   50     -              -       978      961
-  someplayer            10     1     2026-07-10     1,102    1,056
-  anothermain           10    14     2026-07-10       989    1,004
-  thirdmain             10     -     2026-07-08     1,041    1,022
+  tracked2            10     1     2026-07-10     1,102    1,056
+  tracked3           10    14     2026-07-10       989    1,004
+  tracked4             10     -     2026-07-08     1,041    1,022
 
   Min       You/min  Them/min   Gap/min Cumulative gap    Games
   0-5           544       561       -17            -85    50/30
@@ -1153,6 +1174,40 @@ You (111222333, 50 games) vs 3 tracked Mirage players (30 games): souls
   Biggest souls gap: 20-25m, you 1,110/min vs tracked players 1,296/min
 ```
 
+```
+deadlock compare souls --hero Mirage --milestones
+
+  Minutes to reach a net worth, median across games
+  You: main, 64 Mirage games     Them: 49 Mirage games
+
+    Souls      You     Them   Behind    Games
+     1600      2.8      2.4     +0.3    64/49
+     3200      5.6      4.6     +1.0    64/48
+     4800      7.7      6.5     +1.2    63/48
+     6400      9.6      8.0     +1.6    63/48
+```
+
+```
+deadlock compare souls --hero Mirage --milestones --against tracked1
+```
+
+```
+deadlock compare damage --hero Mirage --against tracked1 --since 2026-07-14 --pool-since 2026-07-14
+
+Damage to heroes by source
+
+  Delivery                 You/min  Them/min   Gap/min   You %  Them %
+  Abilities                    509       709      -200     55%     47%
+  Gun                          226       433      -208     24%     29%
+
+  Source                 Delivery                You/min  Them/min   Gap/min   You/1k  Them/1k    Games
+  Djinn's Mark           Abilities                   185       352      -168        -        -     57/9
+  Promises Kept          Gun                         157       330      -174        -        -     58/9
+  Toxic Bullets          Items (bullet procs)         70       136       -65      786    1,435     28/9
+
+Damage over time
+```
+
 ### Leaderboard
 
 ```
@@ -1165,10 +1220,10 @@ deadlock leaderboard --hero Mirage
 
 ```
 Mirage leaderboard:
-  someplayer           111222333    rank 1    Europe
+  tracked2           111222333    rank 1    Europe
       12345678  2026-07-05  win   14/2/23
       12345670  2026-07-05  win   19/5/20
-  anothermain          444555666    rank 24   SAmerica
+  tracked3          444555666    rank 24   SAmerica
       12340013  2026-07-03  win   13/7/17
 ```
 
@@ -1184,7 +1239,8 @@ deadlock download --hero Mirage
 - `--match 12345678` fetches one match by ID (comma-separated for several), no `--hero` needed: it stores every player in the match, so `match --hero <anyone>` then works on it
 - re-running adds new matches without downloading old ones again
 - `--games 10` raises how many recent ranked games per player (5 by default)
-- any command reads a downloaded game directly by pointing `--parquet` at the tables, for example `deadlock --parquet ~/.local/share/deadlock-matches/parquet-players match <id> --hero Mirage` on Linux or `deadlock --parquet %LOCALAPPDATA%\deadlock-matches\parquet-players match <id> --hero Mirage` on Windows
+- read downloaded player games by name or ID, for example `deadlock damage --hero Mirage --account tracked2` or `deadlock damage --hero Mirage --account 111222333`
+- read a specific downloaded match directly by ID, for example `deadlock match 12345678 --hero Mirage`
 - players still on the ladder get their current rank noted when downloaded, so the comparison reports can show it later
 
 ### Is an item worth buying
@@ -1232,7 +1288,7 @@ Bought together (win rate of games with both, vs the item alone):
 ### Movement vs your tracked players
 
 ```
-deadlock compare --hero Mirage --stat movement
+deadlock compare movement --hero Mirage
 ```
 
 - whole-game movement averages instead of intervals: the tracked player list, the pooled gap table, and one row per tracked player
@@ -1245,9 +1301,9 @@ deadlock compare --hero Mirage --stat movement
 You (111222333, 50 games) vs 3 tracked Mirage players (34 games): movement
 
   Player             Games  Rank  Last download
-  proplayer1            14     1  2026-07-01
-  someplayer            10     -  2026-07-01
-  otherplayer           10    23  2026-07-01
+  tracked1            14     1  2026-07-01
+  tracked2            10     -  2026-07-01
+  tracked3             10    23  2026-07-01
 
   Metric                        You  Tracked      Gap
   meters /min                 388.3    430.0    +41.7
@@ -1261,9 +1317,9 @@ You (111222333, 50 games) vs 3 tracked Mirage players (34 games): movement
 
   Player            Account  Games    Rank   m /min  Stationary   Slide  In air  Zipline  Fighting  Dash/min  Air dash
   you                     -     50       -    388.3        9.9%    3.9%    8.1%     6.7%     24.3%       1.7       0.2
-  proplayer1      111222333     14       1    453.2        5.4%    7.0%   13.3%     8.8%     26.4%       2.8       0.3
-  someplayer      444555666     10       -    451.7        7.2%    9.2%   31.0%     8.2%     28.2%       1.8       1.8
-  otherplayer     555666777     10      23    420.1        7.2%    7.4%   23.1%     8.6%     30.3%       1.9       1.9
+  tracked1      111222333     14       1    453.2        5.4%    7.0%   13.3%     8.8%     26.4%       2.8       0.3
+  tracked2      444555666     10       -    451.7        7.2%    9.2%   31.0%     8.2%     28.2%       1.8       1.8
+  tracked3       555666777     10      23    420.1        7.2%    7.4%   23.1%     8.6%     30.3%       1.9       1.9
 ```
 ## Setup and maintenance
 
@@ -1316,8 +1372,8 @@ deadlock accounts
 Steam accounts on this PC that have run Deadlock, newest login first:
 
   Account      Account name       Profile name       Archived games  config.toml
-  111222333    mainlogin          someplayer                     36  main
-  123456789    oldalt             someplayer                      3
+  111222333    mainlogin          tracked2                     36  main
+  123456789    oldalt             tracked2                      3
 
 Add the ones that are you to config.toml, the names are yours to change:
 

@@ -80,18 +80,18 @@ timezone = "America/Chicago"
 main = 111222333
 "old alt" = 123456789
 
-# the player name is just a label for the reports, you can copy and paste their name
+# the player name labels the reports and works with --account to read their games
 # quotes around hero and player names are required if they contain spaces
 [players."Mirage"]
-"someplayer" = 444555666
+"tracked2" = 444555666
 
 [players."Grey Talon"]
 "Other Player" = 555666777
-"proplayer1" = 666777888
+"tracked1" = 666777888
 ```
 
 - the `movement` exclude is purely about size since it contains one row per player per second (330 KB per match)
-  - excluding it does not limit the movement commands. `deadlock match --movement`, `deadlock movement`, and `deadlock compare --stat movement` read the per minute `movement_intervals` table, which always builds and stays around 5 KB per match
+  - excluding it does not limit the movement commands. `deadlock match --movement`, `deadlock movement`, and `deadlock compare movement` read the per minute `movement_intervals` table, which always builds and stays around 5 KB per match
   - the per second rows only matter when a question needs exact positions or health at a specific second. `deadlock deaths` uses them to check who was nearby when you died, and custom queries like gank detection or route heatmaps need them too
   - to export them, delete `"movement"` from the list and run `deadlock sync`. The missing table triggers a full rebuild on its own
 - commands that read your matches archive the cache into `~/.local/share/deadlock-matches/matches/` (`%LOCALAPPDATA%\deadlock-matches\matches` on Windows)
@@ -170,6 +170,7 @@ A few flags repeat across commands:
   - `deadlock --help` prints the full help
   - `deadlock <command> --help` prints the help for that command
 - `--account` filters your games to one or more of your accounts, by ID or a name from `config.toml`, comma-separated for several (`--account main` or `--account "main, alt1"`). Every command that reads your games takes it and defaults to all accounts in the config
+  - a tracked player name (or any account ID you downloaded games from) reads their games instead: `deadlock damage --hero Mirage --account tracked2`. Works for `history`, `match`, and the damage/healing/souls/combat/movement commands
 - `--days N` filters your last N days of games (`--days 7`)
 - `--since YYYY-MM-DD` filters for data since a date (`--since 2026-07-01`)
 - `--hero Mirage` filters a report to one hero (required for the tracked player commands since players are tracked per hero). Quote names with spaces: `--hero "Mo & Krill"`, though capitals and punctuation are optional (`--hero "mo krill"` works too)
@@ -186,7 +187,7 @@ A few flags repeat across commands:
 - `deaths` - deaths bucketed by game time, who kills you, and with movement exported whether you were alone
 - `damage` - your damage sources summed across every game of a hero, then the gun/ability/item split game by game
 - `healing` - the same for your healing plus the healing your anti-heal denied, with the share that landed on you instead of a teammate
-- `souls` - the same for your souls, grouped into waves, roaming, combat, and objectives
+- `souls` - the same for your souls, grouped into waves, roaming, combat, and objectives; `--milestones` shows the median minute you hit each net-worth target
 - `combat` - the hidden fight counters summed across every game of a hero: aim both directions, damage by range, parries
 - `movement` - meters per minute, dashes, and the time sliding, airborne, on ziplines, or standing still across every game of a hero
 
@@ -201,7 +202,7 @@ A few flags repeat across commands:
 
 - `leaderboard` - top players of a hero with paste-ready config lines
 - `download` - pull recent games from the players you track
-- `compare` - your farm, stats, and movement vs your tracked players
+- `compare` - your souls, damage, healing, combat, and movement vs your tracked players; `--against tracked1` narrows the pool, `--pool-since` filters their games, and `compare souls --milestones` compares the net-worth target timings
 - `builds` - what your tracked players buy in wins vs losses
 - `meta` - public win and pick rates by rating or over time
 - `item --hero` - is an item worth buying, your games plus tracked players plus public meta

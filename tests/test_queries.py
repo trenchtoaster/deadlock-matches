@@ -2373,6 +2373,43 @@ def test_compare_intervals_unknown_stat(movement_pq):
         queries.compare_intervals(games, "ability_points", 300, movement_pq)
 
 
+def test_cumulative_stat_target_times_interpolates_between_snapshots(movement_pq):
+    games = pl.LazyFrame({"match_id": [100], "account_id": [42]})
+    times = queries.cumulative_stat_target_times(games, [3000], "souls", movement_pq).collect()
+
+    assert times.get_column("target_time_s").to_list() == [300.0]
+
+
+def test_cumulative_stat_target_times_below_first_snapshot_uses_game_start(movement_pq):
+    games = pl.LazyFrame({"match_id": [100], "account_id": [42]})
+    times = queries.cumulative_stat_target_times(games, [900], "souls", movement_pq).collect()
+
+    assert times.get_column("target_time_s").to_list() == [90.0]
+
+
+def test_cumulative_stat_target_times_lands_on_a_snapshot_exactly(movement_pq):
+    games = pl.LazyFrame({"match_id": [100], "account_id": [42]})
+    times = queries.cumulative_stat_target_times(games, [6000], "souls", movement_pq).collect()
+
+    assert times.get_column("target_time_s").to_list() == [600.0]
+
+
+def test_cumulative_stat_target_times_skips_targets_no_game_reaches(movement_pq):
+    games = pl.LazyFrame({"match_id": [100], "account_id": [42]})
+    times = queries.cumulative_stat_target_times(
+        games, [3000, 7000], "souls", movement_pq
+    ).collect()
+
+    assert times.get_column("target").to_list() == [3000]
+
+
+def test_cumulative_stat_target_times_unknown_stat(movement_pq):
+    games = pl.LazyFrame({"match_id": [100], "account_id": [42]})
+
+    with pytest.raises(ValueError, match="Unknown cumulative target stat"):
+        queries.cumulative_stat_target_times(games, [1600], "ability_points", movement_pq)
+
+
 def test_game_rates_whole_match(movement_pq):
     games = pl.LazyFrame({"match_id": [100], "account_id": [42]})
     souls = queries.game_rates(games, "souls", movement_pq).collect()

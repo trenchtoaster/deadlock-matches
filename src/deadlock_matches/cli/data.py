@@ -26,6 +26,7 @@ from deadlock_matches.assets import (
     store,
 )
 from deadlock_matches.config import (
+    account_labels,
     config_account_names,
     config_accounts,
     config_exclude,
@@ -206,7 +207,7 @@ def match_history(args: argparse.Namespace, config: str | Path | None = None) ->
     if since is None and days is None:
         games = games.tail(10)
 
-    names = {account_id: name for name, account_id in config_account_names(config).items()}
+    names = account_labels(config)
 
     print(
         f"  {'Day':<10}  {'Time':<5}  {'Account':<10} {'Hero':<14} {'Result':<7} "

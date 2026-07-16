@@ -15,6 +15,7 @@ from deadlock_matches.config import (
     config_account_names,
     config_accounts,
     config_exclude,
+    config_player_names,
     ensure_config,
     find_config,
 )
@@ -27,6 +28,10 @@ AS_OF_HELP = (
     "from the versioned asset history; defaults to the current patch"
 )
 CHANGES_HELP = "list every patch that changed this, from the versioned asset history, and quit"
+ACCOUNT_HELP = (
+    "your account IDs or names from config.toml, defaults to all accounts there. "
+    "A tracked player name from [players.<hero>] reads their downloaded games instead"
+)
 
 COMMAND_HELP = {
     "sync": "pull your matches into the parquet tables from the archive or the API",
@@ -41,7 +46,7 @@ COMMAND_HELP = {
     "combat": "the fight counters the game never shows: aim, range, parries",
     "leaderboard": "the current top players of a hero, with paste-ready lines for config.toml",
     "download": "fetch recent games from your tracked players into their own tables",
-    "compare": "your stats vs your tracked players, minute by minute",
+    "compare": "your stats vs your tracked players",
     "movement": "distance covered, dashes, and time sliding, airborne, or standing still",
     "builds": "the items your tracked players buy, in wins and in losses",
     "item": "item stat card, plus whether it is worth buying on a hero",
@@ -138,7 +143,7 @@ def int_list(v: str) -> list[int]:
 def build_parser(config: str | Path | None = None) -> argparse.ArgumentParser:
     """Build the CLI parser, where --account defaults to the accounts in config.toml."""
     accounts = config_accounts(config)
-    names = config_account_names(config)
+    names = config_player_names(config) | config_account_names(config)
 
     def account_list(v: str) -> list[int]:
         return parse_accounts(v, names)
@@ -218,27 +223,54 @@ def build_parser(config: str | Path | None = None) -> argparse.ArgumentParser:
     )
 
     c = command("compare")
-    c.add_argument("--hero", required=True, help="hero display name, like Mirage")
-    c.add_argument(
-        "--account",
-        type=account_list,
-        default=accounts,
-        help="your account IDs or names from config.toml, defaults to all accounts there",
+    compare_sub = c.add_subparsers(dest="stat", metavar="report", required=True)
+
+    def compare_command(name: str, help_text: str) -> argparse.ArgumentParser:
+        report = compare_sub.add_parser(name, help=help_text)
+        report.add_argument("--hero", required=True, help="hero display name, like Mirage")
+        report.add_argument(
+            "--account",
+            type=account_list,
+            default=accounts,
+            help=ACCOUNT_HELP,
+        )
+        report.add_argument(
+            "--against",
+            type=account_list,
+            default=None,
+            help="only compare against these tracked player names or account IDs",
+        )
+        report.add_argument(
+            "--since",
+            default=None,
+            help="only your games on or after this date (YYYY-MM-DD), like 2026-06-30",
+        )
+        report.add_argument(
+            "--pool-since",
+            default=None,
+            help="only tracked comparison games on or after this date (YYYY-MM-DD)",
+        )
+        report.set_defaults(interval=5, milestones=False, step=1600)
+        return report
+
+    cs = compare_command("souls", "net worth, income source gaps, and milestone timings")
+    cs.add_argument("--interval", type=int, default=5, help="interval length in minutes")
+    cs.add_argument(
+        "--milestones",
+        action="store_true",
+        help="median minute each side reaches each net-worth mark",
     )
-    c.add_argument(
-        "--stat",
-        default="souls",
-        help=f"{', '.join(queries.COMPARE_STATS)}, "
-        "soul_sources (every income source as one gap table), "
-        "or movement (pace, air and slide time, dashes)",
-    )
-    c.add_argument("--interval", type=int, default=5, help="interval length in minutes")
-    c.add_argument(
-        "--since",
-        default=None,
-        help="only your games on or after this date (YYYY-MM-DD), like 2026-06-30, "
-        "to keep the comparison inside one patch window",
-    )
+    cs.add_argument("--step", type=int, default=1600, help="net-worth mark size, default 1600")
+
+    for name, help_text in (
+        ("damage", "damage sources first, then damage over time"),
+        ("healing", "healing and anti-heal sources first, then healing over time"),
+    ):
+        report = compare_command(name, help_text)
+        report.add_argument("--interval", type=int, default=5, help="interval length in minutes")
+
+    compare_command("combat", "aim, gun damage, incoming fire, and parries")
+    compare_command("movement", "pace, air and slide time, dashes, and fighting time")
 
     mt = command("match")
     mt.add_argument(
@@ -252,7 +284,7 @@ def build_parser(config: str | Path | None = None) -> argparse.ArgumentParser:
         "--account",
         type=account_list,
         default=accounts,
-        help="your account IDs or names from config.toml, defaults to all accounts there",
+        help=ACCOUNT_HELP,
     )
     mt.add_argument(
         "--hero",
@@ -435,7 +467,7 @@ def build_parser(config: str | Path | None = None) -> argparse.ArgumentParser:
         "--account",
         type=account_list,
         default=accounts,
-        help="your account IDs or names from config.toml, defaults to all accounts there",
+        help=ACCOUNT_HELP,
     )
     de.add_argument("--hero", default=None, help="hero display name, like Mirage")
     de.add_argument("--days", type=int, default=None, help="only your last N days of games")
@@ -456,7 +488,7 @@ def build_parser(config: str | Path | None = None) -> argparse.ArgumentParser:
         "--account",
         type=account_list,
         default=accounts,
-        help="your account IDs or names from config.toml, defaults to all accounts there",
+        help=ACCOUNT_HELP,
     )
     dy.add_argument("--days", type=int, default=None, help="only your last N days of games")
     dy.add_argument(
@@ -483,7 +515,7 @@ def build_parser(config: str | Path | None = None) -> argparse.ArgumentParser:
         "--account",
         type=account_list,
         default=accounts,
-        help="your account IDs or names from config.toml, defaults to all accounts there",
+        help=ACCOUNT_HELP,
     )
     ln.add_argument("--days", type=int, default=None, help="only your last N days of games")
     ln.add_argument(
@@ -506,7 +538,7 @@ def build_parser(config: str | Path | None = None) -> argparse.ArgumentParser:
             "--account",
             type=account_list,
             default=accounts,
-            help="your account IDs or names from config.toml, defaults to all accounts there",
+            help=ACCOUNT_HELP,
         )
         dg.add_argument("--days", type=int, default=None, help="only your last N days of games")
         dg.add_argument(
@@ -520,6 +552,20 @@ def build_parser(config: str | Path | None = None) -> argparse.ArgumentParser:
             default=10,
             help="per game lines to print, default the last 10 (the tables above always count every game in the window)",
         )
+
+        if name == "souls":
+            dg.add_argument(
+                "--milestones",
+                action="store_true",
+                help="flip the view around: the median minute you reach each "
+                "net-worth mark, instead of souls by source",
+            )
+            dg.add_argument(
+                "--step",
+                type=int,
+                default=1600,
+                help="net-worth mark size for --milestones, default 1600",
+            )
 
     he = command("hero")
     he.add_argument("hero", help="hero display name, like Mirage")
@@ -686,6 +732,37 @@ def schema_report(args: argparse.Namespace) -> None:
         print(frame)
 
 
+def resolve_store(args: argparse.Namespace, config: str | Path | None = None) -> None:
+    """Read from the players store when every account named is a downloaded tracked player.
+
+    - accounts from the config.toml [accounts] table always stay on the main tables
+    - a mixed list stays on the main tables, no single store holds both
+    - an explicit --parquet path wins
+    """
+    if args.parquet != str(export.PARQUET_DIR):
+        return
+
+    requested = set(args.account or [])
+    mine = set(config_accounts(config) or [])
+
+    if not requested or requested & mine:
+        return
+
+    if not queries.table_exists("downloads", players.PARQUET_DIR):
+        return
+
+    downloaded = set(
+        queries.scan("downloads", players.PARQUET_DIR)
+        .select("account_id")
+        .unique()
+        .collect()
+        .get_column("account_id")
+    )
+
+    if requested <= downloaded:
+        args.parquet = str(players.PARQUET_DIR)
+
+
 def main(argv: Sequence[str] | None = None, config: str | Path | None = None) -> None:
     """Entry point for the deadlock CLI."""
     args = build_parser(config).parse_args(argv)
@@ -742,6 +819,9 @@ def main(argv: Sequence[str] | None = None, config: str | Path | None = None) ->
         print(f"No account set: pass --account or add one to {paths.tilde(find_config())}")
         print("`deadlock accounts` lists the accounts on this PC with their IDs")
         return
+
+    if needs_account:
+        resolve_store(args, config)
 
     if args.cmd == "schema":
         try:
