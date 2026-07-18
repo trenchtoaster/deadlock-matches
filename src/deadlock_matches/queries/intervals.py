@@ -8,7 +8,7 @@ from typing import TYPE_CHECKING
 import polars as pl
 
 from deadlock_matches.queries.core import scan
-from deadlock_matches.queries.delivery import damage_category, with_delivery
+from deadlock_matches.queries.delivery import damage_category, hero_damage, with_delivery
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
@@ -661,6 +661,60 @@ def enemy_damage_intervals(
     )
 
 
+def enemy_damage_totals(
+    games: pl.DataFrame | pl.LazyFrame,
+    parquet_dir: str | Path | None = None,
+    *,
+    dealt: bool = False,
+) -> pl.LazyFrame:
+    """Total the damage exchanged with each enemy hero for multiple players, one row per enemy.
+
+    - the whole-game twin of enemy_damage_intervals: reads the final-total
+      `damage` table, never the cumulative `damage_targets` snapshots, so a
+      plain sum is safe
+    - the damage every enemy dealt to each player, or with dealt=True the
+      damage each player dealt to every enemy, hero dealers and targets only
+    - games needs match_id and account_id columns, anything else is ignored,
+      and player games without matching rows contribute nothing
+    """
+    keys = ["match_id", "account_id"]
+    wanted = games.lazy().select(keys).unique()
+
+    mine = "dealer_account_id" if dealt else "target_account_id"
+    other = "target_account_id" if dealt else "dealer_account_id"
+
+    totals = (
+        scan("damage", parquet_dir)
+        .filter(
+            pl.col("stat") == "damage",
+            damage_category() != "total",
+            pl.col(other).is_not_null(),
+            pl.col("damage") != 0,
+        )
+        .select(
+            "match_id",
+            pl.col(mine).alias("account_id"),
+            pl.col(other).alias("enemy_account_id"),
+            "damage",
+        )
+        .join(wanted, on=keys)
+        .group_by(*keys, "enemy_account_id")
+        .agg(pl.col("damage").sum())
+    )
+
+    enemies = scan("players", parquet_dir).select(
+        "match_id",
+        pl.col("account_id").alias("enemy_account_id"),
+        pl.col("hero").alias("enemy"),
+    )
+
+    return (
+        totals.join(enemies, on=["match_id", "enemy_account_id"], how="left")
+        .sort([*keys, "damage"], descending=[False, False, True])
+        .select(*keys, "enemy_account_id", "enemy", "damage")
+    )
+
+
 def soul_intervals(
     match_id: int,
     account_id: int,
@@ -804,6 +858,34 @@ def source_intervals(
             descending=[False, False, True, False, False],
         )
         .select(*keys, "source_name", "delivery", "start_s", "end_s", "full", "damage", "total")
+    )
+
+
+def source_totals(
+    games: pl.DataFrame | pl.LazyFrame,
+    parquet_dir: str | Path | None = None,
+    stat: str = "damage",
+) -> pl.LazyFrame:
+    """Total damage or healing by source for multiple players, one row per source.
+
+    - the whole-game twin of source_intervals: reads the final-total `damage`
+      table, never the cumulative `damage_sources` snapshots, so a plain sum
+      is safe
+    - detail rows on hero targets only, screen `total` rows and zero rows
+      dropped, delivery carried through for gun/ability/item grouping
+    - games needs match_id and account_id columns, anything else is ignored,
+      and player games without matching rows contribute nothing
+    """
+    keys = ["match_id", "account_id"]
+    wanted = games.lazy().select(keys).unique()
+    detail = hero_damage(stat, parquet_dir).rename({"dealer_account_id": "account_id"})
+
+    return (
+        detail.join(wanted, on=keys)
+        .group_by(*keys, "source_name", "delivery")
+        .agg(pl.col("damage").sum())
+        .sort([*keys, "damage"], descending=[False, False, True])
+        .select(*keys, "source_name", "delivery", "damage")
     )
 
 

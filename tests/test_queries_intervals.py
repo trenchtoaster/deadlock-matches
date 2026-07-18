@@ -316,6 +316,89 @@ def test_source_intervals_other_stats(interval_pq):
     assert df.get_column("damage").to_list() == [0, 30]
 
 
+def test_source_totals_matches_the_source_intervals_final(interval_pq):
+    games = pl.DataFrame({"match_id": [500], "account_id": [42]})
+    totals = queries.source_totals(games, parquet_dir=interval_pq).collect()
+    intervals = queries.source_intervals(games, interval_s=600, parquet_dir=interval_pq).collect()
+
+    ends = (
+        intervals.group_by("source_name", "delivery")
+        .agg(pl.col("total").max().alias("damage"))
+        .sort("source_name")
+    )
+
+    assert totals.select("source_name", "delivery", "damage").sort("source_name").equals(ends)
+
+
+def test_source_totals_drops_creep_and_total_rows(interval_pq):
+    games = pl.DataFrame({"match_id": [500], "account_id": [42]})
+    df = queries.source_totals(games, parquet_dir=interval_pq).collect()
+
+    assert df.get_column("source_name").to_list() == ["citadel_weapon_mirage", "Mystic Shot"]
+    assert df.get_column("damage").to_list() == [150, 90]
+
+
+def test_source_totals_covers_every_game(two_interval_pq):
+    games = pl.DataFrame({"match_id": [500, 501], "account_id": [42, 42]})
+    df = queries.source_totals(games, parquet_dir=two_interval_pq).collect()
+
+    for match_id in (500, 501):
+        part = df.filter(pl.col("match_id") == match_id).get_column("damage").sum()
+
+        assert part == 240
+
+
+def test_source_totals_skips_unknown_players(interval_pq):
+    games = pl.DataFrame({"match_id": [500, 500], "account_id": [42, 99]})
+    df = queries.source_totals(games, parquet_dir=interval_pq).collect()
+
+    assert df.get_column("account_id").unique().to_list() == [42]
+
+
+def test_source_totals_other_stats(interval_pq):
+    games = pl.DataFrame({"match_id": [500], "account_id": [42]})
+    df = queries.source_totals(games, parquet_dir=interval_pq, stat="healing").collect()
+
+    assert df.get_column("source_name").to_list() == ["Dust Devil"]
+    assert df.get_column("damage").to_list() == [30]
+
+
+def test_enemy_damage_totals_dealt_sums_hero_sources(interval_pq):
+    games = pl.DataFrame({"match_id": [500], "account_id": [42]})
+    df = queries.enemy_damage_totals(games, parquet_dir=interval_pq, dealt=True).collect()
+
+    assert df.get_column("enemy_account_id").to_list() == [43]
+    assert df.get_column("damage").to_list() == [240]
+    assert df.get_column("enemy").to_list() == ["Infernus"]
+
+
+def test_enemy_damage_totals_taken_flips_direction(interval_pq):
+    games = pl.DataFrame({"match_id": [500], "account_id": [43]})
+    df = queries.enemy_damage_totals(games, parquet_dir=interval_pq).collect()
+
+    assert df.get_column("enemy_account_id").to_list() == [42]
+    assert df.get_column("damage").to_list() == [240]
+
+
+def test_enemy_damage_totals_matches_the_intervals_final(interval_pq):
+    games = pl.DataFrame({"match_id": [500], "account_id": [42]})
+    totals = queries.enemy_damage_totals(games, parquet_dir=interval_pq, dealt=True).collect()
+    intervals = queries.enemy_damage_intervals(
+        500, 42, interval_s=600, parquet_dir=interval_pq, dealt=True
+    )
+
+    ends = intervals.group_by("enemy_account_id").agg(pl.col("total").max().alias("damage"))
+
+    assert totals.select("enemy_account_id", "damage").equals(ends)
+
+
+def test_enemy_damage_totals_skips_unknown_players(interval_pq):
+    games = pl.DataFrame({"match_id": [500, 500], "account_id": [42, 99]})
+    df = queries.enemy_damage_totals(games, parquet_dir=interval_pq, dealt=True).collect()
+
+    assert df.get_column("account_id").unique().to_list() == [42]
+
+
 def test_team_intervals_gains_and_lead(pq):
     df = queries.team_intervals(100, 300, pq)
 

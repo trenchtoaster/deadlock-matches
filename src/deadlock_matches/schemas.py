@@ -309,7 +309,7 @@ class CustomStats(Table):
 
 
 class Damage(Table):
-    """Final damage matrix numbers for each dealer, source, and target."""
+    """Final damage matrix numbers for each dealer, source, and target, the totals table with no time axis so summing by source is safe."""
 
     match_id = MATCH_ID
     dealer_account_id = Column(pl.Int64, "Who dealt it, null for non-player slots")
@@ -326,7 +326,10 @@ class Damage(Table):
     stat = Column(
         pl.String, "Which figure this row carries: damage/healing/mitigated/... (EStatType)"
     )
-    damage = Column(pl.Int64, "Final cumulative value at match end for this row")
+    damage = Column(
+        pl.Int64,
+        "Final value at match end for this row, no time axis so summing by source gives the match total",
+    )
 
 
 class DamageSources(Table):
@@ -351,7 +354,10 @@ class DamageSources(Table):
         pl.Int64,
         "Sample game time in seconds, damage is cumulative; samples are sparse (about every three minutes plus match end)",
     )
-    damage = Column(pl.Int64, "Cumulative value at this sample for this row's group of targets")
+    damage = Column(
+        pl.Int64,
+        "Cumulative running total at this sample; never sum across time_stamp_s (that multiplies by the sample count) — take the last sample, or use the damage table for totals and queries.source_intervals for a timeline",
+    )
 
 
 class DamageTargets(Table):
@@ -373,7 +379,10 @@ class DamageTargets(Table):
         pl.Int64,
         "Sample game time in seconds, damage is cumulative; samples are sparse (about every three minutes plus match end)",
     )
-    damage = Column(pl.Int64, "Cumulative value at this sample for this dealer and target")
+    damage = Column(
+        pl.Int64,
+        "Cumulative running total at this sample; never sum across time_stamp_s (that multiplies by the sample count) — take the last sample, or use the damage table for totals",
+    )
 
 
 class MidBoss(Table):
