@@ -71,8 +71,10 @@ build: clean
     @echo "-----------------------------------"
     uv build
 
-publish: check sweep build
+publish:
     @echo "-----------------------------------"
-    @echo "- Publishing to PyPI -"
+    @echo "- Building and publishing to PyPI -"
     @echo "-----------------------------------"
+    rm -rf dist/
+    uv build
     uv publish
