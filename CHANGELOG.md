@@ -1,6 +1,23 @@
 # Changelog
 
 All notable changes to this project are documented here.
+## [0.8.0] - 2026-07-18
+
+### Added
+
+- Add source_totals and enemy_damage_totals helpers ([888a836](https://github.com/trenchtoaster/deadlock-matches/commit/888a83679bb97cfec3b834fa9f9c00669b879a3a))
+
+
+### Documentation
+
+- Call the installed deadlock command in the skill and docs ([fd28669](https://github.com/trenchtoaster/deadlock-matches/commit/fd28669ee48454627f979f200b2c843eb10bd655))
+
+
+### Internal
+
+- Split queries into a package with one module per report area, tests mirrored ([2acd211](https://github.com/trenchtoaster/deadlock-matches/commit/2acd211acca0910811a6106c00a263a7ea193fd6))
+
+
 ## [0.7.0] - 2026-07-16
 
 ### Added
