@@ -5,6 +5,7 @@ import re
 import shutil
 import unicodedata
 import zoneinfo
+from pathlib import Path
 
 import polars as pl
 import pytest
@@ -1914,7 +1915,17 @@ def test_skill_command_prints_bundled_skill(capsys, tmp_path):
     out = capsys.readouterr().out
 
     assert "Deadlock match metadata" in out
-    assert "uv run deadlock history" in out
+    assert "deadlock history" in out
+
+
+def test_project_skill_matches_bundled_skill():
+    root = Path(__file__).parent.parent
+    bundled = (
+        root / "src" / "deadlock_matches" / "agent" / "skills" / "deadlock-matches" / "SKILL.md"
+    )
+    project = root / ".claude" / "skills" / "deadlock-matches" / "SKILL.md"
+
+    assert project.read_text(encoding="utf-8") == bundled.read_text(encoding="utf-8")
 
 
 def test_default_command_lists_last_ten_games(capsys, tmp_path):

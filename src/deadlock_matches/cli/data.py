@@ -107,6 +107,9 @@ def skill_report(args: argparse.Namespace) -> None:
     target.parent.mkdir(parents=True, exist_ok=True)
     target.write_text(skill.read_text(encoding="utf-8"), encoding="utf-8")
     print(f"Installed agent skill at {_tilde(target)}")
+    print(
+        "Allow Bash(deadlock *) in Claude settings to skip the permission prompt on these commands."
+    )
 
 
 def final_stats(match_ids: pl.LazyFrame, parquet_dir: str | Path) -> pl.LazyFrame:

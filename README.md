@@ -147,6 +147,8 @@ deadlock skill install
 
 This writes the skill to your Claude skills directory. If you edited your local copy it is left alone unless you pass `--force`. Run `deadlock skill path` to see where it goes on your OS.
 
+To let the agent run `deadlock` commands without a prompt each time, add a `Bash(deadlock *)` allow rule to your Claude Code permissions. From a source clone the command is `uv run deadlock`, so use `Bash(uv run deadlock *)` instead.
+
 Useful skill commands:
 
 ```

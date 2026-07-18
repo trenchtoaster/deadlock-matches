@@ -7,6 +7,10 @@ description: Decode and analyze Deadlock match metadata from the Steam httpcache
 
 Reads match metadata from Steam's HTTP cache and compares the user's games against the players they track. Answer plain-English questions by running the CLI, or write ad-hoc Python against the modules for novel ones.
 
+## Invoking the CLI
+
+The examples below call `deadlock <command>`, the name an installed tool puts on PATH (`uv tool install deadlock-matches`, the recommended setup). If the user works from a source clone instead, there is no `deadlock` on PATH — prepend `uv run` from the repo root, so `deadlock history` becomes `deadlock history`. Check which case you are in before running: `command -v deadlock` finds an installed tool, otherwise look for a `pyproject.toml` naming `deadlock-matches` in the working directory and use `uv run`. The ad-hoc Python section at the end assumes a clone (it runs scripts with `uv run` from the repo root).
+
 ## User config
 
 - `config.toml` in the user config directory (`~/.config/deadlock-matches/` on Linux, `%APPDATA%\deadlock-matches\` on Windows — `deadlock config` prints the path) sets the `--account` default: an `[accounts]` table of `name = <steam32 id>` pairs (the only accepted shape — a plain list exits with the expected form). Every CLI run writes a commented starter config when the file is missing (`config.ensure_config`); the starter excludes the movement table (`exclude = ["movement"]`)
@@ -20,15 +24,15 @@ Reads match metadata from Steam's HTTP cache and compares the user's games again
 ## Common questions
 
 ```bash
-uv run deadlock accounts                  # Steam accounts on this PC that have run Deadlock:
+deadlock accounts                  # Steam accounts on this PC that have run Deadlock:
                                           # ids, account/profile names, archived games, plus a
                                           # paste-ready [accounts] block for config.toml
-uv run deadlock history [--days N] [--since 2026-07-01]
+deadlock history [--days N] [--since 2026-07-01]
                                           # lists one line per game of yours with account, hero,
                                           # result, K/D/A, souls, damage, timestamp, and match id,
                                           # newest last, last 10 games by default. Run it to get
                                           # the match id that match/download take
-uv run deadlock match [12345678] [--ago 1] [--hero Wraith] [--interval 10] [--souls|--damage|--healing|--teams|--laning [9]|--abilities|--items|--accolades|--buffs|--stacks|--combat|--melee|--movement|--deaths|--kills]
+deadlock match [12345678] [--ago 1] [--hero Wraith] [--interval 10] [--souls|--damage|--healing|--teams|--laning [9]|--abilities|--items|--accolades|--buffs|--stacks|--combat|--melee|--movement|--deaths|--kills]
                                           # prints the 12-player final scoreboard (lobby average,
                                           # K/D/A, souls, damage, obj damage, healing, prevented,
                                           # last hits, denies, resolved player starred), then that
@@ -65,32 +69,32 @@ The `match` view flags:
 - `--deaths` — first the damage each enemy dealt to you per interval (one row per enemy, sorted by total, from the damage_targets table), then each death logged: killer, game time, fight length, killer distance in meters, respawn timer. `--kills` is the same from the killer side (damage you dealt per enemy, then the kill log). The death log reads the deaths table directly, no movement join
 
 ```bash
-uv run deadlock item "Mercurial Magnum"   # the shop card: innate stats, then each passive/active
+deadlock item "Mercurial Magnum"   # the shop card: innate stats, then each passive/active
                                           # section with the game's labels and units (offline)
-uv run deadlock item "Escalating Exposure" --hero Mirage [--min-rating all] [--since 2026-06-30]
+deadlock item "Escalating Exposure" --hero Mirage [--min-rating all] [--since 2026-06-30]
                                           # your games table + meta stats, whether it is worth
                                           # building (no card here, the bare form above is the
                                           # card); meta defaults to Eternus+ lobbies, --since caps
                                           # your games AND the meta to a patch window
-uv run deadlock builds --hero Mirage      # item builds of the tracked players, offline from
+deadlock builds --hero Mirage      # item builds of the tracked players, offline from
                                           # their downloaded games (item_events via
                                           # players.pool_builds); header = one row per config
                                           # player with downloaded games and record
-uv run deadlock compare souls --hero Mirage [--interval 10] [--milestones] [--since 2026-06-30] [--pool-since 2026-06-30] [--against someplayer]
+deadlock compare souls --hero Mirage [--interval 10] [--milestones] [--since 2026-06-30] [--pool-since 2026-06-30] [--against someplayer]
                                           # income-source gaps, then net worth over time;
                                           # --milestones flips to target timing. both sides
                                           # read parquet offline (yours from your tables,
                                           # theirs from parquet-players filtered to config)
-uv run deadlock compare damage --hero Mirage --against someplayer
+deadlock compare damage --hero Mirage --against someplayer
                                           # damage sources side by side first, then damage over
                                           # time underneath
-uv run deadlock compare healing --hero Mirage --against someplayer
+deadlock compare healing --hero Mirage --against someplayer
                                           # healing sources, healing prevented when present,
                                           # then healing over time
-uv run deadlock compare combat --hero Mirage
+deadlock compare combat --hero Mirage
                                           # aim, incoming fire, and parries as whole-window
                                           # counters
-uv run deadlock compare movement --hero Mirage
+deadlock compare movement --hero Mirage
                                           # whole-game movement averages instead of intervals:
                                           # the member list, the pooled gap table, and one row
                                           # per tracked player (Rank = ladder rank at download
@@ -98,7 +102,7 @@ uv run deadlock compare movement --hero Mirage
                                           # by display width so CJK names keep the table
                                           # aligned) — the audit view for who is in the pool
                                           # and whether the Tracked averages blend playstyles
-uv run deadlock leaderboard --hero Mirage [--players 8] [--matches 5]
+deadlock leaderboard --hero Mirage [--players 8] [--matches 5]
                                           # current top players from the per-hero leaderboard with
                                           # account_ids (config players too, marked tracked), then
                                           # paste-ready [players."<Hero>"] lines for everyone not
@@ -109,7 +113,7 @@ uv run deadlock leaderboard --hero Mirage [--players 8] [--matches 5]
                                           # Steam profile URL minus extract.STEAM64_BASE
                                           # (76561197960265728), and shared matches hold the
                                           # exact id in the players table
-uv run deadlock download --hero Mirage [--account 111222333] [--match 12345678]
+deadlock download --hero Mirage [--account 111222333] [--match 12345678]
                                           # materialize recent games from the tracked players
                                           # into parquet-players/ (see below). NOTHING is ever
                                           # downloaded from the leaderboard on its own: every
@@ -127,7 +131,7 @@ uv run deadlock download --hero Mirage [--account 111222333] [--match 12345678]
                                           # deadlock damage --hero Mirage --account someplayer
                                           # or a specific downloaded match directly by id:
                                           # deadlock match 12345678 --hero Mirage
-uv run deadlock winrate [--days N] [--since 2026-07-01] [--by week] [--hero Mirage] [--min-rating Oracle]
+deadlock winrate [--days N] [--since 2026-07-01] [--by week] [--hero Mirage] [--min-rating Oracle]
                                           # daily W/L, MVP/Key Player counts, net wins, and a
                                           # Lobby column (average lobby rating, averaged in
                                           # subrank steps so means never land between levels);
@@ -142,7 +146,7 @@ uv run deadlock winrate [--days N] [--since 2026-07-01] [--by week] [--hero Mira
                                           # not_scored games are left OUT of the table and
                                           # reported under it (match history still shows their
                                           # result)
-uv run deadlock laning [--days N] [--since 2026-07-01] [--hero Mirage] [--minutes 9]
+deadlock laning [--days N] [--since 2026-07-01] [--hero Mirage] [--minutes 9]
                                           # match --laning at archive scale: win rate bucketed
                                           # by the lane result at the mark (default 9:00, lane
                                           # net = both duos summed, your side minus theirs from
@@ -155,10 +159,10 @@ uv run deadlock laning [--days N] [--since 2026-07-01] [--hero Mirage] [--minute
                                           # crossed with teammate feeding ("ally fed" = 4+
                                           # deaths); scored games only, --minutes moves the
                                           # mark like the match --laning window
-uv run deadlock deaths [--hero Mirage] [--days N] [--radius 2000]
+deadlock deaths [--hero Mirage] [--days N] [--radius 2000]
                                           # deaths by game time, top killers; with movement
                                           # exported also solo/outnumbered context
-uv run deadlock damage --hero Mirage [--days N] [--since 2026-07-01]
+deadlock damage --hero Mirage [--days N] [--since 2026-07-01]
                                           # match --damage at archive scale: a delivery block
                                           # (gun / abilities / item procs) over your games of
                                           # the hero, one row per damage source (games seen,
@@ -170,7 +174,7 @@ uv run deadlock damage --hero Mirage [--days N] [--since 2026-07-01]
                                           # drift (always the last 10 lines, --games N prints
                                           # more; --days/--since scope the window); --hero is
                                           # required, fuzzy names resolve ("mo krill")
-uv run deadlock healing --hero Mirage [--days N] [--since 2026-07-01]
+deadlock healing --hero Mirage [--days N] [--since 2026-07-01]
                                           # deadlock damage for healing: same delivery block
                                           # (abilities / item procs — no gun row) and per
                                           # source table over your games of the hero, then a
@@ -184,7 +188,7 @@ uv run deadlock healing --hero Mirage [--days N] [--since 2026-07-01]
                                           # with heal_prevented) and the self/teammate split
                                           # with self_healing/teammate_healing in stats; same
                                           # flags as damage
-uv run deadlock souls --hero Mirage [--days N] [--since 2026-07-01]
+deadlock souls --hero Mirage [--days N] [--since 2026-07-01]
                                           # deadlock damage for souls: a group block
                                           # (Waves / Roaming / Combat / Objectives /
                                           # Catch-Up, the match --souls groups) with /game
@@ -199,7 +203,7 @@ uv run deadlock souls --hero Mirage [--days N] [--since 2026-07-01]
                                           # --step souls (default 1600), the minute
                                           # interpolated between the 5-minute snapshots via
                                           # queries.cumulative_stat_target_times
-uv run deadlock combat --hero Mirage [--days N] [--since 2026-07-01]
+deadlock combat --hero Mirage [--days N] [--since 2026-07-01]
                                           # match --combat at archive scale: aim totals both
                                           # directions (your shots/hits/headshots at heroes
                                           # with hit and HS rates, then the enemy team's fire
@@ -214,7 +218,7 @@ uv run deadlock combat --hero Mirage [--days N] [--since 2026-07-01]
                                           # shots, and parries so an aim slump reads as
                                           # drift; same flags as damage. Archive percentiles
                                           # stay out of the CLI, queries.aim_rates has them
-uv run deadlock movement --hero Mirage [--account main] [--days 30] [--since 2026-06-30] [--games 20]
+deadlock movement --hero Mirage [--account main] [--days 30] [--since 2026-06-30] [--games 20]
                                           # the archive twin for movement: meters /min,
                                           # stationary/slide/in air/zipline/fighting percents
                                           # of alive time, and dash rates averaged per game
@@ -225,10 +229,10 @@ uv run deadlock movement --hero Mirage [--account main] [--days 30] [--since 202
                                           # of the averages; same flags as damage; the
                                           # tracked-player comparison moved to
                                           # compare movement
-uv run deadlock hero Mirage --souls 25000 # boon stats at a soul breakpoint (health, spirit,
+deadlock hero Mirage --souls 25000 # boon stats at a soul breakpoint (health, spirit,
                                           # melee, gun damage, AP), --level N works too,
                                           # no breakpoint = base card + per boon gains
-uv run deadlock ability "Dust Devil" [--hero Mirage] [--souls 25000 | --spirit 100 --melee 80] [--weapon 58]
+deadlock ability "Dust Devil" [--hero Mirage] [--souls 25000 | --spirit 100 --melee 80] [--weapon 58]
                                           # ability/gun numbers: base, spirit scaling, and a
                                           # section per tier with the values it changes;
                                           # --souls/--level resolves boon scaling (spirit,
@@ -245,7 +249,7 @@ uv run deadlock ability "Dust Devil" [--hero Mirage] [--souls 25000 | --spirit 1
                                           # for 3,200 souls invested; Kinetic Carbine's custom
                                           # weapon formula stays unresolved on purpose);
                                           # --hero for names on several heroes
-uv run deadlock meta [--hero Mirage] [--by rating|day|week|month] [--min-rating Eternus] [--since 2026-06-01] [--until 2026-07-01]
+deadlock meta [--hero Mirage] [--by rating|day|week|month] [--min-rating Eternus] [--since 2026-06-01] [--until 2026-07-01]
                                           # public hero win/pick rates from deadlock-api.com;
                                           # --by rating = per skill rating (Oracle 3), day/week/month = trends
                                           # over time; --hero narrows to one hero (defaults --by
@@ -257,9 +261,9 @@ uv run deadlock meta [--hero Mirage] [--by rating|day|week|month] [--min-rating 
                                           # floor (mixed lobbies drop out) — read distributions
                                           # without a floor; counts also drift between fetches
                                           # (each flag combo is its own URL, cached up to a day)
-uv run deadlock schema [table]            # the data dictionary — read before writing polars
-uv run deadlock assets                    # refresh the bundled current-patch data after a patch
-uv run deadlock sync                      # rebuild parquet tables; --full from scratch;
+deadlock schema [table]            # the data dictionary — read before writing polars
+deadlock assets                    # refresh the bundled current-patch data after a patch
+deadlock sync                      # rebuild parquet tables; --full from scratch;
                                           # --source api pulls missing matches from the
                                           # match-history API into the archive (it may not
                                           # have every game — the rest need in-game clicks);
@@ -316,9 +320,11 @@ Start ad-hoc polars from these instead of rewriting boilerplate. This is the can
 - `cumulative_stat_target_times(games, targets, stat="souls")` — when each game first crosses each target, interpolated between stats snapshots (backs `--milestones`)
 - `match_intervals(match_id, account_id, interval_s=300)` — one player's match as per-interval gains: souls/kills/deaths/assists/damage/damage_taken/obj_damage/healing/heal_prevented/creeps/neutrals/denies + souls_min, diffed from the cumulative snapshots. kills and deaths come from the deaths table instead (snapshot kills/deaths both drift). Backs `deadlock match`
 - `enemy_damage_intervals(match_id, account_id, interval_s=300, dealt=False)` — one player's damage exchange per enemy hero as per-interval gains from `damage_targets` (taken from each enemy by default, `dealt=True` flips to damage dealt to each enemy; hero dealers and targets only, per-source forward-fill before the per-enemy sum, enemies ordered by match total). Backs the per-enemy tables in `deadlock match --deaths/--kills/--damage`
+- `enemy_damage_totals(games, dealt=False)` — the whole-game twin of enemy_damage_intervals: total damage taken from (or `dealt=True` dealt to) each enemy hero per player, one row per enemy, read from the final-total `damage` table so a plain sum is safe. Use this for totals; `enemy_damage_intervals` is only for timelines. Hand-summing `damage_targets` across `time_stamp_s` instead multiplies by the sample count (~5× overcount)
 - `soul_intervals(match_id, account_id, interval_s=300)` — one player's souls as per-source interval gains from `soul_sources` (value = souls+souls_orbs, sources with any souls ordered by match total, same 3-min-sample forward-fill as `damage_intervals`). Backs `deadlock match --souls`; the cli maps `source_name` to in-game screen labels and the Waves/Roaming/Combat/Objectives/Catch-Up/Other groups
 - `damage_intervals(match_id, account_id, interval_s=300, stat="damage")` — one player's damage to heroes as per-source interval gains from `damage_sources` (detail rows only, ordered by match total). Backs `deadlock match --damage`
 - `source_intervals(games, interval_s=300, stat="damage")` — the same across multiple matches at once (games = any frame with match_id/account_id columns, e.g. my_games or tracked_player_games rows; same per-source forward-fill, plus a `full` flag for whole windows; `stat="healing"` for healing). NEVER sum cumulative `damage_sources` across sources per timestamp yourself — each source samples at its own times so the sum sawtooths and undercounts (~55% low when tried 2026-07-08)
+- `source_totals(games, stat="damage")` — the whole-game twin of source_intervals: total damage (or healing) by source per player, one row per source, read from the final-total `damage` table so a plain sum is safe. Use this for any totals-by-source number; `source_intervals` is only for timelines. Hand-summing `damage_sources` across `time_stamp_s` instead multiplies by the sample count (~5× overcount, seen 2026-07-18)
 - `team_intervals(match_id, interval_s=300)` — both teams' souls gained per interval with the running lead (team 0 minus team 1). Backs `deadlock match --teams`
 - `laning_stats(match_id, mark_s)` — every player in one match snapshotted at the last stats sample at or before mark_s (souls, damage, damage_taken, healing, heal_prevented, creeps, neutrals, denies, plus `snap_s` = the sample used), kills/deaths counted from the deaths table inside the window instead, hero/team/lane joined. Backs `deadlock match --laning`
 - `movement_intervals(match_id, account_id, interval_s=300)` — the movement of one player split into intervals: distance plus seconds alive/moving/stationary/sliding/in air/ziplining/fighting, dash counts, and derived percents (null while dead). Sums per minute rows from the movement_intervals table, so any interval that is a whole number of minutes is exact. Backs `deadlock match --movement`
@@ -340,7 +346,7 @@ Tables: `matches`, `players`, `stats`, `soul_sources`, `item_events`, `accolades
 The CLI commands and the `queries` helpers above already apply every per-table caveat — relaying their output or reusing a helper needs nothing more. **Read `references/schema-caveats.md` BEFORE hand-writing raw polars against a table no helper covers** — it has each table's columns and verified traps. The four that bite most, always in force:
 
 - `soul_sources`: the in-game number is `souls + souls_orbs` — ALWAYS sum both (`souls` alone drops the orb-confirm share, a big chunk of trooper income that drifts by patch)
-- `damage`/`damage_sources`: filter `target_account_id.is_not_null()` for hero damage (null = creeps/objectives; skipping it inflated gun-crit 9×), and never sum `category == "total"` rows together with detail rows (double-counts)
+- `damage` = final totals (no time axis, safe to sum by source — use it or `source_totals` for any totals-by-source number); `damage_sources` = cumulative 3-min snapshots, so summing across `time_stamp_s` multiplies by the sample count (~5× overcount) — take the last sample or use `source_intervals` for timelines. Hero damage only: filter `target_account_id.is_not_null()` on `damage`, `vs_heroes` on `damage_sources` (skipping it inflated gun-crit 9×); never sum `category == "total"` rows together with detail rows (double-counts)
 - `stats` are cumulative snapshots (`max()` ≈ final); snapshot `kills`/`deaths` drift from the scoreboard — use the `deaths` table for the real count
 - `damage_sources`/`soul_sources` samples are sparse (~3 min) and `damage_sources` is RIGHT-aligned — never diff them by hand, use the `*_intervals` helpers
 
