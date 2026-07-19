@@ -1,6 +1,13 @@
 # Changelog
 
 All notable changes to this project are documented here.
+## [0.8.1] - 2026-07-19
+
+### Internal
+
+- Deduplicate interval logic ([f0204fa](https://github.com/trenchtoaster/deadlock-matches/commit/f0204fadfcea7ffab2f0318b38960c0cd4055b94))
+
+
 ## [0.8.0] - 2026-07-18
 
 ### Added
