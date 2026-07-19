@@ -378,8 +378,9 @@ def item_games(
         .join(keys, on=["match_id", "account_id"], how="semi")
         .sort("match_id", "account_id", "game_time_s")
         .with_columns(
-            pl.int_range(1, pl.len() + 1).over("match_id", "account_id").alias("buy_n"),
-            pl.int_range(1, pl.len() + 1)
+            pl.col("game_time_s").rank("ordinal").over("match_id", "account_id").alias("buy_n"),
+            pl.col("game_time_s")
+            .rank("ordinal")
             .over("match_id", "account_id", "tier")
             .alias("tier_buy_n"),
         )

@@ -71,7 +71,14 @@ def damage_by_source(
         scan("matches", parquet_dir)
         .filter(pl.col("match_id").is_in(match_ids.implode()))
         .select("match_id", "duration_s")
-        .collect()
+    )
+    ids = _proc_item_ids(rows)
+    durations, owned_rows, outlay_rows = pl.collect_all(
+        [
+            durations,
+            _owned_minutes(ids, accounts, match_ids, parquet_dir),
+            _effective_outlay(ids, accounts, match_ids, parquet_dir),
+        ]
     )
     source_minutes = (
         rows.select("source_name", "source_class", "delivery", "match_id")
@@ -81,14 +88,13 @@ def damage_by_source(
         .agg((pl.col("duration_s").sum() / 60).alias("minutes"))
     )
     grand = rows.get_column("damage").sum()
-    ids = _proc_item_ids(rows)
-    owned = _owned_minutes(ids, accounts, match_ids, parquet_dir)
+    owned = {ids[item_id]: minutes for item_id, minutes in owned_rows.iter_rows()}
     owned_min = (
         pl.col("source_class").replace_strict(owned, default=None, return_dtype=pl.Float64)
         if owned
         else pl.lit(None, dtype=pl.Float64)
     )
-    outlay = _effective_outlay(ids, accounts, match_ids, parquet_dir)
+    outlay = {ids[item_id]: souls for item_id, souls in outlay_rows.iter_rows()}
     outlay_souls = (
         pl.col("source_class").replace_strict(outlay, default=None, return_dtype=pl.Float64)
         if outlay
@@ -157,17 +163,18 @@ def _owned_minutes(
     accounts: Sequence[int],
     match_ids: pl.Series,
     parquet_dir: str | Path | None,
-) -> dict[str, float]:
-    """Sum the minutes each item damage source was owned across the given games.
+) -> pl.LazyFrame:
+    """Sum the minutes each item damage source was owned across the given games, lazily.
 
-    - keyed by source_class, only the item proc sources in ids appear
+    - one row per item id, only the item proc sources in ids appear, and the
+      frame stays empty without any
     - ownership windows come from the buys, like the item command: a sold or
       consumed buy ends at sold_time_s, a kept buy at the end of the match
     """
     if not ids:
-        return {}
+        return pl.LazyFrame(schema={"item_id": pl.Int64, "minutes": pl.Float64})
 
-    windows = (
+    return (
         _item_windows(
             pl.col("item_id").is_in(list(ids))
             & pl.col("match_id").is_in(match_ids.implode())
@@ -177,10 +184,7 @@ def _owned_minutes(
         .group_by("item_id")
         .agg(((pl.col("end_s") - pl.col("game_time_s")).sum() / 60).alias("minutes"))
         .filter(pl.col("minutes") > 0)
-        .collect()
     )
-
-    return {ids[item_id]: minutes for item_id, minutes in windows.iter_rows()}
 
 
 def _effective_outlay(
@@ -188,10 +192,10 @@ def _effective_outlay(
     accounts: Sequence[int],
     match_ids: pl.Series,
     parquet_dir: str | Path | None,
-) -> dict[str, float]:
-    """Sum the effective souls put into each item damage source across the given games.
+) -> pl.LazyFrame:
+    """Sum the effective souls put into each item damage source across the given games, lazily.
 
-    - keyed by source_class, only the item proc sources in ids appear
+    - one row per item id, only the item proc sources in ids appear
     - empty when the versioned asset tables are missing
     """
     priced = table_exists("item_history", parquet_dir) and table_exists(
@@ -199,9 +203,9 @@ def _effective_outlay(
     )
 
     if not ids or not priced:
-        return {}
+        return pl.LazyFrame(schema={"item_id": pl.Int64, "souls": pl.Int64})
 
-    outlay = (
+    return (
         item_events_effective(parquet_dir)
         .filter(
             pl.col("item_id").is_in(list(ids)),
@@ -211,10 +215,7 @@ def _effective_outlay(
         .group_by("item_id")
         .agg(pl.col("effective_cost").sum().alias("souls"))
         .filter(pl.col("souls") > 0)
-        .collect()
     )
-
-    return {ids[item_id]: souls for item_id, souls in outlay.iter_rows()}
 
 
 def _hero_game_rows(
@@ -442,20 +443,19 @@ def souls_by_source(
         .group_by("match_id", "account_id", "source_name")
         .agg(pl.col("souls").max(), pl.col("souls_orbs").max())
         .filter(pl.col("souls") + pl.col("souls_orbs") != 0)
-        .collect()
     )
+    durations = (
+        scan("matches", parquet_dir)
+        .join(finals.select("match_id").unique(), on="match_id", how="semi")
+        .select("match_id", "duration_s")
+    )
+    finals, durations = pl.collect_all([finals, durations])
 
     if finals.is_empty():
         msg = f"no soul_sources rows for {hero} on accounts {accounts}"
         raise ValueError(msg)
 
     total = int((finals.get_column("souls") + finals.get_column("souls_orbs")).sum())
-    durations = (
-        scan("matches", parquet_dir)
-        .filter(pl.col("match_id").is_in(finals.get_column("match_id").unique().implode()))
-        .select("match_id", "duration_s")
-        .collect()
-    )
     source_minutes = (
         finals.select("source_name", "match_id")
         .unique()

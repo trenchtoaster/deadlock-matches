@@ -63,23 +63,19 @@ def movement_intervals(
         raise ValueError(msg)
 
     duration = (
-        scan("matches", parquet_dir)
-        .filter(pl.col("match_id") == match_id)
-        .select("duration_s")
-        .collect()
+        scan("matches", parquet_dir).filter(pl.col("match_id") == match_id).select("duration_s")
     )
-
-    if duration.is_empty():
-        msg = f"match {match_id} not in the tables"
-        raise ValueError(msg)
-
     buckets = (
         scan("movement_intervals", parquet_dir)
         .filter(pl.col("match_id") == match_id, pl.col("account_id") == account_id)
         .group_by((pl.col("start_s") // interval_s).alias("interval"))
         .agg(pl.col(MOVEMENT_COUNTS).sum())
-        .collect()
     )
+    duration, buckets = pl.collect_all([duration, buckets])
+
+    if duration.is_empty():
+        msg = f"match {match_id} not in the tables"
+        raise ValueError(msg)
 
     if buckets.is_empty():
         msg = f"account {account_id} has no movement rows in match {match_id}"
@@ -147,8 +143,12 @@ def movement_metrics(parquet_dir: str | Path | None = None) -> pl.LazyFrame:
         .agg(pl.col(MOVEMENT_COUNTS).sum())
         .with_columns(_movement_percents())
         .with_columns(
-            (pl.col("dashes") / (pl.col("alive_s") / 60)).alias("dashes_min"),
-            (pl.col("air_dashes") / (pl.col("alive_s") / 60)).alias("air_dashes_min"),
+            pl.when(pl.col("alive_s") > 0)
+            .then(pl.col("dashes") / (pl.col("alive_s") / 60))
+            .alias("dashes_min"),
+            pl.when(pl.col("alive_s") > 0)
+            .then(pl.col("air_dashes") / (pl.col("alive_s") / 60))
+            .alias("air_dashes_min"),
         )
     )
 
@@ -176,7 +176,9 @@ def movement_profile(parquet_dir: str | Path | None = None) -> pl.LazyFrame:
         metrics.join(farm, on=list(grp), how="left")
         .join(scan("matches", parquet_dir).select("match_id", "duration_s"), on="match_id")
         .with_columns(
-            (pl.col("farm_souls") / (pl.col("duration_s") / 60)).alias("farm_min"),
+            pl.when(pl.col("duration_s") > 0)
+            .then(pl.col("farm_souls") / (pl.col("duration_s") / 60))
+            .alias("farm_min"),
             pl.when(pl.col("distance") > 0)
             .then(1000 * pl.col("farm_souls") / pl.col("distance"))
             .alias("souls_per_1000_units"),

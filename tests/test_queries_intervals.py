@@ -412,3 +412,30 @@ def test_team_intervals_gains_and_lead(pq):
 def test_team_intervals_unknown_match(pq):
     with pytest.raises(ValueError, match="not in the tables"):
         queries.team_intervals(999, parquet_dir=pq)
+
+
+def test_everything_stays_lazy(interval_pq, movement_pq):
+    games = pl.LazyFrame({"match_id": [500], "account_id": [42]})
+    frames = [
+        queries.compare_intervals(games, "souls", 300, interval_pq),
+        queries.game_totals(games, "souls", interval_pq),
+        queries.game_rates(games, "souls", interval_pq),
+        queries.cumulative_at(games, "souls", [300], interval_pq),
+        queries.cumulative_stat_target_times(games, [1000], "souls", interval_pq),
+        queries.source_intervals(games, interval_s=600, parquet_dir=interval_pq),
+        queries.source_totals(games, interval_pq),
+        queries.enemy_damage_totals(games, interval_pq),
+        queries.hero_damage(parquet_dir=interval_pq),
+        queries.movement_metrics(movement_pq),
+        queries.movement_profile(movement_pq),
+        queries.movement_scoreboard(100, movement_pq),
+    ]
+
+    for frame in frames:
+        assert isinstance(frame, pl.LazyFrame)
+
+    plan = frames[5].explain()
+    materialized = [line.strip() for line in plan.splitlines() if line.strip().startswith("DF ")]
+
+    assert "Parquet SCAN" in plan
+    assert all(line.startswith('DF ["match_id", "account_id"]') for line in materialized)

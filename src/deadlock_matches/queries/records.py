@@ -155,7 +155,10 @@ def record_games(
         since = dt.date.fromisoformat(since) if isinstance(since, str) else since
         lf = lf.filter(pl.col("day") >= since)
 
-    games = (
+    if days is not None:
+        lf = lf.filter(pl.col("day").rank("dense", descending=True) <= days)
+
+    return (
         lf.unique(subset="match_id")
         .select(
             "match_id",
@@ -170,12 +173,6 @@ def record_games(
         )
         .collect()
     )
-
-    if days is not None:
-        kept = games.get_column("day").unique().sort().tail(days)
-        games = games.filter(pl.col("day").is_in(kept.implode()))
-
-    return games
 
 
 def abandon_record(

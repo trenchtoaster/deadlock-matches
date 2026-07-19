@@ -125,8 +125,10 @@ def aim_rates(
 
     frame = (
         frame.with_columns(
-            hit_rate=(100 * pl.col("Hits") / pl.col("Shots")),
-            headshot_rate=(100 * pl.col("Headshots") / pl.col("Hits").clip(1)),
+            hit_rate=pl.when(pl.col("Shots") > 0).then(100 * pl.col("Hits") / pl.col("Shots")),
+            headshot_rate=pl.when(pl.col("Hits") > 0).then(
+                100 * pl.col("Headshots") / pl.col("Hits")
+            ),
             hero_games=pl.len().over("hero"),
         )
         .with_columns(

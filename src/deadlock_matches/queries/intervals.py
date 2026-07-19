@@ -60,6 +60,45 @@ def _bucket(column: str, interval_s: int) -> pl.Expr:
     return ((pl.col(column) - 1) // interval_s).clip(0).cast(pl.Int64).alias("interval")
 
 
+def _filled_grid(
+    samples: pl.DataFrame, keys: Sequence[str], values: Sequence[str], interval_s: int
+) -> pl.DataFrame:
+    """Bucket cumulative samples and forward fill them over a full interval grid.
+
+    - keys split the samples into tracks that each fill on their own clock
+    - the grid runs from interval 0 through the last sampled interval
+    """
+    cumulative = (
+        samples.with_columns(_bucket("time_stamp_s", interval_s))
+        .group_by(*keys, "interval")
+        .agg(pl.col(values).max())
+    )
+    n = cumulative.select(pl.col("interval").max()).item() + 1
+    intervals = pl.DataFrame({"interval": range(n)}, schema={"interval": pl.Int64})
+    grid = samples.select(keys).unique().join(intervals, how="cross") if keys else intervals
+    filled = pl.col(values).fill_null(strategy="forward").fill_null(0)
+
+    return (
+        grid.join(cumulative, on=[*keys, "interval"], how="left")
+        .sort(*keys, "interval")
+        .with_columns(filled.over(keys) if keys else filled)
+    )
+
+
+def _diffed_grid(
+    samples: pl.DataFrame, keys: Sequence[str], values: Sequence[str], interval_s: int
+) -> pl.DataFrame:
+    """Diff forward filled cumulative samples into per interval gains."""
+    previous = [pl.col(value).shift(1).fill_null(0) for value in values]
+
+    if keys:
+        previous = [expr.over(keys) for expr in previous]
+
+    gains = [pl.col(value) - expr for value, expr in zip(values, previous, strict=True)]
+
+    return _filled_grid(samples, keys, values, interval_s).with_columns(gains)
+
+
 def _interval_grid(
     games: pl.LazyFrame, interval_s: int, parquet_dir: str | Path | None
 ) -> pl.LazyFrame:
@@ -424,57 +463,41 @@ def match_intervals(
     - souls_min is the souls gained per minute inside the interval
     """
     duration = (
-        scan("matches", parquet_dir)
-        .filter(pl.col("match_id") == match_id)
-        .select("duration_s")
-        .collect()
+        scan("matches", parquet_dir).filter(pl.col("match_id") == match_id).select("duration_s")
     )
-
-    if duration.is_empty():
-        msg = f"match {match_id} not in the tables"
-        raise ValueError(msg)
 
     fields = list(INTERVAL_STATS.values())
     snaps = (
         scan("stats", parquet_dir)
         .filter(pl.col("match_id") == match_id, pl.col("account_id") == account_id)
         .select("time_stamp_s", *fields)
-        .collect()
     )
-
-    if snaps.is_empty():
-        msg = f"account {account_id} has no snapshots in match {match_id}"
-        raise ValueError(msg)
-
-    duration_s = int(duration.item())
-    bucket = ((pl.col("time_stamp_s") - 1) // interval_s).clip(0).cast(pl.Int64).alias("interval")
-    cumulative = snaps.with_columns(bucket).group_by("interval").agg(pl.col(fields).max())
 
     mine = pl.col("account_id") == account_id
     killed = (pl.col("killer_account_id") == account_id).fill_null(value=False)
     events = (
         scan("deaths", parquet_dir)
         .filter(pl.col("match_id") == match_id, mine | killed)
-        .select(
-            ((pl.col("game_time_s") - 1) // interval_s).clip(0).cast(pl.Int64).alias("interval"),
-            killed.alias("kill"),
-            mine.alias("death"),
-        )
+        .select(_bucket("game_time_s", interval_s), killed.alias("kill"), mine.alias("death"))
         .group_by("interval")
         .agg(
             pl.col("kill").sum().cast(pl.Int64).alias("kills"),
             pl.col("death").sum().cast(pl.Int64).alias("deaths"),
         )
-        .collect()
     )
+    duration, snaps, events = pl.collect_all([duration, snaps, events])
 
-    n = cumulative.select(pl.col("interval").max()).item() + 1
+    if duration.is_empty():
+        msg = f"match {match_id} not in the tables"
+        raise ValueError(msg)
+
+    if snaps.is_empty():
+        msg = f"account {account_id} has no snapshots in match {match_id}"
+        raise ValueError(msg)
+
+    duration_s = int(duration.item())
     gains = (
-        pl.DataFrame({"interval": range(n)}, schema={"interval": pl.Int64})
-        .join(cumulative, on="interval", how="left")
-        .sort("interval")
-        .with_columns(pl.col(fields).fill_null(strategy="forward").fill_null(0))
-        .with_columns(pl.col(f) - pl.col(f).shift(1).fill_null(0) for f in fields)
+        _diffed_grid(snaps, [], fields, interval_s)
         .join(events, on="interval", how="left")
         .with_columns(pl.col("kills", "deaths").fill_null(0))
         .sort("interval")
@@ -510,15 +533,8 @@ def damage_intervals(
     - delivery comes along for gun/ability/item grouping
     """
     duration = (
-        scan("matches", parquet_dir)
-        .filter(pl.col("match_id") == match_id)
-        .select("duration_s")
-        .collect()
+        scan("matches", parquet_dir).filter(pl.col("match_id") == match_id).select("duration_s")
     )
-
-    if duration.is_empty():
-        msg = f"match {match_id} not in the tables"
-        raise ValueError(msg)
 
     rows = scan("damage_sources", parquet_dir).filter(
         pl.col("match_id") == match_id,
@@ -528,37 +544,22 @@ def damage_intervals(
         damage_category() != "total",
         pl.col("damage") != 0,
     )
-    samples = (
-        with_delivery(rows, parquet_dir)
-        .select("source_name", "delivery", "time_stamp_s", "damage")
-        .collect()
+    samples = with_delivery(rows, parquet_dir).select(
+        "source_name", "delivery", "time_stamp_s", "damage"
     )
+    duration, samples = pl.collect_all([duration, samples])
+
+    if duration.is_empty():
+        msg = f"match {match_id} not in the tables"
+        raise ValueError(msg)
 
     if samples.is_empty():
         msg = f"account {account_id} has no {stat} to heroes in match {match_id}"
         raise ValueError(msg)
 
     duration_s = int(duration.item())
-    bucket = ((pl.col("time_stamp_s") - 1) // interval_s).clip(0).cast(pl.Int64).alias("interval")
-    cumulative = (
-        samples.with_columns(bucket).group_by("source_name", "interval").agg(pl.col("damage").max())
-    )
-
-    n = cumulative.select(pl.col("interval").max()).item() + 1
-    grid = (
-        samples.select("source_name", "delivery")
-        .unique()
-        .join(pl.DataFrame({"interval": range(n)}, schema={"interval": pl.Int64}), how="cross")
-    )
-
-    gains = (
-        grid.join(cumulative, on=["source_name", "interval"], how="left")
-        .sort("source_name", "interval")
-        .with_columns(
-            pl.col("damage").fill_null(strategy="forward").fill_null(0).over("source_name")
-        )
-        .with_columns(pl.col("damage") - pl.col("damage").shift(1).fill_null(0).over("source_name"))
-        .with_columns(pl.col("damage").sum().over("source_name").alias("total"))
+    gains = _diffed_grid(samples, ["source_name", "delivery"], ["damage"], interval_s).with_columns(
+        pl.col("damage").sum().over("source_name").alias("total")
     )
 
     return (
@@ -589,15 +590,8 @@ def enemy_damage_intervals(
     - one row per enemy per interval, enemies ordered by match total
     """
     duration = (
-        scan("matches", parquet_dir)
-        .filter(pl.col("match_id") == match_id)
-        .select("duration_s")
-        .collect()
+        scan("matches", parquet_dir).filter(pl.col("match_id") == match_id).select("duration_s")
     )
-
-    if duration.is_empty():
-        msg = f"match {match_id} not in the tables"
-        raise ValueError(msg)
 
     mine = "dealer_account_id" if dealt else "target_account_id"
     other = "target_account_id" if dealt else "dealer_account_id"
@@ -611,8 +605,17 @@ def enemy_damage_intervals(
             damage_category() != "total",
         )
         .select(pl.col(other).alias("enemy_account_id"), "source_class", "time_stamp_s", "damage")
-        .collect()
     )
+    in_match = (
+        scan("players", parquet_dir)
+        .filter(pl.col("match_id") == match_id)
+        .select(pl.col("account_id").alias("enemy_account_id"), pl.col("hero").alias("enemy"))
+    )
+    duration, samples, in_match = pl.collect_all([duration, samples, in_match])
+
+    if duration.is_empty():
+        msg = f"match {match_id} not in the tables"
+        raise ValueError(msg)
 
     if samples.is_empty():
         direction = "dealt to" if dealt else "taken from"
@@ -620,34 +623,11 @@ def enemy_damage_intervals(
         raise ValueError(msg)
 
     duration_s = int(duration.item())
-    bucket = ((pl.col("time_stamp_s") - 1) // interval_s).clip(0).cast(pl.Int64).alias("interval")
-    keys = ["enemy_account_id", "source_class"]
-    cumulative = (
-        samples.with_columns(bucket).group_by(*keys, "interval").agg(pl.col("damage").max())
-    )
-
-    n = cumulative.select(pl.col("interval").max()).item() + 1
-    grid = (
-        samples.select(keys)
-        .unique()
-        .join(pl.DataFrame({"interval": range(n)}, schema={"interval": pl.Int64}), how="cross")
-    )
-
     gains = (
-        grid.join(cumulative, on=[*keys, "interval"], how="left")
-        .sort(*keys, "interval")
-        .with_columns(pl.col("damage").fill_null(strategy="forward").fill_null(0).over(keys))
-        .with_columns(pl.col("damage") - pl.col("damage").shift(1).fill_null(0).over(keys))
+        _diffed_grid(samples, ["enemy_account_id", "source_class"], ["damage"], interval_s)
         .group_by("enemy_account_id", "interval")
         .agg(pl.col("damage").sum())
         .with_columns(pl.col("damage").sum().over("enemy_account_id").alias("total"))
-    )
-
-    in_match = (
-        scan("players", parquet_dir)
-        .filter(pl.col("match_id") == match_id)
-        .select(pl.col("account_id").alias("enemy_account_id"), pl.col("hero").alias("enemy"))
-        .collect()
     )
 
     return (
@@ -729,15 +709,8 @@ def soul_intervals(
     - one row per source per interval, sources with any souls, ordered by total
     """
     duration = (
-        scan("matches", parquet_dir)
-        .filter(pl.col("match_id") == match_id)
-        .select("duration_s")
-        .collect()
+        scan("matches", parquet_dir).filter(pl.col("match_id") == match_id).select("duration_s")
     )
-
-    if duration.is_empty():
-        msg = f"match {match_id} not in the tables"
-        raise ValueError(msg)
 
     samples = (
         scan("soul_sources", parquet_dir)
@@ -745,34 +718,20 @@ def soul_intervals(
         .select(
             "source_name", "time_stamp_s", (pl.col("souls") + pl.col("souls_orbs")).alias("souls")
         )
-        .collect()
     )
+    duration, samples = pl.collect_all([duration, samples])
+
+    if duration.is_empty():
+        msg = f"match {match_id} not in the tables"
+        raise ValueError(msg)
 
     if samples.is_empty():
         msg = f"account {account_id} has no soul sources in match {match_id}"
         raise ValueError(msg)
 
     duration_s = int(duration.item())
-    bucket = ((pl.col("time_stamp_s") - 1) // interval_s).clip(0).cast(pl.Int64).alias("interval")
-    cumulative = (
-        samples.with_columns(bucket).group_by("source_name", "interval").agg(pl.col("souls").max())
-    )
-
-    n = cumulative.select(pl.col("interval").max()).item() + 1
-    grid = (
-        samples.select("source_name")
-        .unique()
-        .join(pl.DataFrame({"interval": range(n)}, schema={"interval": pl.Int64}), how="cross")
-    )
-
-    gains = (
-        grid.join(cumulative, on=["source_name", "interval"], how="left")
-        .sort("source_name", "interval")
-        .with_columns(
-            pl.col("souls").fill_null(strategy="forward").fill_null(0).over("source_name")
-        )
-        .with_columns(pl.col("souls") - pl.col("souls").shift(1).fill_null(0).over("source_name"))
-        .with_columns(pl.col("souls").sum().over("source_name").alias("total"))
+    gains = _diffed_grid(samples, ["source_name"], ["souls"], interval_s).with_columns(
+        pl.col("souls").sum().over("source_name").alias("total")
     )
 
     return (
@@ -901,53 +860,31 @@ def team_intervals(
     - lead is the team 0 total minus the team 1 total at the interval end
     """
     duration = (
-        scan("matches", parquet_dir)
-        .filter(pl.col("match_id") == match_id)
-        .select("duration_s")
-        .collect()
+        scan("matches", parquet_dir).filter(pl.col("match_id") == match_id).select("duration_s")
     )
-
-    if duration.is_empty():
-        msg = f"match {match_id} not in the tables"
-        raise ValueError(msg)
 
     snaps = (
         scan("stats", parquet_dir)
         .filter(pl.col("match_id") == match_id)
         .select("account_id", "time_stamp_s", "net_worth")
-        .collect()
     )
+    teams = (
+        scan("players", parquet_dir)
+        .filter(pl.col("match_id") == match_id)
+        .select("account_id", "team")
+    )
+    duration, snaps, teams = pl.collect_all([duration, snaps, teams])
+
+    if duration.is_empty():
+        msg = f"match {match_id} not in the tables"
+        raise ValueError(msg)
 
     if snaps.is_empty():
         msg = f"match {match_id} has no snapshots"
         raise ValueError(msg)
 
     duration_s = int(duration.item())
-    bucket = ((pl.col("time_stamp_s") - 1) // interval_s).clip(0).cast(pl.Int64).alias("interval")
-    cumulative = (
-        snaps.with_columns(bucket).group_by("account_id", "interval").agg(pl.col("net_worth").max())
-    )
-
-    n = cumulative.select(pl.col("interval").max()).item() + 1
-    grid = (
-        cumulative.select("account_id")
-        .unique()
-        .join(pl.DataFrame({"interval": range(n)}, schema={"interval": pl.Int64}), how="cross")
-    )
-    filled = (
-        grid.join(cumulative, on=["account_id", "interval"], how="left")
-        .sort("account_id", "interval")
-        .with_columns(
-            pl.col("net_worth").fill_null(strategy="forward").fill_null(0).over("account_id")
-        )
-    )
-
-    teams = (
-        scan("players", parquet_dir)
-        .filter(pl.col("match_id") == match_id)
-        .select("account_id", "team")
-        .collect()
-    )
+    filled = _filled_grid(snaps, ["account_id"], ["net_worth"], interval_s)
 
     return (
         filled.join(teams, on="account_id")
