@@ -1,6 +1,20 @@
 # Changelog
 
 All notable changes to this project are documented here.
+## [0.9.0] - 2026-07-20
+
+### Added
+
+- Handle API rate limits and report per-match download progress ([bae9c9c](https://github.com/trenchtoaster/deadlock-matches/commit/bae9c9cc706a5bf9a219d67cdf6da275a4883229))
+
+- Keep one body per match and resolve archive lookups in one scan ([211776c](https://github.com/trenchtoaster/deadlock-matches/commit/211776c40fb5524ea8721360f7685d21337c6633))
+
+
+### Documentation
+
+- Cover the archive body rules and rate limit handling in the skill ([0678252](https://github.com/trenchtoaster/deadlock-matches/commit/067825278e3150313c8a38da1bfdb426e1393faa))
+
+
 ## [0.8.1] - 2026-07-19
 
 ### Internal
