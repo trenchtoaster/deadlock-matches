@@ -382,6 +382,8 @@ For per-day / per-interval summaries, render an aligned table: one row per perio
 - the archive is the only irreplaceable data; cache-touching commands print an `archive:` line (mention it if asked about backups)
 - API data goes through `api.get_json`, two storage tiers: immutable bodies (per-build asset snapshots) persist gzipped under `~/.local/share/deadlock-matches/api`, everything else (analytics, leaderboards, match histories) is cached under `~/.cache/deadlock-matches/api` with a 1-day max_age — expired entries refetch, and are still served when the network is down. Assets always refetch (`deadlock assets`)
 - match bodies for OTHER players download the same way as yours: `players.match_info(match_id)` reads the archive .bin or downloads the raw .meta.bz2 via `download_metadata` (salts → Valve replay server → `metadata/raw`). Everything lands in the one shared archive. Bodies always come from the raw .meta.bz2, never the json metadata endpoint — raw keeps unknown wire fields the api json cannot carry (that is how the removed party field was recovered)
+- the archive keeps ONE body per match: a match downloaded without salts lands as `<match_id>_0.bin` and the next cache sync replaces it with the real-salt copy. `extract.archived_match_bodies()` maps match_id → body path in a single directory scan — use it (or `archived_match_ids()`) for any per-id loop; `match_path`/`has_match` glob the whole directory per call and are for single lookups only
+- a 429 from the API raises `api.RateLimited` carrying the Retry-After wait. Download paths sleep through waits up to 60s and defer the remaining ids on a longer one — sync prints the deferred count and a rerun continues where it stopped
 
 ## Data structure
 
@@ -421,7 +423,7 @@ Modules are organized by data source, not by layer: the `queries/` package answe
 
 Everything in `src/deadlock_matches/`:
 
-- `extract.py` — cache walking, archive sync, protobuf decode (`iter_matches`, `archive`, `load`), local Steam accounts (`steam_accounts`), and `player_party` (recovers the removed party wire field from old matches, see the players caveats)
+- `extract.py` — cache walking, archive sync, protobuf decode (`iter_matches`, `archive`, `load`, `archived_match_bodies`), local Steam accounts (`steam_accounts`), and `player_party` (recovers the removed party wire field from old matches, see the players caveats)
 - `cli/` — the `deadlock` entry point, one module per command group: `main.py` (parser, dispatch, `schema`), `data.py` (`history`, `download`, `sync`, `assets` plus the archive snapshot), `performance.py` (`compare`, `winrate`, `laning`, `deaths`, `damage`, `movement`), `items.py` (`item`, `builds`), `cards.py` (`hero`, `ability`)
 - `config.py` — config.toml reading and the starter file (`config_accounts`, `config_account_names`, `format_accounts`, `config_players`, `config_exclude`, `config_timezone`, `ensure_config`)
 - `export.py` — parquet tables (`build_tables`), faithful decode only, judgment lives in the queries package
