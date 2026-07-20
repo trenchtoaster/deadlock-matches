@@ -1,6 +1,13 @@
 # Changelog
 
 All notable changes to this project are documented here.
+## [0.9.1] - 2026-07-20
+
+### Added
+
+- Print progress lines for the asset heal and full table rebuild ([f2f6506](https://github.com/trenchtoaster/deadlock-matches/commit/f2f6506f60c3dc656836ce02b7c410426d86a001))
+
+
 ## [0.9.0] - 2026-07-20
 
 ### Added
