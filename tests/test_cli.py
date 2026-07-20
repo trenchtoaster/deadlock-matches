@@ -296,7 +296,7 @@ def _heal_args(tmp_path):
     )
 
 
-def test_heal_assets_skips_without_a_newer_build(tmp_path, monkeypatch):
+def test_heal_assets_skips_without_a_newer_build(tmp_path, monkeypatch, capsys):
     calls = []
     monkeypatch.setattr(data, "_extend_asset_history", lambda: calls.append(1) or True)
     monkeypatch.setattr(extract, "installed_client_version", lambda cache_dir=None: 6600)
@@ -307,9 +307,10 @@ def test_heal_assets_skips_without_a_newer_build(tmp_path, monkeypatch):
 
     assert calls == []
     assert export.read_stamp(tmp_path / "pq") == {}
+    assert capsys.readouterr().out == ""
 
 
-def test_heal_assets_backfills_once_per_build(tmp_path, monkeypatch):
+def test_heal_assets_backfills_once_per_build(tmp_path, monkeypatch, capsys):
     calls = []
     monkeypatch.setattr(data, "_extend_asset_history", lambda: calls.append(1) or True)
     monkeypatch.setattr(extract, "installed_client_version", lambda cache_dir=None: 6700)
@@ -322,8 +323,12 @@ def test_heal_assets_backfills_once_per_build(tmp_path, monkeypatch):
     assert len(calls) == 1
     assert export.read_stamp(tmp_path / "pq")["checked_build"] == 6700
 
+    out = capsys.readouterr().out
 
-def test_heal_assets_offline_skips_quietly(tmp_path, monkeypatch):
+    assert out.count("Game updated, extending the asset history to build 6700") == 1
+
+
+def test_heal_assets_offline_reports_the_retry(tmp_path, monkeypatch, capsys):
     def boom():
         raise OSError("offline")
 
@@ -336,8 +341,13 @@ def test_heal_assets_offline_skips_quietly(tmp_path, monkeypatch):
 
     assert export.read_stamp(tmp_path / "pq") == {}
 
+    out = capsys.readouterr().out
 
-def test_heal_assets_reexports_past_the_old_horizon(tmp_path, monkeypatch):
+    assert "Game updated, extending the asset history to build 6700" in out
+    assert "Asset update failed, the next sync retries" in out
+
+
+def test_heal_assets_reexports_past_the_old_horizon(tmp_path, monkeypatch, capsys):
     pq = tmp_path / "pq"
     pq.mkdir()
     export.update_stamp(
@@ -369,6 +379,7 @@ def test_heal_assets_reexports_past_the_old_horizon(tmp_path, monkeypatch):
     assert healed == [2]
     assert refreshed
     assert export.read_stamp(pq)["asset_horizon"] == "2026-06-10T00:00:00"
+    assert "Updating 1 match with the new item data" in capsys.readouterr().out
 
 
 def test_heal_assets_no_reexport_when_horizon_is_current(tmp_path, monkeypatch):
@@ -3269,7 +3280,7 @@ def test_winrate_abandon_footer(capsys, tmp_path):
 
     out = capsys.readouterr().out
 
-    assert "Abandons" in out.splitlines()[2]
+    assert "Abandons" in out.splitlines()[3]
     assert "Abandons: 1 game — you left 1 (0-1)." in out
     assert "Without them: 1 games, 1-0, 100.0% win rate." in out
 
@@ -3319,7 +3330,7 @@ def test_winrate_lobby_column(capsys, tmp_path):
 
     out = capsys.readouterr().out
 
-    assert "Lobby" in out.splitlines()[2]
+    assert "Lobby" in out.splitlines()[3]
     assert "Phantom 3" in out
     assert "Phantom 3 lobbies." in out
 
@@ -4103,6 +4114,7 @@ def test_new_matches_trigger_parquet_rebuild(tmp_path, capsys):
 
     assert "Added" not in out
     assert "Archive" not in out
+    assert "Building the tables from the archive" in out
     assert (pq / "matches").is_dir()
     assert (pq / "damage").is_dir()
     assert next((pq / "matches").glob("*.parquet"), None) is not None

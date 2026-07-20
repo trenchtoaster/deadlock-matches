@@ -1028,10 +1028,12 @@ def export_all(
     - each built table is cleared first so a match dropped from the archive also leaves the tables
     - excluded tables are left untouched rather than deleted, so opting movement out keeps its history
     - the versioned asset tables flatten out of the committed history into out_dir/assets
+    - prints one line before the build starts
     """
     archive_dir = extract.ARCHIVE_DIR if archive_dir is None else Path(archive_dir)
     out_dir = PARQUET_DIR if out_dir is None else Path(out_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
+    print("Building the tables from the archive")
 
     for name in schemas.PARTITIONED:
         if name not in exclude:

@@ -745,9 +745,13 @@ def heal_assets(args: argparse.Namespace, accounts: list[int], exclude: Collecti
     checked = stamp.get("checked_build", 0)
 
     if installed is not None and installed > max(committed, checked):
+        print(f"Game updated, extending the asset history to build {installed}")
+
         try:
             _extend_asset_history()
         except Exception:
+            print("Asset update failed, the next sync retries")
+
             return
 
         export.update_stamp(out_dir, checked_build=installed)
@@ -769,6 +773,8 @@ def heal_assets(args: argparse.Namespace, accounts: list[int], exclude: Collecti
     )
 
     if clamped:
+        noun = "match" if len(clamped) == 1 else "matches"
+        print(f"Updating {len(clamped)} {noun} with the new item data")
         export.reexport_matches(clamped, args.archive, out_dir, exclude, accounts)
 
     export.refresh_asset_tables(out_dir)
