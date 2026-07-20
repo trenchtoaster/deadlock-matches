@@ -129,6 +129,56 @@ def test_archive_copies_new_entries(tmp_path):
     assert extract.archive(cache, arc) == 0
 
 
+def test_archive_replaces_the_salt_0_placeholder(tmp_path):
+    cache = tmp_path / "cache"
+    cache.mkdir()
+    write_cache_file(cache, match_id=100, salt=7)
+    arc = tmp_path / "arc"
+    arc.mkdir()
+    (arc / "100_0.bin").write_bytes(b"/1422450/100_0.meta.bz2\nplaceholder")
+
+    assert extract.archive(cache, arc) == 1
+    assert (arc / "100_7.bin").exists()
+    assert not (arc / "100_0.bin").exists()
+
+
+def test_archive_prunes_a_leftover_placeholder_without_a_cache_entry(tmp_path):
+    cache = tmp_path / "cache"
+    cache.mkdir()
+    arc = tmp_path / "arc"
+    arc.mkdir()
+    (arc / "100_0.bin").write_bytes(b"/1422450/100_0.meta.bz2\nplaceholder")
+    (arc / "100_7.bin").write_bytes(b"/1422450/100_7.meta.bz2\nbody")
+
+    assert extract.archive(cache, arc) == 0
+    assert not (arc / "100_0.bin").exists()
+    assert (arc / "100_7.bin").exists()
+
+
+def test_match_path_prefers_a_body_with_a_real_salt(tmp_path):
+    (tmp_path / "100_0.bin").write_bytes(b"placeholder")
+    (tmp_path / "100_7.bin").write_bytes(b"body")
+
+    found = extract.match_path(tmp_path, 100)
+
+    assert found is not None
+    assert found.name == "100_7.bin"
+    assert extract.match_path(tmp_path, 101) is None
+
+
+def test_archive_keeps_one_body_per_match(tmp_path):
+    cache = tmp_path / "cache"
+    cache.mkdir()
+    write_cache_file(cache, match_id=100, salt=7)
+    arc = tmp_path / "arc"
+    arc.mkdir()
+    (arc / "100_5.bin").write_bytes(b"/1422450/100_5.meta.bz2\nbody")
+
+    assert extract.archive(cache, arc) == 0
+    assert not (arc / "100_7.bin").exists()
+    assert (arc / "100_5.bin").exists()
+
+
 def test_archived_file_still_parses(tmp_path):
     cache = tmp_path / "cache"
     cache.mkdir()
@@ -168,6 +218,20 @@ def test_iter_matches_orders_numerically(tmp_path):
     found = [p.name for p in extract.iter_matches(cache, arc)]
 
     assert found == ["100_1.bin", "9_1.bin"]
+
+
+def test_iter_matches_keeps_one_body_per_match(tmp_path):
+    cache = tmp_path / "cache"
+    cache.mkdir()
+    arc = tmp_path / "arc"
+    arc.mkdir()
+    (arc / "100_0.bin").write_bytes(b"/1422450/100_0.meta.bz2\nplaceholder")
+    (arc / "100_7.bin").write_bytes(b"/1422450/100_7.meta.bz2\nreal")
+    (arc / "9_0.bin").write_bytes(b"/1422450/9_0.meta.bz2\nplaceholder")
+
+    found = [p.name for p in extract.iter_matches(cache, arc)]
+
+    assert found == ["100_7.bin", "9_0.bin"]
 
 
 def inject_party(player, party):

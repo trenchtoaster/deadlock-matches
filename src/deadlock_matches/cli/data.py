@@ -135,7 +135,7 @@ def sync_archive(cache: str | Path, archive_dir: str | Path, *, quiet: bool = Fa
     if quiet:
         return new
 
-    total = sum(1 for _ in archive_dir.glob("*.bin"))
+    total = len(extract.archived_match_ids(archive_dir))
     note = f"+{new} new" if new else "no new"
     print(f"Archive: {total} matches ({note}) at {_tilde(archive_dir)}\n")
 

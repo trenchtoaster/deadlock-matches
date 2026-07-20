@@ -956,6 +956,16 @@ def test_download_metadata_reports_unavailable(tmp_path, monkeypatch):
     assert deferred == []
 
 
+def test_archive_paths_keep_one_file_per_match(tmp_path):
+    extract.store_meta(tmp_path, 900, 0, _meta_body(900))
+    extract.store_meta(tmp_path, 900, 5, _meta_body(900))
+    extract.store_meta(tmp_path, 901, 3, _meta_body(901))
+
+    paths = export._archive_paths(tmp_path)
+
+    assert [p.name for p in paths] == ["900_5.bin", "901_3.bin"]
+
+
 def test_download_metadata_without_salts_still_tries_the_raw_metadata(tmp_path, monkeypatch):
     from deadlock_matches import api, players
 

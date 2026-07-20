@@ -400,10 +400,11 @@ def download_matches(
     ]
     download_metadata(list(dict.fromkeys(mid for _, mid in wanted)), archive_dir)
 
+    bodies = extract.archived_match_bodies(archive_dir)
     rows = []
 
     for t, match_id in wanted:
-        path = extract.match_path(archive_dir, match_id)
+        path = bodies.get(match_id)
 
         if path is None:
             continue
@@ -435,10 +436,11 @@ def matches_by_id(
     """
     download_metadata(list(dict.fromkeys(match_ids)), archive_dir)
 
+    bodies = extract.archived_match_bodies(archive_dir)
     rows = []
 
     for match_id in match_ids:
-        path = extract.match_path(archive_dir, match_id)
+        path = bodies.get(match_id)
 
         if path is None:
             continue
@@ -478,10 +480,16 @@ def _merge_downloads(out_dir: Path, download_rows: list[dict[str, Any]]) -> list
 
 
 def _decode_bodies(match_ids: list[int], archive_dir: str | Path) -> Iterator[MatchInfo]:
-    """Decode the stored body for each match id in order and skip any that fail."""
+    """Decode the stored body for each match id in order and skip any that fail.
+
+    - resolves bodies from one directory scan and downloads only the ids not archived
+    """
+    bodies = extract.archived_match_bodies(archive_dir)
+
     for match_id in match_ids:
         try:
-            info = match_info(match_id, archive_dir)
+            path = bodies.get(match_id)
+            info = extract.load(path) if path is not None else match_info(match_id, archive_dir)
 
         except Exception:
             continue
@@ -529,9 +537,10 @@ def download_metadata(
     """
     written = 0
     missing: list[int] = []
-    todo = [m for m in dict.fromkeys(match_ids) if not extract.has_match(archive_dir, m)]
+    archived = extract.archived_match_ids(archive_dir)
+    remaining = [m for m in dict.fromkeys(match_ids) if m not in archived]
 
-    for done, match_id in enumerate(todo):
+    for done, match_id in enumerate(remaining):
         try:
             info = _wait_out_rate_limit(match_id, salts, match_id) or {}
             url = info.get("metadata_url")
@@ -547,19 +556,19 @@ def download_metadata(
             )
 
         except api.RateLimited:
-            return written, missing, todo[done:]
+            return written, missing, remaining[done:]
 
         if body is None:
             print(
                 f"Failed to download match {match_id} "
-                f"({done + 1} / {len(todo)}, not available on deadlock-api.com)"
+                f"({done + 1} / {len(remaining)}, not available on deadlock-api.com)"
             )
             missing.append(match_id)
             continue
 
         extract.store_meta(archive_dir, match_id, info.get("metadata_salt", 0), body, url)
         written += 1
-        print(f"Downloaded match {match_id} ({done + 1} / {len(todo)})")
+        print(f"Downloaded match {match_id} ({done + 1} / {len(remaining)})")
 
     return written, missing, []
 

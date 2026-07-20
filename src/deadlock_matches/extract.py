@@ -184,11 +184,19 @@ def iter_meta_files(cache_dir: str | Path = DEFAULT_CACHE) -> Iterator[Path]:
 
 
 def archive(cache_dir: str | Path = DEFAULT_CACHE, archive_dir: str | Path = ARCHIVE_DIR) -> int:
-    """Copy match entries out of the live cache so Steam eviction cannot lose them."""
+    """Copy match entries out of the live cache so Steam eviction cannot lose them.
+
+    - keeps one body per match
+    - a cache copy replaces a salt 0 placeholder left by the API fallback
+    - prunes a placeholder whose match already has a body with a real salt
+    """
     archive_dir = Path(archive_dir)
     archive_dir.mkdir(parents=True, exist_ok=True)
 
     new = 0
+    bodies = archived_match_bodies(archive_dir)
+    _prune_placeholders(archive_dir, bodies)
+
     for path in iter_meta_files(cache_dir):
         try:
             parsed = parse_cache_file(path)
@@ -196,11 +204,35 @@ def archive(cache_dir: str | Path = DEFAULT_CACHE, archive_dir: str | Path = ARC
             continue
 
         dest = archive_dir / f"{parsed.match_id}_{parsed.replay_salt}.bin"
-        if not dest.exists():
-            dest.write_bytes(path.read_bytes())
-            new += 1
+        placeholder = archive_dir / f"{parsed.match_id}_0.bin"
+        existing = bodies.get(parsed.match_id)
+
+        if existing == dest:
+            continue
+
+        if existing is not None and existing != placeholder:
+            continue
+
+        tmp = dest.with_name(f"{dest.name}.tmp")
+        tmp.write_bytes(path.read_bytes())
+        tmp.replace(dest)
+
+        if existing is not None:
+            existing.unlink()
+
+        bodies[parsed.match_id] = dest
+        new += 1
 
     return new
+
+
+def _prune_placeholders(archive_dir: Path, bodies: dict[int, Path]) -> None:
+    """Remove a salt 0 placeholder when its match also has a body with a real salt."""
+    for placeholder in archive_dir.glob("*_0.bin"):
+        match_id = int(placeholder.name.split("_")[0])
+
+        if bodies.get(match_id) != placeholder:
+            placeholder.unlink()
 
 
 def archived_match_ids(archive_dir: str | Path = ARCHIVE_DIR) -> set[int]:
@@ -208,9 +240,42 @@ def archived_match_ids(archive_dir: str | Path = ARCHIVE_DIR) -> set[int]:
     return {int(p.name.split("_")[0]) for p in Path(archive_dir).glob("*.bin")}
 
 
+def archived_match_bodies(archive_dir: str | Path = ARCHIVE_DIR) -> dict[int, Path]:
+    """Map each archived match id to its body from one directory scan.
+
+    - a body with a real salt wins over a salt 0 placeholder
+    """
+    best: dict[int, Path] = {}
+
+    for path in sorted(Path(archive_dir).glob("*.bin")):
+        match_id = int(path.name.split("_")[0])
+        current = best.get(match_id)
+
+        if current is None or current.name == f"{match_id}_0.bin":
+            best[match_id] = path
+
+    return best
+
+
+def archived_match_paths(archive_dir: str | Path = ARCHIVE_DIR) -> list[Path]:
+    """Return one body per archived match in ascending match_id order.
+
+    - a body with a real salt wins over a salt 0 placeholder
+    """
+    bodies = archived_match_bodies(archive_dir)
+
+    return [bodies[match_id] for match_id in sorted(bodies)]
+
+
 def match_path(archive_dir: str | Path, match_id: int) -> Path | None:
-    """Return the archived .bin path for a match id."""
-    return next(Path(archive_dir).glob(f"{match_id}_*.bin"), None)
+    """Return the archived .bin path for a match id.
+
+    - a body with a real salt wins over a salt 0 placeholder
+    """
+    placeholder = f"{match_id}_0.bin"
+    paths = sorted(Path(archive_dir).glob(f"{match_id}_*.bin"))
+
+    return next((p for p in paths if p.name != placeholder), paths[0] if paths else None)
 
 
 def has_match(archive_dir: str | Path, match_id: int) -> bool:
@@ -242,12 +307,10 @@ def store_meta(
 def iter_matches(
     cache_dir: str | Path = DEFAULT_CACHE, archive_dir: str | Path = ARCHIVE_DIR
 ) -> Iterator[Path]:
-    """Sync the live cache into the archive and then yield every archived match in descending match_id order."""
+    """Sync the cache into the archive and yield one body per match in descending match_id order."""
     archive(cache_dir, archive_dir)
 
-    yield from sorted(
-        Path(archive_dir).glob("*.bin"), key=lambda p: int(p.name.split("_")[0]), reverse=True
-    )
+    yield from reversed(archived_match_paths(archive_dir))
 
 
 @dataclass(frozen=True)

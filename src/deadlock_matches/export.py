@@ -619,8 +619,12 @@ def _match_month(info: MatchInfo) -> str:
 
 
 def _archive_paths(archive_dir: Path) -> list[Path]:
-    """Archived .bin files in ascending match_id order (match ids climb with start time)."""
-    return sorted(archive_dir.glob("*.bin"), key=lambda p: int(p.name.split("_")[0]))
+    """Archived .bin files in ascending match_id order (match ids climb with start time).
+
+    - one body per match
+    - a body with a real salt wins over a salt 0 placeholder
+    """
+    return extract.archived_match_paths(archive_dir)
 
 
 def _decode_matches(paths: Iterable[Path]) -> Iterator[MatchInfo]:

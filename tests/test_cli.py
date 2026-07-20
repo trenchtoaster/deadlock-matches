@@ -4073,13 +4073,16 @@ def test_sync_archive_reports_count_and_path(tmp_path, capsys):
     arc = tmp_path / "arc"
     arc.mkdir()
     (arc / "123_1.bin").write_bytes(b"x")
+    (arc / "124_0.bin").write_bytes(b"x")
+    (arc / "124_9.bin").write_bytes(b"x")
 
     assert data.sync_archive(cache, arc) == 0
 
     out = capsys.readouterr().out
 
-    assert "Archive: 1 matches (no new)" in out
+    assert "Archive: 2 matches (no new)" in out
     assert data._tilde(arc) in out
+    assert not (arc / "124_0.bin").exists()
 
 
 def test_new_matches_trigger_parquet_rebuild(tmp_path, capsys):
