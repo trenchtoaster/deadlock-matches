@@ -932,25 +932,195 @@ def test_download_metadata_stores_then_skips(tmp_path, monkeypatch):
     )
     monkeypatch.setattr(api, "get_bytes", lambda url: _meta_body(55))
 
-    written, missing = players.download_metadata([55], tmp_path)
+    written, missing, deferred = players.download_metadata([55], tmp_path)
 
     assert written == 1
     assert missing == []
+    assert deferred == []
     assert extract.has_match(tmp_path, 55)
 
-    again, _ = players.download_metadata([55], tmp_path)
+    again, _, _ = players.download_metadata([55], tmp_path)
     assert again == 0
 
 
 def test_download_metadata_reports_unavailable(tmp_path, monkeypatch):
-    from deadlock_matches import players
+    from deadlock_matches import api, players
 
     monkeypatch.setattr(players, "salts", lambda mid: None)
+    monkeypatch.setattr(api, "get_bytes", lambda url: None)
 
-    written, missing = players.download_metadata([77], tmp_path)
+    written, missing, deferred = players.download_metadata([77], tmp_path)
 
     assert written == 0
     assert missing == [77]
+    assert deferred == []
+
+
+def test_download_metadata_without_salts_still_tries_the_raw_metadata(tmp_path, monkeypatch):
+    from deadlock_matches import api, players
+
+    monkeypatch.setattr(players, "salts", lambda mid: None)
+    monkeypatch.setattr(api, "get_bytes", lambda url: _meta_body(77))
+
+    written, missing, deferred = players.download_metadata([77], tmp_path)
+
+    assert written == 1
+    assert missing == []
+    assert deferred == []
+    assert (tmp_path / "77_0.bin").exists()
+    assert extract.load(tmp_path / "77_0.bin").match_id == 77
+
+
+def test_download_metadata_sleeps_through_short_rate_limits(tmp_path, monkeypatch):
+    from deadlock_matches import api, players
+
+    attempts = []
+    naps = []
+
+    def flaky_salts(mid):
+        attempts.append(mid)
+
+        if len(attempts) == 1:
+            raise api.RateLimited(2.0)
+
+        return {"metadata_salt": 9, "metadata_url": "http://x"}
+
+    monkeypatch.setattr(players, "salts", flaky_salts)
+    monkeypatch.setattr("time.sleep", lambda s: naps.append(s))
+    monkeypatch.setattr(api, "get_bytes", lambda url: _meta_body(55))
+
+    written, missing, deferred = players.download_metadata([55], tmp_path)
+
+    assert written == 1
+    assert missing == []
+    assert deferred == []
+    assert naps == [2.0]
+
+
+def test_download_metadata_narrates_waits_and_progress(tmp_path, monkeypatch, capsys):
+    from deadlock_matches import api, players
+
+    monkeypatch.setattr(
+        players,
+        "salts",
+        lambda mid: None if mid == 5 else {"metadata_salt": 9, "metadata_url": "http://x"},
+    )
+    monkeypatch.setattr(
+        api, "get_bytes", lambda url: None if "/matches/5/" in url else _meta_body(55)
+    )
+
+    players.download_metadata(list(range(1, 31)), tmp_path)
+
+    out = capsys.readouterr().out
+
+    assert "Downloaded match 1 (1 / 30)" in out
+    assert "Failed to download match 5 (5 / 30, not available on deadlock-api.com)" in out
+    assert "Downloaded match 6 (6 / 30)" in out
+    assert "Downloaded match 30 (30 / 30)" in out
+
+
+def test_download_metadata_prints_the_wait_before_sleeping(tmp_path, monkeypatch, capsys):
+    from deadlock_matches import api, players
+
+    seen = []
+
+    def flaky_salts(mid):
+        seen.append(mid)
+
+        if len(seen) == 1:
+            raise api.RateLimited(3.0)
+
+        return {"metadata_salt": 9, "metadata_url": "http://x"}
+
+    monkeypatch.setattr(players, "salts", flaky_salts)
+    monkeypatch.setattr("time.sleep", lambda s: None)
+    monkeypatch.setattr(api, "get_bytes", lambda url: _meta_body(55))
+
+    players.download_metadata([55], tmp_path)
+
+    assert "Rate limited on match 55, waiting 3s" in capsys.readouterr().out
+
+
+def test_download_metadata_defers_the_rest_on_a_long_rate_limit(tmp_path, monkeypatch):
+    from deadlock_matches import api, players
+
+    def salts_by_id(mid):
+        if mid == 55:
+            return {"metadata_salt": 9, "metadata_url": "http://x"}
+
+        raise api.RateLimited(3400.0)
+
+    monkeypatch.setattr(players, "salts", salts_by_id)
+    monkeypatch.setattr(api, "get_bytes", lambda url: _meta_body(55))
+
+    written, missing, deferred = players.download_metadata([55, 66, 77], tmp_path)
+
+    assert written == 1
+    assert missing == []
+    assert deferred == [66, 77]
+    assert extract.has_match(tmp_path, 55)
+
+
+def test_download_metadata_downloads_duplicate_ids_once(tmp_path, monkeypatch):
+    from deadlock_matches import api, players
+
+    calls = []
+
+    def fake_salts(mid):
+        calls.append(mid)
+
+        return {"metadata_salt": 9, "metadata_url": "http://x"}
+
+    monkeypatch.setattr(players, "salts", fake_salts)
+    monkeypatch.setattr(api, "get_bytes", lambda url: _meta_body(55))
+
+    written, missing, deferred = players.download_metadata([55, 55], tmp_path)
+
+    assert written == 1
+    assert missing == []
+    assert deferred == []
+    assert calls == [55]
+
+
+def test_download_metadata_falls_back_when_the_primary_url_is_limited(tmp_path, monkeypatch):
+    from deadlock_matches import api, players
+
+    monkeypatch.setattr(
+        players, "salts", lambda mid: {"metadata_salt": 9, "metadata_url": "http://x"}
+    )
+
+    def get_bytes(url):
+        if url == "http://x":
+            raise api.RateLimited(2.0)
+
+        return _meta_body(55)
+
+    monkeypatch.setattr(api, "get_bytes", get_bytes)
+
+    written, missing, deferred = players.download_metadata([55], tmp_path)
+
+    assert written == 1
+    assert missing == []
+    assert deferred == []
+
+
+def test_download_metadata_gives_up_after_repeated_short_limits(tmp_path, monkeypatch):
+    from deadlock_matches import api, players
+
+    naps = []
+
+    def always_limited(mid):
+        raise api.RateLimited(5.0)
+
+    monkeypatch.setattr(players, "salts", always_limited)
+    monkeypatch.setattr("time.sleep", lambda s: naps.append(s))
+
+    written, missing, deferred = players.download_metadata([55, 66], tmp_path)
+
+    assert written == 0
+    assert missing == []
+    assert deferred == [55, 66]
+    assert naps == [5.0, 5.0]
 
 
 def test_export_partitions_by_month(tmp_path):

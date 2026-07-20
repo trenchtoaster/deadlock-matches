@@ -897,13 +897,18 @@ def _sync_from_api(
     if getattr(args, "dry_run", False) or not to_get:
         return
 
-    written, missing = players.download_metadata(to_get, args.archive)
+    written, missing, deferred = players.download_metadata(to_get, args.archive)
     noun = "match" if written == 1 else "matches"
     print(f"Downloaded {written} {noun} into the archive")
 
     if missing:
-        print(f"{len(missing)} not available from the API")
+        ids = ", ".join(str(m) for m in missing)
+        print(f"{len(missing)} not available from the API: {ids}")
         print("open those in game to archive them")
+
+    if deferred:
+        print(f"{len(deferred)} deferred by the API rate limit")
+        print("run sync again later to continue")
 
     result = export.export_new(args.archive, args.parquet, config_exclude(config), accounts)
 

@@ -5,7 +5,7 @@ import polars as pl
 import pytest
 from google.protobuf import json_format
 
-from deadlock_matches import export, extract, players, queries
+from deadlock_matches import api, export, extract, players, queries
 from deadlock_matches.extract import pb
 
 
@@ -114,7 +114,7 @@ def _fake_download(match_ids, archive_dir):
     for mid in match_ids:
         _store_bin(archive_dir, mid, _match_json(mid))
 
-    return len(list(match_ids)), []
+    return len(list(match_ids)), [], []
 
 
 def test_top_players_pools_regional_boards(monkeypatch):
@@ -234,12 +234,12 @@ def test_download_matches(tmp_path, monkeypatch):
     assert rows[1]["rank"] is None
     assert all(r["hero_id"] == 52 for r in rows)
     assert all(r["downloaded_at"].tzinfo is not None for r in rows)
-    assert calls == [[900], [901]]
+    assert calls == [[900, 901]]
 
 
 def test_download_matches_skips_failed_downloads(tmp_path, monkeypatch):
     monkeypatch.setattr(players, "match_history", lambda aid: [_history_row(900)])
-    monkeypatch.setattr(players, "download_metadata", lambda ids, archive_dir: (0, list(ids)))
+    monkeypatch.setattr(players, "download_metadata", lambda ids, archive_dir: (0, list(ids), []))
 
     tracked = [{"account_id": 11, "name": "x"}]
 
@@ -257,8 +257,40 @@ def test_matches_by_id(tmp_path, monkeypatch):
     assert all(r["downloaded_at"].tzinfo is not None for r in rows)
 
 
+def test_matches_by_id_stops_requesting_after_a_long_rate_limit(tmp_path, monkeypatch):
+    calls = []
+
+    def limited(mid):
+        calls.append(mid)
+        raise api.RateLimited(3400.0)
+
+    monkeypatch.setattr(players, "salts", limited)
+
+    assert players.matches_by_id([900, 901, 902], tmp_path / "archive") == []
+    assert calls == [900]
+
+
+def test_salts_returns_none_when_the_api_lacks_the_match(monkeypatch):
+    def gone(path, use_cache=True):
+        raise OSError("404")
+
+    monkeypatch.setattr(api, "get_json", gone)
+
+    assert players.salts(900) is None
+
+
+def test_salts_propagates_rate_limits(monkeypatch):
+    def limited(path, use_cache=True):
+        raise api.RateLimited(30.0)
+
+    monkeypatch.setattr(api, "get_json", limited)
+
+    with pytest.raises(api.RateLimited):
+        players.salts(900)
+
+
 def test_matches_by_id_skips_unreachable(tmp_path, monkeypatch):
-    monkeypatch.setattr(players, "download_metadata", lambda ids, archive_dir: (0, list(ids)))
+    monkeypatch.setattr(players, "download_metadata", lambda ids, archive_dir: (0, list(ids), []))
 
     assert players.matches_by_id([900, 901], tmp_path / "archive") == []
 
@@ -310,7 +342,7 @@ def test_match_info_downloads_missing_matches(tmp_path, monkeypatch):
 
 
 def test_match_info_none_when_unavailable(tmp_path, monkeypatch):
-    monkeypatch.setattr(players, "download_metadata", lambda ids, archive_dir: (0, list(ids)))
+    monkeypatch.setattr(players, "download_metadata", lambda ids, archive_dir: (0, list(ids), []))
 
     assert players.match_info(900, tmp_path / "archive") is None
 

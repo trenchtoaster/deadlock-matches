@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import datetime as dt
 import statistics as st
+import time
 from collections import Counter, defaultdict
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
@@ -14,7 +15,7 @@ from deadlock_matches import api, config, export, extract, paths, queries, schem
 from deadlock_matches.assets import heroes
 
 if TYPE_CHECKING:
-    from collections.abc import Collection, Iterator, Sequence
+    from collections.abc import Callable, Collection, Iterator, Sequence
 
     from deadlock_matches.extract import MatchInfo
 
@@ -132,9 +133,16 @@ def match_info(match_id: int, archive_dir: str | Path = extract.ARCHIVE_DIR) -> 
 
 
 def salts(match_id: int) -> dict[str, Any] | None:
-    """Return the metadata and replay salts for a match."""
+    """Return the metadata and replay salts for a match.
+
+    - returns None when the API has no salts for the match
+    - raises api.RateLimited when the request budget runs out
+    """
     try:
         return api.get_json(f"v1/matches/{match_id}/salts", use_cache=False)
+
+    except api.RateLimited:
+        raise
 
     except OSError:
         return None
@@ -383,28 +391,34 @@ def download_matches(
     - tracked rows need account_id and name, leaderboard entries also carry rank/region
     - bodies land in the archive as raw .bin files, a shared match downloads once
     - downloaded_at is the mtime of the body file, which re-runs never touch
+    - matches deferred by a rate limit are skipped like unreachable ones
     """
+    wanted = [
+        (t, m["match_id"])
+        for t in tracked
+        for m in recent_hero_matches(t["account_id"], hero_id, n)
+    ]
+    download_metadata(list(dict.fromkeys(mid for _, mid in wanted)), archive_dir)
+
     rows = []
 
-    for t in tracked:
-        for m in recent_hero_matches(t["account_id"], hero_id, n):
-            match_id = m["match_id"]
-            path = _body_path(match_id, archive_dir)
+    for t, match_id in wanted:
+        path = extract.match_path(archive_dir, match_id)
 
-            if path is None:
-                continue
+        if path is None:
+            continue
 
-            rows.append(
-                {
-                    "match_id": match_id,
-                    "account_id": t["account_id"],
-                    "player": t.get("name"),
-                    "hero_id": hero_id,
-                    "rank": t.get("rank"),
-                    "region": t.get("region"),
-                    "downloaded_at": dt.datetime.fromtimestamp(path.stat().st_mtime, dt.UTC),
-                }
-            )
+        rows.append(
+            {
+                "match_id": match_id,
+                "account_id": t["account_id"],
+                "player": t.get("name"),
+                "hero_id": hero_id,
+                "rank": t.get("rank"),
+                "region": t.get("region"),
+                "downloaded_at": dt.datetime.fromtimestamp(path.stat().st_mtime, dt.UTC),
+            }
+        )
 
     return rows
 
@@ -416,12 +430,15 @@ def matches_by_id(
 
     account_id/hero_id/rank/region come back null since no tracked player brought
     the match in. The body carries all 12 players, so every one lands in the tables
-    and match --hero picks any of them. Unreachable ids are skipped.
+    and match --hero picks any of them. Unreachable and rate-limit-deferred ids
+    are skipped.
     """
+    download_metadata(list(dict.fromkeys(match_ids)), archive_dir)
+
     rows = []
 
     for match_id in match_ids:
-        path = _body_path(match_id, archive_dir)
+        path = extract.match_path(archive_dir, match_id)
 
         if path is None:
             continue
@@ -473,38 +490,78 @@ def _decode_bodies(match_ids: list[int], archive_dir: str | Path) -> Iterator[Ma
             yield info
 
 
-def download_metadata(match_ids: Sequence[int], archive_dir: str | Path) -> tuple[int, list[int]]:
+RATE_WAIT_CAP = 60.0
+
+
+def _wait_out_rate_limit(match_id: int, fetch: Callable[..., Any], *args: Any) -> Any:
+    """Run a fetch for a match, sleeping through short rate-limit waits.
+
+    - a wait above RATE_WAIT_CAP propagates so the caller can defer the rest
+    - sleeps twice at most before the final attempt
+    """
+    for _ in range(2):
+        try:
+            return fetch(*args)
+
+        except api.RateLimited as err:
+            if err.retry_after > RATE_WAIT_CAP:
+                raise
+
+            print(f"Rate limited on match {match_id}, waiting {err.retry_after:.0f}s")
+            time.sleep(err.retry_after)
+
+    return fetch(*args)
+
+
+def download_metadata(
+    match_ids: Sequence[int], archive_dir: str | Path
+) -> tuple[int, list[int], list[int]]:
     """Download the raw metadata for each match into the archive as a .bin.
 
-    - returns how many landed and the match ids the API could not provide
+    - returns how many landed, the match ids the API does not have, and the
+      match ids deferred because the rate limit ran out
     - the .meta.bz2 comes from the Valve replay server, falling back to the API
+    - a match without salts still tries the raw API metadata, archived under salt 0
+    - short rate-limit waits are slept through, a long one defers the rest
+    - duplicate ids in the input download once
+    - prints a line per match as it lands or fails, and while waiting out a
+      rate limit
     """
     written = 0
     missing: list[int] = []
+    todo = [m for m in dict.fromkeys(match_ids) if not extract.has_match(archive_dir, m)]
 
-    for match_id in match_ids:
-        if extract.has_match(archive_dir, match_id):
-            continue
+    for done, match_id in enumerate(todo):
+        try:
+            info = _wait_out_rate_limit(match_id, salts, match_id) or {}
+            url = info.get("metadata_url")
 
-        info = salts(match_id)
+            try:
+                body = api.get_bytes(url) if url else None
 
-        if info is None or "metadata_salt" not in info:
-            missing.append(match_id)
-            continue
+            except api.RateLimited:
+                body = None
 
-        url = info.get("metadata_url")
-        body = (api.get_bytes(url) if url else None) or api.get_bytes(
-            f"{api.BASE}/v1/matches/{match_id}/metadata/raw"
-        )
+            body = body or _wait_out_rate_limit(
+                match_id, api.get_bytes, f"{api.BASE}/v1/matches/{match_id}/metadata/raw"
+            )
+
+        except api.RateLimited:
+            return written, missing, todo[done:]
 
         if body is None:
+            print(
+                f"Failed to download match {match_id} "
+                f"({done + 1} / {len(todo)}, not available on deadlock-api.com)"
+            )
             missing.append(match_id)
             continue
 
-        extract.store_meta(archive_dir, match_id, info["metadata_salt"], body, url)
+        extract.store_meta(archive_dir, match_id, info.get("metadata_salt", 0), body, url)
         written += 1
+        print(f"Downloaded match {match_id} ({done + 1} / {len(todo)})")
 
-    return written, missing
+    return written, missing, []
 
 
 def _store_counts(out_dir: Path, exclude: Collection[str], downloads_n: int) -> dict[str, int]:

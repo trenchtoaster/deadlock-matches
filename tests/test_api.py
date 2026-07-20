@@ -1,12 +1,24 @@
+import email.message
+import email.utils
 import gzip
 import json
 import os
 import time
+import urllib.error
 import urllib.request
 
 import pytest
 
 from deadlock_matches import api
+
+
+def _http_error(code, retry_after=None):
+    headers = email.message.Message()
+
+    if retry_after is not None:
+        headers["Retry-After"] = str(retry_after)
+
+    return urllib.error.HTTPError("http://x", code, "err", headers, None)
 
 
 class _Response:
@@ -130,6 +142,85 @@ def test_get_json_offline_without_cache_raises(tmp_path, monkeypatch):
 
     with pytest.raises(OSError, match="no network"):
         api.get_json("v1/leaderboard/Asia")
+
+
+def test_get_json_429_without_cache_raises_rate_limited(tmp_path, monkeypatch):
+    monkeypatch.setattr(api, "CACHE_DIR", tmp_path)
+
+    def limited(req, timeout=None):
+        raise _http_error(429, 7)
+
+    monkeypatch.setattr(urllib.request, "urlopen", limited)
+
+    with pytest.raises(api.RateLimited) as exc:
+        api.get_json("v1/matches/900/salts", use_cache=False)
+
+    assert exc.value.retry_after == 7.0
+
+
+def test_get_json_429_serves_stale_cache(tmp_path, monkeypatch):
+    monkeypatch.setattr(api, "CACHE_DIR", tmp_path)
+    monkeypatch.setattr(urllib.request, "urlopen", _fake_urlopen({"rank": 1}, []))
+
+    api.get_json("v1/leaderboard/Asia", max_age=api.DAY)
+
+    stale = time.time() - api.DAY - 60
+    os.utime(api.cache_path("v1/leaderboard/Asia"), (stale, stale))
+
+    def limited(req, timeout=None):
+        raise _http_error(429, 7)
+
+    monkeypatch.setattr(urllib.request, "urlopen", limited)
+
+    assert api.get_json("v1/leaderboard/Asia", max_age=api.DAY) == {"rank": 1}
+
+
+def test_get_bytes_429_raises_rate_limited(monkeypatch):
+    def limited(req, timeout=None):
+        raise _http_error(429)
+
+    monkeypatch.setattr(urllib.request, "urlopen", limited)
+
+    with pytest.raises(api.RateLimited) as exc:
+        api.get_bytes("http://x")
+
+    assert exc.value.retry_after == 60.0
+
+
+@pytest.mark.parametrize("header", ["-5", "nan", "inf", "soon"])
+def test_retry_after_rejects_malformed_waits(monkeypatch, header):
+    def limited(req, timeout=None):
+        raise _http_error(429, header)
+
+    monkeypatch.setattr(urllib.request, "urlopen", limited)
+
+    with pytest.raises(api.RateLimited) as exc:
+        api.get_bytes("http://x")
+
+    assert exc.value.retry_after == 60.0
+
+
+def test_retry_after_reads_http_dates(monkeypatch):
+    when = email.utils.formatdate(time.time() + 120, usegmt=True)
+
+    def limited(req, timeout=None):
+        raise _http_error(429, when)
+
+    monkeypatch.setattr(urllib.request, "urlopen", limited)
+
+    with pytest.raises(api.RateLimited) as exc:
+        api.get_bytes("http://x")
+
+    assert 0 <= exc.value.retry_after <= 120
+
+
+def test_get_bytes_other_http_errors_return_none(monkeypatch):
+    def gone(req, timeout=None):
+        raise _http_error(404)
+
+    monkeypatch.setattr(urllib.request, "urlopen", gone)
+
+    assert api.get_bytes("http://x") is None
 
 
 def test_get_json_permanent_stores_in_data_dir(tmp_path, monkeypatch):

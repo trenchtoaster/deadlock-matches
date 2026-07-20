@@ -28,9 +28,12 @@ Full API surface: https://api.deadlock-api.com/docs
 from __future__ import annotations
 
 import collections
+import email.utils
 import gzip
 import json
+import math
 import time
+import urllib.error
 import urllib.request
 from pathlib import Path
 from typing import Any
@@ -45,6 +48,42 @@ DAY = 86_400
 PRUNE_AGE = 30 * DAY
 
 fetch_counts: collections.Counter[str] = collections.Counter()
+
+
+class RateLimited(OSError):
+    """Signal a 429 from the API.
+
+    - retry_after holds the advertised wait in seconds
+    """
+
+    def __init__(self, retry_after: float) -> None:
+        """Store the advertised wait in seconds."""
+        super().__init__(f"rate limited, retry in {retry_after:.0f}s")
+        self.retry_after = retry_after
+
+
+def _retry_after(err: urllib.error.HTTPError) -> float:
+    """Parse the Retry-After wait from a 429 response.
+
+    - accepts a seconds count or an HTTP date
+    - falls back to one minute when the header is missing, malformed, or negative
+    """
+    value = err.headers.get("Retry-After", "")
+
+    try:
+        seconds = float(value)
+
+    except ValueError:
+        try:
+            seconds = email.utils.parsedate_to_datetime(value).timestamp() - time.time()
+
+        except (TypeError, ValueError):
+            return 60.0
+
+    if math.isfinite(seconds) and seconds >= 0:
+        return seconds
+
+    return 60.0
 
 
 def _filename(path: str) -> str:
@@ -145,11 +184,14 @@ def get_json(
     try:
         with urllib.request.urlopen(req, timeout=30) as r:
             data = json.load(r)
-    except OSError:
+    except OSError as err:
         if use_cache and target.exists():
             fetch_counts["cached"] += 1
 
             return _read_body(target)
+
+        if isinstance(err, urllib.error.HTTPError) and err.code == 429:
+            raise RateLimited(_retry_after(err)) from err
 
         raise
 
@@ -162,12 +204,22 @@ def get_json(
 
 
 def get_bytes(url: str) -> bytes | None:
-    """Download the raw bytes at a full URL, or None when it cannot be reached."""
+    """Download the raw bytes at a full URL.
+
+    - returns None when the URL cannot be reached or does not exist
+    - raises RateLimited when the server answers 429
+    """
     req = urllib.request.Request(url, headers={"User-Agent": "deadlock-matches/1.0"})
 
     try:
         with urllib.request.urlopen(req, timeout=30) as r:
             return r.read()
+
+    except urllib.error.HTTPError as err:
+        if err.code == 429:
+            raise RateLimited(_retry_after(err)) from err
+
+        return None
 
     except OSError:
         return None

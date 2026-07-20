@@ -663,7 +663,7 @@ def _sync_api_mocks(monkeypatch, seen):
     def fake_download(match_ids, archive_dir):
         seen["ids"] = list(match_ids)
 
-        return len(list(seen["ids"])), []
+        return len(list(seen["ids"])), [], []
 
     monkeypatch.setattr(players, "download_metadata", fake_download)
 
@@ -692,6 +692,21 @@ def test_sync_api_downloads_missing_matches_into_the_archive(tmp_path, monkeypat
     assert "2 to download" in out
 
 
+def test_sync_api_reports_rate_limited_matches_separately(tmp_path, monkeypatch, capsys):
+    cfg = _sync_config(tmp_path)
+    seen = {}
+    _sync_api_mocks(monkeypatch, seen)
+    monkeypatch.setattr(players, "download_metadata", lambda match_ids, archive_dir: (1, [], [200]))
+
+    main(["--parquet", str(tmp_path), "sync", "--source", "api"], config=cfg)
+
+    out = capsys.readouterr().out
+
+    assert "1 deferred by the API rate limit" in out
+    assert "run sync again later to continue" in out
+    assert "not available" not in out
+
+
 def test_sync_api_singular_counts_read_grammatically(tmp_path, monkeypatch, capsys):
     cfg = _sync_config(tmp_path)
     monkeypatch.setattr(
@@ -700,7 +715,7 @@ def test_sync_api_singular_counts_read_grammatically(tmp_path, monkeypatch, caps
         lambda account_id: [{"match_id": 500, "start_time": 1_700_000_000}],
     )
     monkeypatch.setattr(extract, "archived_match_ids", lambda archive_dir: set())
-    monkeypatch.setattr(players, "download_metadata", lambda match_ids, archive_dir: (1, []))
+    monkeypatch.setattr(players, "download_metadata", lambda match_ids, archive_dir: (1, [], []))
     monkeypatch.setattr(
         export,
         "export_new",
