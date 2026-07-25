@@ -288,7 +288,7 @@ def melee_pq(tmp_path):
             "account_id": [42, 42, 42, 99],
             "time_stamp_s": [180, 360, 180, 200],
             "stat": ["Parry Success", "Parry Success", "Parry Miss", "Parry Miss"],
-            "value": [1, 2, 1, 3],
+            "value": [2, 1, 1, 3],
         }
     )
 
@@ -307,7 +307,7 @@ def test_melee_by_player_sums_swings_and_final_parries(melee_pq):
 
     assert rows[42]["melee_dealt"] == 300
     assert rows[42]["melee_taken"] == 500
-    assert rows[42]["parries"] == 2
+    assert rows[42]["parries"] == 1
     assert rows[42]["missed_parries"] == 1
 
     assert rows[99]["melee_dealt"] == 500
@@ -331,3 +331,11 @@ def test_melee_by_player_scopes_to_the_match(melee_pq):
 
 def test_melee_taken_by_attacker_ranks_pure_swings(melee_pq):
     assert queries.melee_taken_by_attacker(700, 42, melee_pq).collect().rows() == [("Yamato", 500)]
+
+
+def test_final_stats_reads_the_last_sample_not_the_biggest(death_loss_pq):
+    df = queries.final_stats(death_loss_pq, tz="America/Chicago").collect()
+    me = df.filter(pl.col("account_id") == 42)
+
+    assert me.get_column("net_worth").item() == 5200
+    assert me.get_column("shots_hit").item() == 70

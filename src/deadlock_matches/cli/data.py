@@ -123,17 +123,18 @@ def skill_report(args: argparse.Namespace) -> None:
 
 
 def final_stats(match_ids: pl.LazyFrame, parquet_dir: str | Path) -> pl.LazyFrame:
-    """Return the end-of-match damage and healing totals per player from the stats snapshots."""
+    """Return the end-of-match damage and healing totals per player from the stats snapshots.
+
+    - reads the last sample of each player-game rather than the biggest, so a
+      counter that dips still reports what the match ended on
+    """
+    last = pl.col("player_damage", "boss_damage", "player_healing", "heal_prevented")
+
     return (
         queries.scan("stats", parquet_dir)
         .join(match_ids, on="match_id")
         .group_by("match_id", "account_id")
-        .agg(
-            pl.col("player_damage").max(),
-            pl.col("boss_damage").max(),
-            pl.col("player_healing").max(),
-            pl.col("heal_prevented").max(),
-        )
+        .agg(last.sort_by("time_stamp_s").last())
     )
 
 

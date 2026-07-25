@@ -249,8 +249,10 @@ def melee_taken_by_attacker(
 def final_stats(parquet_dir: str | Path | None = None, tz: str | None = None) -> pl.LazyFrame:
     """Final snapshot values for each player in each match, with hero/won, local day, and gun rates.
 
-    Snapshot columns are cumulative, so max() per match is the final value.
-    accuracy and headshot_rate are null when nothing was fired.
+    Snapshot columns are read at their last sample, not their biggest. Most
+    of them only climb, but net worth, max health, and the power columns fall
+    on a death loss or a sold item. accuracy and headshot_rate are null when
+    nothing was fired.
     """
     shots = pl.col("shots_hit") + pl.col("shots_missed")
     bullets = pl.col("hero_bullets_hit") + pl.col("hero_bullets_hit_crit")
@@ -258,7 +260,7 @@ def final_stats(parquet_dir: str | Path | None = None, tz: str | None = None) ->
     finals = (
         scan("stats", parquet_dir)
         .group_by("match_id", "account_id")
-        .agg(cs.exclude("match_id", "account_id").max())
+        .agg(cs.exclude("match_id", "account_id").sort_by("time_stamp_s").last())
         .with_columns(
             pl.when(shots > 0).then(pl.col("shots_hit") / shots).alias("accuracy"),
             pl.when(bullets > 0)

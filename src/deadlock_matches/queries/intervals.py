@@ -67,12 +67,13 @@ def _filled_grid(
     """Bucket cumulative samples and forward fill them over a full interval grid.
 
     - keys split the samples into tracks that each fill on their own clock
+    - each bucket keeps its last timestamped sample, not the largest value
     - the grid runs from interval 0 through the last sampled interval
     """
     cumulative = (
         samples.with_columns(_bucket("time_stamp_s", interval_s))
         .group_by(*keys, "interval")
-        .agg(pl.col(values).max())
+        .agg(pl.col(values).sort_by("time_stamp_s").last())
     )
     n = cumulative.select(pl.col("interval").max()).item() + 1
     intervals = pl.DataFrame({"interval": range(n)}, schema={"interval": pl.Int64})
@@ -123,9 +124,14 @@ def _column_gains(
     cumulative = (
         scan("stats", parquet_dir)
         .join(games.select(_KEYS).unique(), on=_KEYS)
-        .select(*_KEYS, _bucket("time_stamp_s", interval_s), pl.col(column).alias("value"))
+        .select(
+            *_KEYS,
+            "time_stamp_s",
+            _bucket("time_stamp_s", interval_s),
+            pl.col(column).alias("value"),
+        )
         .group_by(*_KEYS, "interval")
-        .agg(pl.col("value").max())
+        .agg(pl.col("value").sort_by("time_stamp_s").last())
     )
 
     return (
@@ -270,7 +276,7 @@ def game_totals(
             scan("stats", parquet_dir)
             .join(games.select(_KEYS).unique(), on=_KEYS)
             .group_by(_KEYS)
-            .agg(pl.col(INTERVAL_STATS[stat]).max().alias("total"))
+            .agg(pl.col(INTERVAL_STATS[stat]).sort_by("time_stamp_s").last().alias("total"))
         )
 
     elif stat in SOUL_COMPOSITES:
@@ -335,7 +341,7 @@ def cumulative_at(
             .join(marks, how="cross")
             .filter(pl.col("time_stamp_s") <= pl.col("mark_s"))
             .group_by(*_KEYS, "mark_s")
-            .agg(pl.col("value").max())
+            .agg(pl.col("value").sort_by("time_stamp_s").last())
         )
 
     elif stat in SOUL_COMPOSITES:

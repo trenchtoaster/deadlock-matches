@@ -130,6 +130,20 @@ def build_match(match_id=100, account_id=42, level=None, max_health=None):
     return info
 
 
+def build_death_loss_match(match_id=100, account_id=42):
+    info = build_match(match_id=match_id, account_id=account_id)
+    s = info.players[0].stats.add()
+    s.time_stamp_s = 900
+    s.net_worth = 5200
+    s.shots_hit = 70
+    s.shots_missed = 30
+    s.hero_bullets_hit = 45
+    s.hero_bullets_hit_crit = 15
+    s.player_damage = 1500
+
+    return info
+
+
 def build_day_match(match_id, day, *, won):
     info = build_match(match_id=match_id)
     info.start_time = START + day * 86400
