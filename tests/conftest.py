@@ -3,6 +3,8 @@ from builders import (
     _write_effective_assets,
     _write_item_history,
     build_abandon_match,
+    build_buff_match,
+    build_bullet_match,
     build_chain_collision_match,
     build_day_match,
     build_death_loss_match,
@@ -39,6 +41,26 @@ def no_history_pq(tmp_path):
     path = schemas.table_path("item_history", tmp_path)
     path.parent.mkdir(parents=True, exist_ok=True)
     schemas.conform("item_history", []).write_parquet(path)
+
+    return tmp_path
+
+
+@pytest.fixture
+def bullet_pq(tmp_path):
+    for name, df in export.build_tables([build_bullet_match()], exclude=("movement",)).items():
+        df.write_parquet(tmp_path / f"{name}.parquet")
+
+    _write_item_history(tmp_path)
+
+    return tmp_path
+
+
+@pytest.fixture
+def buff_pq(tmp_path):
+    for name, df in export.build_tables([build_buff_match()], exclude=("movement",)).items():
+        df.write_parquet(tmp_path / f"{name}.parquet")
+
+    _write_item_history(tmp_path)
 
     return tmp_path
 

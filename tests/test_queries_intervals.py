@@ -7,15 +7,44 @@ from deadlock_matches import export, queries
 
 def test_compare_intervals_column_gains(movement_pq):
     games = pl.LazyFrame({"match_id": [100], "account_id": [42]})
-    gains = queries.compare_intervals(games, "souls", 300, movement_pq).collect().sort("interval")
+    gains = (
+        queries.view_frame(queries.compare_intervals(games, "souls", 300), parquet_dir=movement_pq)
+        .collect()
+        .sort("interval")
+    )
 
     assert gains.get_column("interval").to_list() == [0, 1, 2, 3, 4, 5]
     assert gains.get_column("gain").to_list() == [1800, 4200, 0, 0, 0, 0]
 
 
+def test_compare_interval_measures_aggregate_the_lazy_gain_facts(movement_pq):
+    games = pl.LazyFrame(
+        {
+            "match_id": [100, 100],
+            "account_id": [42, 43],
+        }
+    )
+    df = queries.summarize(
+        queries.compare_intervals,
+        by="interval",
+        measures=["games", "median_gain"],
+        games=games,
+        stat="souls",
+        interval_s=300,
+        parquet_dir=movement_pq,
+    ).collect()
+
+    assert df.get_column("games").to_list() == [2, 2, 2, 2, 2, 2]
+    assert df.get_column("median_gain").first() is not None
+
+
 def test_compare_intervals_source_composite(movement_pq):
     games = pl.LazyFrame({"match_id": [100], "account_id": [42]})
-    gains = queries.compare_intervals(games, "farm", 300, movement_pq).collect().sort("interval")
+    gains = (
+        queries.view_frame(queries.compare_intervals(games, "farm", 300), parquet_dir=movement_pq)
+        .collect()
+        .sort("interval")
+    )
 
     assert gains.get_column("gain").to_list() == [0, 700, 0, 0, 0, 0]
 
@@ -24,8 +53,12 @@ def test_compare_intervals_counts_kills_and_deaths_from_the_deaths_table(movemen
     victim = pl.LazyFrame({"match_id": [100], "account_id": [42]})
     killer = pl.LazyFrame({"match_id": [100], "account_id": [43]})
 
-    deaths = queries.compare_intervals(victim, "deaths", 300, movement_pq).collect()
-    kills = queries.compare_intervals(killer, "kills", 300, movement_pq).collect()
+    deaths = queries.view_frame(
+        queries.compare_intervals(victim, "deaths", 300), parquet_dir=movement_pq
+    ).collect()
+    kills = queries.view_frame(
+        queries.compare_intervals(killer, "kills", 300), parquet_dir=movement_pq
+    ).collect()
 
     assert deaths.sort("interval")["gain"].to_list() == [1, 0, 0, 0, 0, 0]
     assert kills.sort("interval")["gain"].to_list() == [1, 0, 0, 0, 0, 0]
@@ -35,7 +68,9 @@ def test_compare_intervals_unknown_stat(movement_pq):
     games = pl.LazyFrame({"match_id": [100], "account_id": [42]})
 
     with pytest.raises(ValueError, match="Unknown compare stat"):
-        queries.compare_intervals(games, "ability_points", 300, movement_pq)
+        queries.view_frame(
+            queries.compare_intervals(games, "ability_points", 300), parquet_dir=movement_pq
+        )
 
 
 def test_compare_stats_sum_the_rift_urn_source(tmp_path):
@@ -51,12 +86,14 @@ def test_compare_stats_sum_the_rift_urn_source(tmp_path):
         df.write_parquet(out / f"{name}.parquet")
 
     games = pl.LazyFrame({"match_id": [300], "account_id": [42]})
-    rift_urn = queries.compare_intervals(games, "rift_urn", 300, out).collect()
+    rift_urn = queries.view_frame(
+        queries.compare_intervals(games, "rift_urn", 300), parquet_dir=out
+    ).collect()
 
     assert rift_urn.get_column("gain").sum() == 450
 
     with pytest.raises(ValueError, match="Unknown compare stat"):
-        queries.compare_intervals(games, "treasure", 300, out)
+        queries.view_frame(queries.compare_intervals(games, "treasure", 300), parquet_dir=out)
 
 
 def test_cumulative_stat_target_times_interpolates_between_snapshots(movement_pq):
@@ -242,6 +279,42 @@ def test_damage_intervals_hides_zero_value_sources(tmp_path):
     assert (df.get_column("total") > 0).all()
 
 
+def test_damage_intervals_adds_classes_sharing_a_display_name(tmp_path):
+    """Two melee classes under one label add up instead of collapsing to the larger."""
+    info = build_interval_match()
+    dm = info.damage_matrix
+
+    for class_name, damages in (
+        ("ability_melee_lash", [100, 200, 300]),
+        ("ability_melee_ghost", [10, 40, 90]),
+    ):
+        dm.source_details.source_name.append(class_name)
+        dm.source_details.stat_type.append(0)
+
+        src = dm.damage_dealers[0].damage_sources.add()
+        src.source_details_index = len(dm.source_details.source_name) - 1
+
+        target = src.damage_to_players.add()
+        target.target_player_slot = 2
+        target.damage.extend(damages)
+
+    for name, df in export.build_tables([info], exclude=("movement",)).items():
+        df.write_parquet(tmp_path / f"{name}.parquet")
+
+    _write_item_history(tmp_path)
+
+    one = queries.damage_intervals(500, 42, parquet_dir=tmp_path)
+    melee = one.filter(pl.col("source_name") == "Melee")
+
+    assert melee.get_column("damage").sum() == 390
+    assert melee.get_column("total").unique().to_list() == [390]
+
+    games = pl.DataFrame({"match_id": [500], "account_id": [42]})
+    many = queries.source_intervals(games, parquet_dir=tmp_path).collect()
+
+    assert many.filter(pl.col("source_name") == "Melee").get_column("damage").sum() == 390
+
+
 def test_enemy_damage_intervals_taken(interval_pq):
     df = queries.enemy_damage_intervals(500, 43, interval_s=600, parquet_dir=interval_pq)
 
@@ -417,7 +490,7 @@ def test_team_intervals_unknown_match(pq):
 def test_everything_stays_lazy(interval_pq, movement_pq):
     games = pl.LazyFrame({"match_id": [500], "account_id": [42]})
     frames = [
-        queries.compare_intervals(games, "souls", 300, interval_pq),
+        queries.view_frame(queries.compare_intervals(games, "souls", 300), parquet_dir=interval_pq),
         queries.game_totals(games, "souls", interval_pq),
         queries.game_rates(games, "souls", interval_pq),
         queries.cumulative_at(games, "souls", [300], interval_pq),

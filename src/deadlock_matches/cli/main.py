@@ -696,12 +696,25 @@ def build_parser(config: str | Path | None = None) -> argparse.ArgumentParser:
         metavar="N",
         help="also print the first N parquet rows for one table (default: 5)",
     )
+    sc.add_argument(
+        "--views",
+        action="store_true",
+        help="describe what queries.summarize accepts instead of the parquet columns",
+    )
 
     return ap
 
 
 def schema_report(args: argparse.Namespace) -> None:
     """Print schema docs and, optionally, a few rows from the matching parquet table."""
+    if args.views:
+        if args.sample is not None:
+            print("--sample reads a parquet table, drop --views to use it")
+            return
+
+        print(queries.describe_views(args.table))
+        return
+
     if args.sample is not None and args.table is None:
         print("--sample needs a table name, for example: deadlock schema players --sample")
         return

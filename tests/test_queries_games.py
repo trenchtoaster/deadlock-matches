@@ -25,6 +25,34 @@ def test_damage_by_source_totals_share_and_rate(pq):
     assert df.get_column("percent").sum() == pytest.approx(100.0)
 
 
+def test_damage_source_measures_group_damage_and_healing(pq, heal_pq):
+    damage = queries.summarize(
+        queries.damage_source_games,
+        by="delivery",
+        measures=["total", "games"],
+        hero="Mirage",
+        accounts=[42],
+        parquet_dir=pq,
+    ).collect()
+    healing = queries.summarize(
+        queries.damage_source_games,
+        by="delivery",
+        measures=["total", "self"],
+        hero="Mirage",
+        accounts=[42],
+        parquet_dir=heal_pq,
+        stat="healing",
+    ).collect()
+
+    assert dict(damage.select("delivery", "total").iter_rows()) == {
+        "gun": 150,
+        "gun_proc": 90,
+    }
+    assert damage.get_column("games").to_list() == [1, 1]
+    assert healing.get_column("total").sum() == 80
+    assert healing.get_column("self").sum() == 50
+
+
 def test_damage_by_source_item_rate_ends_at_the_sell(sold_pq):
     df = queries.damage_by_source("Mirage", accounts=[42], parquet_dir=sold_pq)
     row = df.filter(pl.col("source_name") == "Mystic Shot")
@@ -233,6 +261,23 @@ def test_souls_by_source_sums_orbs(movement_pq):
     assert df.get_column("percent").to_list() == [100.0]
 
 
+def test_soul_source_measures_group_at_runtime(souls_pq):
+    df = queries.summarize(
+        queries.soul_source_games,
+        by="group",
+        measures=["souls", "games"],
+        hero="Mirage",
+        accounts=[42],
+        parquet_dir=souls_pq,
+        tz="America/Chicago",
+    ).collect()
+    totals = dict(df.select("group", "souls").iter_rows())
+
+    assert totals["waves"] == 2500
+    assert totals["combat"] == 600
+    assert totals["objectives"] == 800
+
+
 def test_souls_by_source_minutes_cover_only_the_paying_games(tmp_path):
     infos = [build_movement_match(100), build_match(101)]
 
@@ -419,3 +464,82 @@ def test_combat_game_records_raises(pq):
 
     with pytest.raises(ValueError, match="no games"):
         queries.combat_game_records("Haze", accounts=[42], parquet_dir=pq)
+
+
+def test_hero_damage_measures_split_the_bullet_series(bullet_pq):
+    df = queries.summarize(
+        queries.hero_damage_games(matches=[100]),
+        by="account_id",
+        measures=("total", "gun", "gun_body", "gun_headshot", "targets"),
+        parquet_dir=bullet_pq,
+    ).collect()
+    row = df.row(0, named=True)
+
+    assert row["account_id"] == 42
+    assert row["gun_body"] == 150
+    assert row["gun_headshot"] == 60
+    assert row["gun"] == row["gun_body"] + row["gun_headshot"]
+    assert row["total"] == 300
+    assert row["targets"] == 1
+
+
+def test_hero_damage_drops_screen_totals_and_npc_targets(bullet_pq):
+    df = queries.summarize(
+        queries.hero_damage_games(),
+        by="source_class",
+        measures=("total",),
+        parquet_dir=bullet_pq,
+    ).collect()
+
+    assert dict(df.iter_rows()) == {
+        "citadel_weapon_mirage": 150,
+        "citadel_weapon_mirage_crit": 60,
+        "upgrade_crackshot": 90,
+    }
+
+
+def test_hero_damage_filters_one_source_class(bullet_pq):
+    total = (
+        queries.summarize(
+            queries.hero_damage_games(accounts=[42], matches=[100]),
+            measures=("total",),
+            filters={"source_class": "upgrade_crackshot"},
+            parquet_dir=bullet_pq,
+        )
+        .collect()
+        .item()
+    )
+
+    assert total == 90
+
+
+def test_hero_damage_grain_is_unique(bullet_pq):
+    rows = queries.view_frame(
+        queries.hero_damage_games(matches=[100]), parquet_dir=bullet_pq
+    ).collect()
+
+    queries.validate_grain(queries.hero_damage_games, rows)
+
+
+def test_buff_games_split_permanent_from_bridge(buff_pq):
+    df = queries.summarize(
+        queries.buff_games(),
+        by="account_id",
+        measures=("held", "bridge"),
+        parquet_dir=buff_pq,
+    ).collect()
+
+    assert dict(df.select("account_id", "held").iter_rows()) == {42: 7, 43: 1}
+    assert dict(df.select("account_id", "bridge").iter_rows()) == {42: 2, 43: 0}
+
+
+def test_buff_games_group_by_family_and_join_players(buff_pq):
+    df = queries.summarize(
+        queries.buff_games(accounts=[42]),
+        by=("hero", "buff"),
+        measures=("held",),
+        parquet_dir=buff_pq,
+    ).collect()
+
+    assert df.get_column("hero").unique().to_list() == ["Mirage"]
+    assert dict(df.select("buff", "held").iter_rows()) == {"casting": 0, "hp": 4, "wp": 3}

@@ -10,6 +10,7 @@ import polars as pl
 
 from deadlock_matches.queries.core import _resolved_accounts, player_rows, scan, table_exists
 from deadlock_matches.queries.games import _collect_game_records, _hero_game_rows
+from deadlock_matches.queries.semantic import Dimension, Measure, MetricView, view, view_frame
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
@@ -186,15 +187,62 @@ def movement_profile(parquet_dir: str | Path | None = None) -> pl.LazyFrame:
     )
 
 
-def movement_game_records(
+MOVEMENT_GAME_DIMENSIONS = {
+    "match_id": Dimension(pl.col("match_id")),
+    "account_id": Dimension(pl.col("account_id")),
+    "hero": Dimension(pl.col("hero")),
+    "day": Dimension(pl.col("day"), comment="Local date, not the UTC date."),
+    "week": Dimension(pl.col("start_local").dt.strftime("%G-W%V")),
+    "month": Dimension(pl.col("start_local").dt.strftime("%Y-%m")),
+    "won": Dimension(pl.col("won")),
+}
+
+_MOVEMENT_GAME_COLUMNS = (
+    "distance_min",
+    "stationary_percent",
+    "slide_percent",
+    "in_air_percent",
+    "zipline_percent",
+    "combat_percent",
+    "dashes_min",
+    "air_dashes_min",
+)
+
+MOVEMENT_GAME_MEASURES = {
+    "games": Measure(
+        pl.len(),
+        "count",
+        comment="Every game of the hero, with or without movement rows.",
+    ),
+    "tracked_games": Measure(
+        pl.col("distance_min").count(),
+        "count",
+        comment="Games with movement rows; null-metric games stay out of metric means.",
+    ),
+    **{
+        column: Measure(
+            pl.col(column).mean(),
+            "ratio",
+            comment="Arithmetic mean of the per-game metric, so every game has equal weight.",
+        )
+        for column in _MOVEMENT_GAME_COLUMNS
+    },
+}
+
+
+@view(
+    grain=("match_id", "account_id"),
+    dimensions=MOVEMENT_GAME_DIMENSIONS,
+    measures=MOVEMENT_GAME_MEASURES,
+)
+def movement_games(
     hero: str,
     accounts: Sequence[int] | None = None,
-    parquet_dir: str | Path | None = None,
     tz: str | None = None,
     days: int | None = None,
     since: str | dt.date | None = None,
-) -> pl.DataFrame:
-    """Take one row per game of a hero with the movement metrics.
+) -> MetricView:
+    """One row per game of a hero with the movement metrics.
 
     - percents cover alive seconds
     - stationary and the pace cover moving seconds
@@ -203,20 +251,40 @@ def movement_game_records(
     - games without movement rows keep null metrics
     - days and since filter on the local day
     """
-    accounts = _resolved_accounts(accounts)
-    mine = _hero_game_rows(hero, accounts, parquet_dir, tz, days, since)
-    metrics = movement_metrics(parquet_dir).select(
+    return MetricView(source=lambda: _movement_game_rows(hero, accounts, tz, days, since))
+
+
+def _movement_game_rows(
+    hero: str,
+    accounts: Sequence[int] | None,
+    tz: str | None,
+    days: int | None,
+    since: str | dt.date | None,
+) -> pl.LazyFrame:
+    """Join the movement metrics onto every game of a hero, null where none were tracked."""
+    resolved = _resolved_accounts(accounts)
+    mine = _hero_game_rows(hero, resolved, None, tz, days, since)
+    metrics = movement_metrics().select(
         "match_id",
         "account_id",
-        "distance_min",
-        "stationary_percent",
-        "slide_percent",
-        "in_air_percent",
-        "zipline_percent",
-        "combat_percent",
-        "dashes_min",
-        "air_dashes_min",
+        *_MOVEMENT_GAME_COLUMNS,
     )
-    games = mine.join(metrics, on=["match_id", "account_id"], how="left")
 
-    return _collect_game_records(games, hero, accounts)
+    return mine.join(metrics, on=["match_id", "account_id"], how="left")
+
+
+def movement_game_records(
+    hero: str,
+    accounts: Sequence[int] | None = None,
+    parquet_dir: str | Path | None = None,
+    tz: str | None = None,
+    days: int | None = None,
+    since: str | dt.date | None = None,
+) -> pl.DataFrame:
+    """Collect movement_games for the fixed per-game report."""
+    resolved_accounts = _resolved_accounts(accounts)
+    games = view_frame(
+        movement_games(hero, resolved_accounts, tz, days, since), parquet_dir=parquet_dir
+    )
+
+    return _collect_game_records(games, hero, resolved_accounts)

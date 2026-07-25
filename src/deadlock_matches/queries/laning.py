@@ -10,6 +10,7 @@ import polars as pl
 
 from deadlock_matches.assets import heroes
 from deadlock_matches.queries.core import my_games, player_rows, scan
+from deadlock_matches.queries.semantic import view_frame
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
@@ -111,7 +112,7 @@ def lane_records(
     - days, since, and hero filter like record_games, not scored games and
       matches where any laner has no stats snapshot before the mark stay out
     """
-    lf = my_games(parquet_dir, accounts, tz).filter(pl.col("not_scored").not_())
+    lf = view_frame(my_games(accounts, tz), parquet_dir=parquet_dir).filter(pl.col("scored"))
 
     if hero is not None:
         hero_id = heroes.hero_id_by_name(hero)

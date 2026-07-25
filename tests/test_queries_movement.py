@@ -150,6 +150,22 @@ def test_movement_game_records_matches_profile(movement_pq):
     assert df.get_column("dashes_min")[0] == pytest.approx(6.0)
 
 
+def test_movement_game_measures_average_base_game_rows(movement_pq):
+    df = queries.summarize(
+        queries.movement_games,
+        by="won",
+        measures=["games", "distance_min", "combat_percent"],
+        hero="Mirage",
+        accounts=[42],
+        parquet_dir=movement_pq,
+        tz="America/Chicago",
+    ).collect()
+
+    assert df.get_column("games").to_list() == [1]
+    assert df.get_column("distance_min").item() == pytest.approx(6000.0)
+    assert df.get_column("combat_percent").item() == pytest.approx(40.0)
+
+
 def test_movement_game_records_without_rows_keeps_nulls(tmp_path):
     infos = [build_movement_match(100), build_match(match_id=200)]
 

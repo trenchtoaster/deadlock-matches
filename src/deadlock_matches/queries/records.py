@@ -7,15 +7,31 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 import polars as pl
-import polars.selectors as cs
 
 from deadlock_matches import config
-from deadlock_matches.assets import heroes
-from deadlock_matches.assets import skill_rating as sr
-from deadlock_matches.queries.core import my_games, player_rows, scan
+from deadlock_matches.queries.core import (
+    hero_filter,
+    my_games,
+    player_rows,
+    scan,
+    skill_rating,
+)
+from deadlock_matches.queries.semantic import (
+    Dimension,
+    Measure,
+    MetricView,
+    Window,
+    summarize,
+    try_divide,
+    view,
+    view_frame,
+)
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
+
+
+_SCORED = ~pl.col("not_scored").fill_null(value=False)
 
 
 def daily_record(
@@ -26,7 +42,7 @@ def daily_record(
     since: str | dt.date | None = None,
     hero: str | None = None,
     by: str = "day",
-    games: pl.DataFrame | None = None,
+    games: pl.DataFrame | pl.LazyFrame | None = None,
 ) -> pl.DataFrame:
     """Per local day W/L record with net wins and a running total.
 
@@ -46,7 +62,10 @@ def daily_record(
         raise ValueError(msg)
 
     if games is None:
-        games = record_games(parquet_dir, accounts, tz, days, since, hero)
+        games = view_frame(record_games(accounts, tz, days, since, hero), parquet_dir=parquet_dir)
+
+    if isinstance(games, pl.LazyFrame):
+        games = games.collect()
 
     games = _scored(games)
 
@@ -62,49 +81,77 @@ def daily_record(
         .to_series()
     )
 
-    daily = (
-        games.with_columns(pl.col("match_id").is_in(abandoned_ids.implode()).alias("abandoned"))
-        .group_by("day")
+    dimension = RECORD_GAMES_DIMENSIONS[by].expr.alias(by)
+    abandons = (
+        games.lazy()
+        .with_columns(dimension)
+        .group_by(by)
         .agg(
-            pl.len().cast(pl.Int32).alias("games"),
-            pl.col("won").sum().cast(pl.Int32).alias("wins"),
-            (pl.col("mvp_rank") == 1).sum().cast(pl.Int32).alias("mvps"),
-            (pl.col("mvp_rank") >= 2).sum().cast(pl.Int32).alias("key_players"),
-            pl.col("abandoned").sum().cast(pl.Int32).alias("abandons"),
-            pl.col("lobby_subrank").sum().alias("subrank_sum"),
-            pl.col("lobby_subrank").count().cast(pl.Int32).alias("rated_games"),
+            pl.col("match_id").is_in(abandoned_ids.implode()).sum().cast(pl.Int32).alias("abandons")
         )
-        .sort("day")
+    )
+    daily = summarize(
+        record_games,
+        by=by,
+        measures=(
+            "games",
+            "wins",
+            "losses",
+            "net",
+            "cum_net",
+            "win_rate",
+            "mvps",
+            "key_players",
+            "subrank_sum",
+            "rated_games",
+            "lobby_badge",
+        ),
+        lf=games.lazy(),
+    )
+    result = (
+        daily.join(abandons, on=by, how="left")
+        .sort(by)
+        .with_columns(
+            pl.col(
+                "games",
+                "wins",
+                "losses",
+                "net",
+                "cum_net",
+                "mvps",
+                "key_players",
+                "rated_games",
+            ).cast(pl.Int32),
+            pl.col("abandons").fill_null(0).cast(pl.Int32),
+            (pl.col("win_rate") * 100).alias("win_rate"),
+        )
+        .with_columns(skill_rating("lobby_badge").alias("lobby"))
+        .drop("lobby_badge")
     )
 
     if by != "day":
-        every = "1w" if by == "week" else "1mo"
-        daily = (
-            daily.group_by(pl.col("day").dt.truncate(every))
-            .agg(cs.exclude("day").sum())
-            .sort("day")
-        )
+        result = result.rename({by: "day"})
 
-    return (
-        daily.with_columns((pl.col("games") - pl.col("wins")).alias("losses"))
-        .with_columns(
-            (pl.col("wins") / pl.col("games") * 100).alias("win_rate"),
-            (pl.col("wins") - pl.col("losses")).alias("net"),
-            pl.when(pl.col("rated_games") > 0)
-            .then(pl.col("subrank_sum") / pl.col("rated_games"))
-            .alias("_mean_subrank"),
-        )
-        .with_columns(
-            pl.col("net").cum_sum().alias("cum_net"),
-            _subrank_label("_mean_subrank").alias("lobby"),
-        )
-        .drop("_mean_subrank")
-    )
+    return result.select(
+        "day",
+        "games",
+        "wins",
+        "mvps",
+        "key_players",
+        "abandons",
+        "subrank_sum",
+        "rated_games",
+        "losses",
+        "win_rate",
+        "net",
+        "cum_net",
+        "lobby",
+    ).collect()
 
 
 def _scored(games: pl.DataFrame) -> pl.DataFrame:
     """Keep only the matches Valve scored, the winrate table leaves the rest out."""
-    return games.filter(~pl.col("not_scored").fill_null(value=False))
+    return games.filter(_SCORED)
 
 
 def _subrank(column: str) -> pl.Expr:
@@ -112,44 +159,130 @@ def _subrank(column: str) -> pl.Expr:
     return (pl.col(column) // 10) * 6 + pl.col(column) % 10
 
 
-def _subrank_label(column: str) -> pl.Expr:
-    """Rating label for a mean subrank column, back to a badge then through skill_rating."""
-    tier = (pl.col(column).round(0).cast(pl.Int64) - 1) // 6
-    badge = tier * 10 + pl.col(column).round(0).cast(pl.Int64) - tier * 6
+def badge_from_subrank(subrank: pl.Expr) -> pl.Expr:
+    """Round a mean subrank back to a badge level, skill_rating.badge_from_subrank as an expression."""
+    index = subrank.round(0).cast(pl.Int64)
+    tier = (index - 1) // 6
 
-    mapping = {
-        tier * 10 + level: sr.label(tier * 10 + level)
-        for tier in sr.tier_map()
-        for level in range(7)
-    }
+    return (
+        pl.when(index.is_null())
+        .then(pl.lit(None, dtype=pl.Int64))
+        .when(index > 0)
+        .then(tier * 10 + index - tier * 6)
+        .otherwise(0)
+    )
 
-    return badge.replace_strict(mapping, default=None, return_dtype=pl.String)
+
+RECORD_GAMES_DIMENSIONS = {
+    "day": Dimension(pl.col("day"), comment="Local date, not the UTC date."),
+    "week": Dimension(
+        pl.col("day").dt.truncate("1w"),
+        comment="Local week beginning Monday.",
+    ),
+    "month": Dimension(
+        pl.col("day").dt.truncate("1mo"),
+        comment="Local calendar month, represented by its first day.",
+    ),
+    "won": Dimension(pl.col("won")),
+    "scored": Dimension(_SCORED, comment="False for the matches Valve left unscored."),
+    "team": Dimension(pl.col("team")),
+}
+
+_SCORED_SUBRANK = pl.when(_SCORED).then(pl.col("lobby_subrank"))
+
+RECORD_GAMES_MEASURES = {
+    "games": Measure(pl.len(), "count", comment="Every game, scored or not."),
+    "scored_games": Measure(_SCORED.sum(), "count", comment="The win rate denominator."),
+    "wins": Measure((pl.col("won") & _SCORED).sum(), "count", direction="maximize"),
+    "losses": Measure((~pl.col("won") & _SCORED).sum(), "count", direction="minimize"),
+    "net": Measure(
+        lambda measure: measure["wins"].cast(pl.Int64) - measure["losses"].cast(pl.Int64),
+        "count",
+        comment="Wins minus losses.",
+        direction="maximize",
+    ),
+    "cum_net": Measure(
+        lambda measure: measure["net"],
+        "count",
+        comment="Net wins accumulated down the buckets, the running total the winrate table prints.",
+        window=Window(order=("day", "week", "month"), range="cumulative"),
+        direction="maximize",
+    ),
+    "win_rate": Measure(
+        lambda measure: try_divide(measure["wins"], measure["scored_games"]),
+        "proportion",
+        comment="Wins over scored games as a proportion, never the mean of per-group rates.",
+        synonyms=("winrate",),
+        direction="maximize",
+    ),
+    "mvps": Measure(
+        ((pl.col("mvp_rank") == 1) & _SCORED).sum(),
+        "count",
+        comment="MVP awards in scored games.",
+        direction="maximize",
+    ),
+    "key_players": Measure(
+        ((pl.col("mvp_rank") >= 2) & _SCORED).sum(),
+        "count",
+        comment="Key Player awards in scored games.",
+        direction="maximize",
+    ),
+    "subrank_sum": Measure(
+        _SCORED_SUBRANK.sum(),
+        "subrank",
+        comment="Additive lobby subrank total over scored games for recomputing an overall lobby average.",
+    ),
+    "rated_games": Measure(
+        _SCORED_SUBRANK.count(),
+        "count",
+        comment="Scored games that carried a lobby badge average.",
+    ),
+    "lobby_subrank": Measure(
+        lambda measure: try_divide(measure["subrank_sum"], measure["rated_games"]),
+        "subrank",
+        comment="Mean lobby subrank over scored games, a linear count. Badge levels skip 7-9, so average these, not badges.",
+    ),
+    "lobby_badge": Measure(
+        lambda measure: badge_from_subrank(measure["lobby_subrank"]),
+        "badge",
+        comment="The mean scored-game lobby subrank rounded back to a badge level, ready for skill_rating.",
+    ),
+}
 
 
+@view(
+    grain=("match_id",),
+    dimensions=RECORD_GAMES_DIMENSIONS,
+    measures=RECORD_GAMES_MEASURES,
+)
 def record_games(
-    parquet_dir: str | Path | None = None,
     accounts: Sequence[int] | None = None,
     tz: str | None = None,
     days: int | None = None,
     since: str | dt.date | None = None,
     hero: str | None = None,
-) -> pl.DataFrame:
-    """Take one row per match in the winrate window.
+) -> MetricView:
+    """One row per match in the winrate window.
 
     days keeps only the last N days that had games, None keeps everything.
     The result feeds daily_record, abandon_record, and unscored_record
     through their games parameter.
     """
-    lf = my_games(parquet_dir, accounts, tz)
+    return MetricView(source=lambda: _record_game_rows(accounts, tz, days, since, hero))
+
+
+def _record_game_rows(
+    accounts: Sequence[int] | None,
+    tz: str | None,
+    days: int | None,
+    since: str | dt.date | None,
+    hero: str | None,
+) -> pl.LazyFrame:
+    """Take the one row per match the winrate window keeps, already deduplicated."""
+    lf = view_frame(my_games(accounts, tz))
 
     if hero is not None:
-        hero_id = heroes.hero_id_by_name(hero)
-
-        if hero_id is None:
-            msg = f"Unknown hero {hero!r}"
-            raise ValueError(msg)
-
-        lf = lf.filter(pl.col("hero_id") == hero_id)
+        lf = lf.filter(hero_filter(hero))
 
     if since is not None:
         since = dt.date.fromisoformat(since) if isinstance(since, str) else since
@@ -158,20 +291,16 @@ def record_games(
     if days is not None:
         lf = lf.filter(pl.col("day").rank("dense", descending=True) <= days)
 
-    return (
-        lf.unique(subset="match_id")
-        .select(
-            "match_id",
-            "team",
-            "day",
-            "won",
-            "mvp_rank",
-            "not_scored",
-            pl.mean_horizontal(
-                _subrank("average_badge_team0"), _subrank("average_badge_team1")
-            ).alias("lobby_subrank"),
-        )
-        .collect()
+    return lf.unique(subset="match_id").select(
+        "match_id",
+        "team",
+        "day",
+        "won",
+        "mvp_rank",
+        pl.col("matches.not_scored").alias("not_scored"),
+        pl.mean_horizontal(
+            _subrank("matches.average_badge_team0"), _subrank("matches.average_badge_team1")
+        ).alias("lobby_subrank"),
     )
 
 
@@ -182,7 +311,7 @@ def abandon_record(
     days: int | None = None,
     since: str | dt.date | None = None,
     hero: str | None = None,
-    games: pl.DataFrame | None = None,
+    games: pl.DataFrame | pl.LazyFrame | None = None,
 ) -> pl.DataFrame:
     """Take one row per scored match in the winrate window where someone abandoned.
 
@@ -202,7 +331,10 @@ def abandon_record(
         raise ValueError(msg)
 
     if games is None:
-        games = record_games(parquet_dir, accounts, tz, days, since, hero)
+        games = view_frame(record_games(accounts, tz, days, since, hero), parquet_dir=parquet_dir)
+
+    if isinstance(games, pl.LazyFrame):
+        games = games.collect()
 
     games = _scored(games)
 
@@ -264,7 +396,7 @@ def unscored_record(
     days: int | None = None,
     since: str | dt.date | None = None,
     hero: str | None = None,
-    games: pl.DataFrame | None = None,
+    games: pl.DataFrame | pl.LazyFrame | None = None,
 ) -> pl.DataFrame:
     """Take one row per unscored match the winrate table left out, same window filters.
 
@@ -273,7 +405,10 @@ def unscored_record(
     scanning again.
     """
     if games is None:
-        games = record_games(parquet_dir, accounts, tz, days, since, hero)
+        games = view_frame(record_games(accounts, tz, days, since, hero), parquet_dir=parquet_dir)
+
+    if isinstance(games, pl.LazyFrame):
+        games = games.collect()
 
     return (
         games.filter(pl.col("not_scored").fill_null(value=False))

@@ -1629,14 +1629,23 @@ def test_compare_command_combat_stat_prints_aggregate_table(tmp_path, monkeypatc
     assert re.search(r"Parries /game\s+3\.0\s+6\.0\s+-3\.0", out)
 
 
+def _fast_pool_game(match_id):
+    """A pool game whose player covers twice the ground, so the gap has a side to fall on."""
+    info = _pool_game(match_id, paths=True)
+    track = info.match_paths.paths[0]
+
+    del track.x_pos[:]
+    track.x_pos.extend(range(0, 20, 2))
+
+    return info
+
+
 def test_compare_command_movement_stat(tmp_path, monkeypatch, capsys):
     cache = tmp_path / "cache"
     cache.mkdir()
     write_cache_entry(cache, match_id=100, stats=[(180, 1000), (360, 2000)], paths=True)
 
-    monkeypatch.setattr(
-        players, "match_info", lambda mid, archive_dir=None: _pool_game(mid, paths=True)
-    )
+    monkeypatch.setattr(players, "match_info", lambda mid, archive_dir=None: _fast_pool_game(mid))
     store = tmp_path / "players-pq"
     ledger = [
         {
@@ -1670,6 +1679,8 @@ def test_compare_command_movement_stat(tmp_path, monkeypatch, capsys):
     assert "meters /min" in out
     assert "fighting players %" in out
     assert re.search(r"Metric\s+You\s+Tracked\s+Gap", out)
+    assert re.search(r"meters /min\s+152\.4\s+304\.8\s+-152\.4", out)
+    assert re.search(r"slide %\s+20\.0\s+20\.0\s+\+0\.0", out)
     assert re.search(r"m /min\s+Stationary\s+Slide", out)
     assert re.search(r"you\s+-\s+1\s+-", out)
     assert re.search(r"pro\s+11\s+3\s+2", out)
@@ -4088,6 +4099,27 @@ def test_schema_command_unknown_table(capsys):
     main(["schema", "test"])
 
     assert "Unknown table" in capsys.readouterr().out
+
+
+def test_schema_views_describes_what_summarize_accepts(capsys):
+    main(["schema", "--views", "my_games"])
+
+    out = capsys.readouterr().out
+
+    assert "my_games  one row per match_id, account_id" in out
+    assert "group by" in out
+    assert "win_rate" in out
+    assert "record_games" not in out
+
+    main(["schema", "--views"])
+
+    assert "record_games" in capsys.readouterr().out
+
+
+def test_schema_views_and_sample_do_not_mix(capsys):
+    main(["schema", "players", "--views", "--sample"])
+
+    assert "drop --views to use it" in capsys.readouterr().out
 
 
 def test_sync_archive_reports_count_and_path(tmp_path, capsys):

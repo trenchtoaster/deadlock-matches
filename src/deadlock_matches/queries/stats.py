@@ -9,9 +9,21 @@ from typing import TYPE_CHECKING
 import polars as pl
 import polars.selectors as cs
 
+from deadlock_matches import config
 from deadlock_matches.assets import heroes
 from deadlock_matches.queries.core import _local_day, my_games, player_rows, scan, table_exists
 from deadlock_matches.queries.delivery import damage_category
+from deadlock_matches.queries.labels import hero_name
+from deadlock_matches.queries.semantic import (
+    Dimension,
+    Join,
+    Measure,
+    MetricView,
+    Window,
+    try_divide,
+    view,
+    view_frame,
+)
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
@@ -246,6 +258,140 @@ def melee_taken_by_attacker(
     )
 
 
+SNAPSHOT_WINDOW = Window(
+    order="time_stamp_s",
+    partition=("match_id", "account_id"),
+    semiadditive="last",
+)
+
+STAT_SNAPSHOT_DIMENSIONS = {
+    "match_id": Dimension(pl.col("match_id")),
+    "account_id": Dimension(pl.col("account_id")),
+    "hero": Dimension(hero_name("players.hero_id")),
+    "team": Dimension(pl.col("players.team")),
+    "won": Dimension(pl.col("players.won")),
+    "day": Dimension(pl.col("start_local").dt.date(), comment="Local date, not the UTC date."),
+    "week": Dimension(pl.col("start_local").dt.strftime("%G-W%V")),
+    "month": Dimension(pl.col("start_local").dt.strftime("%Y-%m")),
+}
+
+
+def _final(column: str, unit: str, comment: str = "", direction: str = "maximize") -> Measure:
+    """Sum one snapshot column across player-games after each series collapses to its last sample."""
+    return Measure(
+        pl.col(column).sum(),
+        unit,
+        comment=comment,
+        window=SNAPSHOT_WINDOW,
+        direction=direction,
+    )
+
+
+STAT_SNAPSHOT_MEASURES = {
+    "games": Measure(
+        pl.len(),
+        "count",
+        comment="Player-games contributing, one per collapsed series.",
+        window=SNAPSHOT_WINDOW,
+    ),
+    "net_worth": _final(
+        "net_worth",
+        "souls",
+        "Net worth at the last snapshot. It is a balance, so a death loss makes it fall.",
+    ),
+    "kills": _final("kills", "count"),
+    "deaths": _final("deaths", "count", direction="minimize"),
+    "assists": _final("assists", "count"),
+    "denies": _final("denies", "count"),
+    "player_damage": _final("player_damage", "count", "Damage to heroes."),
+    "boss_damage": _final("boss_damage", "count"),
+    "player_healing": _final("player_healing", "count"),
+    "heal_prevented": _final("heal_prevented", "count"),
+    "damage_mitigated": _final("damage_mitigated", "count"),
+    "shots_hit": _final("shots_hit", "count", "Hits on any target, heroes and NPCs together."),
+    "shots_missed": _final("shots_missed", "count", direction="minimize"),
+    "accuracy": Measure(
+        lambda measure: try_divide(
+            measure["shots_hit"], measure["shots_hit"] + measure["shots_missed"]
+        ),
+        "proportion",
+        comment="Hits over shots against every target, which reads far higher than the hero rate.",
+        window=SNAPSHOT_WINDOW,
+        direction="maximize",
+    ),
+    "hero_bullets_hit": _final("hero_bullets_hit", "count", "Body shots on heroes."),
+    "hero_bullets_hit_crit": _final("hero_bullets_hit_crit", "count", "Headshots on heroes."),
+    "headshot_rate": Measure(
+        lambda measure: try_divide(
+            measure["hero_bullets_hit_crit"],
+            measure["hero_bullets_hit"] + measure["hero_bullets_hit_crit"],
+        ),
+        "proportion",
+        comment="Headshots over bullets that hit a hero.",
+        window=SNAPSHOT_WINDOW,
+        direction="maximize",
+    ),
+}
+
+
+def _snapshot_rows(games: pl.DataFrame | pl.LazyFrame | None) -> pl.LazyFrame:
+    """Snapshot rows, cut to the given player-games when one is passed."""
+    rows = scan("stats")
+
+    if games is None:
+        return rows
+
+    keys = games.lazy().select("match_id", "account_id").unique()
+
+    return rows.join(keys, on=["match_id", "account_id"], how="semi")
+
+
+def _snapshot_series(
+    games: pl.DataFrame | pl.LazyFrame | None,
+    accounts: Sequence[int] | None,
+    tz: str | None,
+) -> MetricView:
+    """Snapshot rows joined to their player and match, carrying the local start time."""
+    zone = config.config_timezone() if tz is None else tz
+
+    return MetricView(
+        source=lambda: _snapshot_rows(games),
+        joins=(
+            Join("players", using=("match_id", "account_id")),
+            Join("matches", using="match_id"),
+        ),
+        filter=None if accounts is None else pl.col("account_id").is_in(list(accounts)),
+        dimensions={
+            "start_local": Dimension(
+                pl.col("matches.start_time").dt.convert_time_zone(zone),
+                comment="Match start in the local zone, not UTC.",
+            )
+        },
+    )
+
+
+@view(
+    grain=("match_id", "account_id", "time_stamp_s"),
+    dimensions=STAT_SNAPSHOT_DIMENSIONS,
+    measures=STAT_SNAPSHOT_MEASURES,
+)
+def stat_snapshots(
+    games: pl.DataFrame | pl.LazyFrame | None = None,
+    accounts: Sequence[int] | None = None,
+    tz: str | None = None,
+) -> MetricView:
+    """One row per stats snapshot, with every measure reading the last sample of its series.
+
+    - the snapshot columns are running values, so summing them across samples
+      multiplies by the sample count. The semiadditive window collapses each
+      player-game to its final sample first, which is what a final total means
+    - net worth, max health, and the two power columns can fall, so the last
+      sample and the biggest sample are not the same number
+    - games cuts the rows to a frame of match_id/account_id pairs
+    """
+    return MetricView(source=_snapshot_series(games, accounts, tz))
+
+
 def final_stats(parquet_dir: str | Path | None = None, tz: str | None = None) -> pl.LazyFrame:
     """Final snapshot values for each player in each match, with hero/won, local day, and gun rates.
 
@@ -303,8 +449,14 @@ def my_deaths(
     tz: str | None = None,
 ) -> pl.LazyFrame:
     """Deaths for the player with hero, won, duration, and local day joined in."""
-    games = my_games(parquet_dir, accounts, tz).select(
-        "match_id", "account_id", "hero", "hero_id", "won", "day", "duration_s"
+    games = view_frame(my_games(accounts, tz), parquet_dir=parquet_dir).select(
+        "match_id",
+        "account_id",
+        "hero",
+        "hero_id",
+        "won",
+        "day",
+        pl.col("matches.duration_s").alias("duration_s"),
     )
 
     return scan("deaths", parquet_dir).join(games, on=["match_id", "account_id"])
@@ -388,7 +540,7 @@ def hero_games(
         msg = f"Unknown hero {hero!r}"
         raise ValueError(msg)
 
-    games = my_games(parquet_dir, accounts).filter(
+    games = view_frame(my_games(accounts), parquet_dir=parquet_dir).filter(
         pl.col("hero_id") == hero_id, pl.col("match_mode") == 1
     )
 

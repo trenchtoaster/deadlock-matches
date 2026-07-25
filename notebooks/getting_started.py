@@ -64,7 +64,7 @@ def _(account_pick, mo, queries):
     )
 
     accounts = account_pick.value
-    games = queries.my_games(accounts=accounts).collect()
+    games = queries.view_frame(queries.my_games(accounts=accounts)).collect()
     return accounts, games
 
 
@@ -74,7 +74,9 @@ def _(mo):
     ## Your matches
 
     `queries.my_games()` is one row per match you played, with the match details joined
-    in and a `day` column in your local timezone. Note - we are selecting only a subset
+    in and a `day` column in your local timezone. It is a metric view rather than a
+    frame, so `view_frame()` builds the rows. Columns from the joined match table
+    arrive prefixed, like `matches.duration_s`. Note - we are selecting only a subset
     of columns here.
     """)
     return
@@ -84,7 +86,7 @@ def _(mo):
 def _(games, mo, pl):
     mo.ui.table(
         games.sort("start_local", descending=True)
-        .with_columns((pl.col("duration_s") // 60).alias("minutes"))
+        .with_columns((pl.col("matches.duration_s") // 60).alias("minutes"))
         .select(
             "match_id",
             "day",
@@ -107,20 +109,27 @@ def _(mo):
     mo.md(r"""
     ## Win rate per hero
 
-    The example from the README using your data.
+    `queries.summarize()` groups a metric view by the dimensions it declares and
+    aggregates the measures it declares, the example from `docs/data.md` on your data.
+    `win_rate` counts wins over scored games, so it will not always match a plain
+    average of the `won` column above. It comes back as a proportion, scaling it to a
+    percent is yours to do where you print.
     """)
     return
 
 
 @app.cell
-def _(games, pl):
+def _(accounts, pl, queries):
     (
-        games.group_by("hero")
-        .agg(
-            pl.len().alias("games"),
-            pl.col("won").mean().mul(100).round(1).alias("win_rate"),
+        queries.summarize(
+            queries.my_games,
+            by="hero",
+            measures=["games", "win_rate"],
+            accounts=accounts,
         )
+        .with_columns(pl.col("win_rate").mul(100).round(1))
         .sort("games", descending=True)
+        .collect()
     )
     return
 

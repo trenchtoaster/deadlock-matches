@@ -27,8 +27,15 @@ def test_table_exists_unknown_table():
         queries.table_exists("test")
 
 
+def _my_games(pq):
+    """Build the my_games view as a frame, the way its direct callers do."""
+    return queries.view_frame(queries.my_games(accounts=[42], tz="America/Chicago"), parquet_dir=pq)
+
+
 def test_my_games_filters_to_accounts(pq):
-    df = queries.my_games(pq, accounts=[42], tz="America/Chicago").collect()
+    df = _my_games(pq).collect()
+
+    queries.validate_grain(queries.my_games, df)
 
     assert df.height == 1
     assert df.get_column("account_id")[0] == 42
@@ -36,7 +43,7 @@ def test_my_games_filters_to_accounts(pq):
 
 
 def test_my_games_adds_local_day(pq):
-    df = queries.my_games(pq, accounts=[42], tz="America/Chicago").collect()
+    df = _my_games(pq).collect()
     start_local = df.schema["start_local"]
 
     assert df.get_column("day")[0] == LOCAL_DAY
@@ -46,7 +53,7 @@ def test_my_games_adds_local_day(pq):
 
 def test_my_games_requires_accounts(pq):
     with pytest.raises(ValueError, match="no accounts"):
-        queries.my_games(pq, accounts=[])
+        queries.my_games(accounts=[])
 
 
 def test_asset_tables_fall_back_to_the_main_store(tmp_path, monkeypatch):

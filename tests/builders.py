@@ -130,6 +130,21 @@ def build_match(match_id=100, account_id=42, level=None, max_health=None):
     return info
 
 
+def build_bullet_match(match_id=100, account_id=42):
+    info = build_match(match_id=match_id, account_id=account_id)
+    dm = info.damage_matrix
+    dm.source_details.source_name.append("citadel_weapon_mirage_crit")
+    dm.source_details.stat_type.append(0)
+
+    crit = dm.damage_dealers[0].damage_sources.add()
+    crit.source_details_index = len(dm.source_details.source_name) - 1
+    t = crit.damage_to_players.add()
+    t.target_player_slot = 2
+    t.damage.extend([20, 60])
+
+    return info
+
+
 def build_death_loss_match(match_id=100, account_id=42):
     info = build_match(match_id=match_id, account_id=account_id)
     s = info.players[0].stats.add()
@@ -140,6 +155,28 @@ def build_death_loss_match(match_id=100, account_id=42):
     s.hero_bullets_hit = 45
     s.hero_bullets_hit_crit = 15
     s.player_damage = 1500
+
+    return info
+
+
+def build_buff_match(match_id=100, account_id=42, pickups=None):
+    info = build_match(match_id=match_id, account_id=account_id)
+    pickups = pickups or [
+        ("hp_permanent_pickup", 4, True),
+        ("wp_permanent_pickup_lv2", 3, True),
+        ("casting_powerup_pickup", 2, False),
+    ]
+
+    for pickup, count, permanent in pickups:
+        b = info.players[0].power_up_buffs.add()
+        b.type = pickup
+        b.value = count
+        b.is_permanent = permanent
+
+    b = info.players[1].power_up_buffs.add()
+    b.type = "hp_permanent_pickup"
+    b.value = 1
+    b.is_permanent = True
 
     return info
 

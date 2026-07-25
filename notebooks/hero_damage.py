@@ -58,7 +58,7 @@ def _(account_pick, mo, queries):
     )
 
     accounts = account_pick.value
-    games = queries.my_games(accounts=accounts).collect()
+    games = queries.view_frame(queries.my_games(accounts=accounts)).collect()
     return accounts, games
 
 

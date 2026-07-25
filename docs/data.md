@@ -44,7 +44,7 @@ Questions like these are a few lines of polars each:
 
 - `queries.scan("damage")` to read any table by name.
 - `queries.player_rows()` to read `players` with the current hero display name.
-- `queries.my_games()` for one row per match you played, with the local day for grouping by session.
+- `queries.my_games()` for one row per match you played, with the local day for grouping by session. It is a metric view rather than a frame, so pass it to `queries.summarize()` to aggregate or to `queries.view_frame()` for the rows themselves.
 - `queries.final_stats()` for final stats of every player in every match, including accuracy and headshot rate.
 - item, damage, soul, death, movement, and record helpers for the frames behind CLI reports.
 
@@ -52,7 +52,7 @@ Every query in the module is a lazy polars plan and all collections use the stre
 
 Current asset labels are deliberately not stored in match parquet. Hero, damage-source, imbued-ability, stack, and accolade labels resolve from their stable IDs or engine classes when queried, so an asset refresh fixes old-match displays without a full archive rebuild. Aggregate on the stable key first and attach the label to the reduced frame when writing a new aggregate query.
 
-Here is the general shape. Start from one of the helper frames, filter to the games you care about, then aggregate:
+Here is the general shape. `queries.summarize()` groups a metric view by the dimensions it declares and aggregates the measures it declares, so a rate like `win_rate` is total wins over total scored games at whatever grain you ask for, never the mean of per-day rates. Measures come back raw, so a rate is a proportion and scaling it to a percent is yours to do where you print:
 
 ```python
 import datetime as dt
@@ -66,16 +66,19 @@ main = 111222333
 since = dt.date(2026, 7, 1)
 
 winrate_by_day = (
-    queries.my_games(accounts=[main])
-    .filter(pl.col("hero") == hero, pl.col("day") >= since)
-    .group_by("day")
-    .agg(
-        pl.len().alias("games"),
-        pl.col("won").mean().mul(100).round(1).alias("winrate"),
+    queries.summarize(
+        queries.my_games,
+        by="day",
+        measures=["games", "win_rate"],
+        filters={"hero": hero},
+        accounts=[main],
     )
+    .filter(pl.col("day") >= since)
     .sort("day")
     .collect()
 )
 ```
+
+`deadlock schema --views` lists every view with its arguments, dimensions, and measures. `filters` takes a value or a list of values per dimension, and a range is a plain `.filter()` on the result, as above. For rows rather than an aggregate, `queries.view_frame(queries.my_games(accounts=[main]))` builds the frame itself and ordinary polars takes it from there.
 
 For more examples, browse `notebooks/getting_started.py` in this repository. The notebook is a source-checkout reference, not something installed by the CLI.

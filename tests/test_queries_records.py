@@ -143,14 +143,18 @@ def test_daily_record_excludes_unscored_and_counts_abandons(abandon_pq):
 
 
 def test_record_games_window_filters(record_pq):
-    games = queries.record_games(record_pq, accounts=[42], tz="America/Chicago", days=1)
+    games = queries.view_frame(
+        queries.record_games(accounts=[42], tz="America/Chicago", days=1), parquet_dir=record_pq
+    ).collect()
 
     assert games.get_column("day").n_unique() == 1
     assert games.height == 2
 
 
 def test_precomputed_games_matches_direct_calls(abandon_pq):
-    games = queries.record_games(abandon_pq, accounts=[42], tz="America/Chicago")
+    games = queries.view_frame(
+        queries.record_games(accounts=[42], tz="America/Chicago"), parquet_dir=abandon_pq
+    ).collect()
 
     daily = queries.daily_record(abandon_pq, games=games)
     abandons = queries.abandon_record(abandon_pq, accounts=[42], games=games)

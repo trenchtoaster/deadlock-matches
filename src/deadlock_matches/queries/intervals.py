@@ -10,6 +10,7 @@ import polars as pl
 from deadlock_matches.queries.core import player_rows, scan
 from deadlock_matches.queries.delivery import damage_category, hero_damage, with_delivery
 from deadlock_matches.queries.labels import damage_source_name
+from deadlock_matches.queries.semantic import Dimension, Measure, MetricView, view
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
@@ -54,6 +55,41 @@ COMPARE_STATS = (
 
 
 _KEYS = ["match_id", "account_id"]
+
+INTERVAL_GAIN_DIMENSIONS = {
+    "match_id": Dimension(pl.col("match_id")),
+    "account_id": Dimension(pl.col("account_id")),
+    "interval": Dimension(
+        pl.col("interval"),
+        comment="Zero-based interval bucket; its duration comes from the source interval_s.",
+    ),
+}
+
+INTERVAL_GAIN_MEASURES = {
+    "games": Measure(
+        pl.len(),
+        "count",
+        comment="Account-games that reached the interval.",
+    ),
+    "total_gain": Measure(
+        pl.col("gain").sum(),
+        "count",
+        comment="Whichever stat was passed, gained inside the interval and summed over games.",
+        direction="maximize",
+    ),
+    "mean_gain": Measure(
+        pl.col("gain").mean(),
+        "ratio",
+        comment="Mean per-game gain, which one blowout game moves more than median_gain.",
+        direction="maximize",
+    ),
+    "median_gain": Measure(
+        pl.col("gain").median(),
+        "ratio",
+        comment="Median per-game gain, the comparison report's interval statistic.",
+        direction="maximize",
+    ),
+}
 
 
 def _bucket(column: str, interval_s: int) -> pl.Expr:
@@ -216,12 +252,16 @@ def _event_gains(
     )
 
 
+@view(
+    grain=("match_id", "account_id", "interval"),
+    dimensions=INTERVAL_GAIN_DIMENSIONS,
+    measures=INTERVAL_GAIN_MEASURES,
+)
 def compare_intervals(
     games: pl.LazyFrame,
     stat: str,
     interval_s: int = 300,
-    parquet_dir: str | Path | None = None,
-) -> pl.LazyFrame:
+) -> MetricView:
     """Split every given game into per interval gains of one compare stat.
 
     - full intervals only, so a game contributes exactly while it lasts
@@ -231,14 +271,19 @@ def compare_intervals(
     - soul composites (farm, combat, ...) sum their sources, each source
       forward-filled on its own clock
     """
+    return MetricView(source=lambda: _interval_gains(games, stat, interval_s))
+
+
+def _interval_gains(games: pl.LazyFrame, stat: str, interval_s: int) -> pl.LazyFrame:
+    """Pick the gain builder one compare stat needs, rejecting an unknown name."""
     if stat in ("kills", "deaths"):
-        return _event_gains(games, interval_s, parquet_dir, kills=stat == "kills")
+        return _event_gains(games, interval_s, None, kills=stat == "kills")
 
     if stat in INTERVAL_STATS:
-        return _column_gains(games, INTERVAL_STATS[stat], interval_s, parquet_dir)
+        return _column_gains(games, INTERVAL_STATS[stat], interval_s, None)
 
     if stat in SOUL_COMPOSITES:
-        return _source_gains(games, SOUL_COMPOSITES[stat], interval_s, parquet_dir)
+        return _source_gains(games, SOUL_COMPOSITES[stat], interval_s, None)
 
     known = ", ".join(COMPARE_STATS)
     msg = f"Unknown compare stat {stat!r}, one of: {known}"
@@ -538,6 +583,8 @@ def damage_intervals(
     - one row per source per interval, sources ordered by match total, a
       source with nothing but zero samples never appears
     - delivery comes along for gun/ability/item grouping
+    - a cumulative series is identified by source_class, since one display
+      name can cover several classes that accumulate at the same time
     """
     duration = (
         scan("matches", parquet_dir).filter(pl.col("match_id") == match_id).select("duration_s")
@@ -773,6 +820,8 @@ def source_intervals(
       and player games without matching rows just contribute nothing
     - full marks intervals that run the whole interval_s, the last interval
       ends at the match end so it can be shorter
+    - a cumulative series is identified by source_class, since one display
+      name can cover several classes that accumulate at the same time
     """
     keys = ["match_id", "account_id"]
     wanted = games.lazy().select(keys).unique()

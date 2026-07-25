@@ -20,6 +20,7 @@ from deadlock_matches.queries.core import (
 )
 from deadlock_matches.queries.delivery import damage_category
 from deadlock_matches.queries.scaling import _hero_by_era, _with_hero_era
+from deadlock_matches.queries.semantic import view_frame
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
@@ -343,7 +344,7 @@ def item_games(
         msg = f"Unknown item {item!r}"
         raise ValueError(msg)
 
-    games = my_games(parquet_dir, accounts)
+    games = view_frame(my_games(accounts), parquet_dir=parquet_dir)
 
     if since is not None:
         since = dt.date.fromisoformat(since) if isinstance(since, str) else since
@@ -422,7 +423,14 @@ def item_games(
         effective = keys.clear().with_columns(pl.lit(None, dtype=pl.Int64).alias("effective_cost"))
 
     return (
-        games.select("match_id", "account_id", "hero", "won", "duration_s", "start_time")
+        games.select(
+            "match_id",
+            "account_id",
+            "hero",
+            "won",
+            pl.col("matches.duration_s").alias("duration_s"),
+            pl.col("matches.start_time").alias("start_time"),
+        )
         .join(_item_buys(windows), on=["match_id", "account_id"], how="left")
         .join(effective, on=["match_id", "account_id"], how="left")
         .join(target_order, on=["match_id", "account_id"], how="left")
@@ -473,8 +481,15 @@ def ability_upgrades(
         },
     )
 
-    games = my_games(parquet_dir, accounts, tz).select(
-        "match_id", "account_id", "hero", "hero_id", "won", "duration_s", "start_time", "day"
+    games = view_frame(my_games(accounts, tz), parquet_dir=parquet_dir).select(
+        "match_id",
+        "account_id",
+        "hero",
+        "hero_id",
+        "won",
+        "day",
+        pl.col("matches.duration_s").alias("duration_s"),
+        pl.col("matches.start_time").alias("start_time"),
     )
 
     if since is not None:

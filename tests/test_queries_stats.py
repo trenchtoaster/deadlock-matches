@@ -339,3 +339,39 @@ def test_final_stats_reads_the_last_sample_not_the_biggest(death_loss_pq):
 
     assert me.get_column("net_worth").item() == 5200
     assert me.get_column("shots_hit").item() == 70
+
+
+def test_stat_snapshots_collapse_each_series_before_summing(death_loss_pq):
+    df = queries.summarize(
+        queries.stat_snapshots(),
+        by="hero",
+        measures=("games", "net_worth", "shots_hit", "shots_missed", "accuracy"),
+        parquet_dir=death_loss_pq,
+    ).collect()
+    me = df.filter(pl.col("hero") == "Mirage")
+
+    assert me.get_column("games").item() == 1
+    assert me.get_column("net_worth").item() == 5200
+    assert me.get_column("shots_hit").item() == 70
+    assert me.get_column("accuracy").item() == pytest.approx(0.7)
+
+
+def test_stat_snapshots_cut_to_the_given_player_games(pq):
+    games = pl.LazyFrame(
+        {"match_id": [100], "account_id": [42]},
+        schema={"match_id": pl.Int64, "account_id": pl.Int64},
+    )
+    df = queries.summarize(
+        queries.stat_snapshots(games=games),
+        measures=("games", "shots_hit"),
+        parquet_dir=pq,
+    ).collect()
+
+    assert df.get_column("games").item() == 1
+    assert df.get_column("shots_hit").item() == 70
+
+
+def test_stat_snapshots_grain_is_unique(pq):
+    rows = queries.view_frame(queries.stat_snapshots(), parquet_dir=pq).collect()
+
+    queries.validate_grain(queries.stat_snapshots, rows)

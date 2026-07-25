@@ -581,10 +581,16 @@ def compare_report(args: argparse.Namespace, config: str | Path | None = None) -
             _per_game(mine.lazy(), args.stat, args.parquet),
             _per_game(pool.lazy(), args.stat, players.PARQUET_DIR),
             _interval_medians(
-                queries.compare_intervals(mine.lazy(), args.stat, interval_s, args.parquet)
+                queries.view_frame(
+                    queries.compare_intervals(mine.lazy(), args.stat, interval_s),
+                    parquet_dir=args.parquet,
+                )
             ),
             _interval_medians(
-                queries.compare_intervals(pool.lazy(), args.stat, interval_s, players.PARQUET_DIR)
+                queries.view_frame(
+                    queries.compare_intervals(pool.lazy(), args.stat, interval_s),
+                    parquet_dir=players.PARQUET_DIR,
+                )
             ),
         ]
     )
@@ -608,7 +614,12 @@ def compare_report(args: argparse.Namespace, config: str | Path | None = None) -
 
 def _interval_medians(gains: pl.LazyFrame) -> pl.LazyFrame:
     """Aggregate a compare_intervals frame to the median gain and game count per interval."""
-    return gains.group_by("interval").agg(pl.col("gain").median().alias("gain"), pl.len())
+    return queries.summarize(
+        queries.compare_intervals,
+        by="interval",
+        measures=("median_gain", "games"),
+        lf=gains,
+    ).rename({"median_gain": "gain", "games": "len"})
 
 
 def _per_game(games: pl.LazyFrame, stat: str, parquet_dir: str | Path | None) -> pl.LazyFrame:
@@ -778,12 +789,12 @@ def _final_scoreboard(row: dict[str, Any], args: argparse.Namespace) -> None:
     with_buffs = queries.table_exists("buffs", args.parquet)
 
     if with_buffs:
-        totals = (
-            queries.scan("buffs", args.parquet)
-            .filter(pl.col("match_id") == row["match_id"], pl.col("permanent"))
-            .group_by("match_id", "account_id")
-            .agg(pl.col("count").sum().alias("buffs"))
-        )
+        totals = queries.summarize(
+            queries.buff_games(matches=[row["match_id"]]),
+            by=("match_id", "account_id"),
+            measures=("held",),
+            parquet_dir=args.parquet,
+        ).rename({"held": "buffs"})
         lf = lf.join(totals, on=["match_id", "account_id"], how="left").with_columns(
             pl.col("buffs").fill_null(0)
         )
@@ -1137,8 +1148,10 @@ def match_report(args: argparse.Namespace, config: str | Path | None = None) -> 
 
     if args.match_id is None:
         picked = (
-            queries.my_games(args.parquet, accounts=args.account, tz=tz)
-            .sort("start_time")
+            queries.view_frame(
+                queries.my_games(accounts=args.account, tz=tz), parquet_dir=args.parquet
+            )
+            .sort("matches.start_time")
             .select("match_id")
             .reverse()
             .slice(args.ago, 1)
@@ -1887,16 +1900,9 @@ def stacks_report(row: dict[str, Any], args: argparse.Namespace) -> None:
         print("No stacks table yet, run `deadlock sync --full`")
         return
 
-    in_match = (
-        queries.player_rows(args.parquet)
-        .filter(pl.col("match_id") == row["match_id"])
-        .select("account_id", "hero", "team")
-    )
     df = (
-        queries.scan("stacks", args.parquet)
+        queries.view_frame(queries.stack_games(), parquet_dir=args.parquet)
         .filter(pl.col("match_id") == row["match_id"])
-        .pipe(queries.with_stack_labels)
-        .join(in_match, on="account_id")
         .with_columns(
             side=pl.when(pl.col("team") == row["team"])
             .then(pl.lit("ally"))
@@ -2006,25 +2012,33 @@ def _falloff_line(values: dict[str, int]) -> str | None:
 
 def _all_target_accuracy(row: dict[str, Any], args: argparse.Namespace) -> int | None:
     """Read the familiar accuracy over every target from the final snapshot."""
-    df = (
-        queries.scan("stats", args.parquet)
-        .filter(
-            pl.col("match_id") == row["match_id"],
-            pl.col("account_id") == row["account_id"],
-        )
-        .select(pl.col("shots_hit").max(), pl.col("shots_missed").max())
-        .collect()
+    one_game = pl.LazyFrame(
+        {"match_id": [row["match_id"]], "account_id": [row["account_id"]]},
+        schema={"match_id": pl.Int64, "account_id": pl.Int64},
     )
+
+    return _snapshot_accuracy(one_game, args.parquet)
+
+
+def _snapshot_accuracy(
+    games: pl.DataFrame | pl.LazyFrame, parquet_dir: str | Path | None
+) -> int | None:
+    """Accuracy over every target for the given player-games, as a whole percent."""
+    df = queries.summarize(
+        queries.stat_snapshots(games=games),
+        measures=("shots_hit", "shots_missed", "accuracy"),
+        parquet_dir=parquet_dir,
+    ).collect()
 
     if df.is_empty():
         return None
 
-    hit, missed = df.row(0)
+    row = df.row(0, named=True)
 
-    if not hit and not missed:
+    if not row["shots_hit"] and not row["shots_missed"]:
         return None
 
-    return round(100 * hit / (hit + missed))
+    return round(100 * row["accuracy"])
 
 
 def _aim_section(
@@ -2131,25 +2145,16 @@ def _melee_item_buys(row: dict[str, Any], args: argparse.Namespace) -> list[tupl
 
 def _rebuttal_returned(row: dict[str, Any], args: argparse.Namespace) -> int:
     """Sum the Rebuttal damage this player returned to enemy heroes on a parry."""
-    heroes = (
-        queries.player_rows(args.parquet)
-        .filter(pl.col("match_id") == row["match_id"])
-        .select("account_id")
-        .collect()
-        .to_series()
-        .to_list()
-    )
-
     returned = (
-        queries.scan("damage", args.parquet)
-        .filter(
-            pl.col("match_id") == row["match_id"],
-            pl.col("dealer_account_id") == row["account_id"],
-            pl.col("target_account_id").is_in(heroes),
-            pl.col("source_class") == "upgrade_melee_rebuttal",
-            pl.col("stat") == "damage",
+        queries.summarize(
+            queries.hero_damage_games(
+                accounts=[row["account_id"]],
+                matches=[row["match_id"]],
+            ),
+            measures=("total",),
+            filters={"source_class": "upgrade_melee_rebuttal"},
+            parquet_dir=args.parquet,
         )
-        .select(pl.col("damage").sum())
         .collect()
         .item()
     )
@@ -2370,25 +2375,11 @@ def _lobby_aim_table(row: dict[str, Any], args: argparse.Namespace) -> None:
         return
 
     teams = queries.player_rows(args.parquet).select("match_id", "account_id", "team")
-    gun = (
-        queries.scan("damage", args.parquet)
-        .filter(
-            pl.col("match_id") == row["match_id"],
-            pl.col("stat") == "damage",
-            queries.damage_category() == "gun",
-            pl.col("target_account_id").is_not_null(),
-        )
-        .group_by(pl.col("dealer_account_id").alias("account_id"))
-        .agg(
-            pl.col("damage")
-            .filter(~pl.col("source_class").str.ends_with("_crit"))
-            .sum()
-            .alias("gun_damage"),
-            pl.col("damage")
-            .filter(pl.col("source_class").str.ends_with("_crit"))
-            .sum()
-            .alias("crit_damage"),
-        )
+    gun = queries.summarize(
+        queries.hero_damage_games(matches=[row["match_id"]]),
+        by="account_id",
+        measures=("gun_body", "gun_headshot"),
+        parquet_dir=args.parquet,
     )
 
     df = (
@@ -2420,8 +2411,8 @@ def _lobby_aim_table(row: dict[str, Any], args: argparse.Namespace) -> None:
     )
 
     for hero_shown, r in zip(heroes_shown, rows, strict=True):
-        gun_cell = f"{r['gun_damage']:,}" if r["gun_damage"] else "-"
-        crit_cell = f"{r['crit_damage']:,}" if r["crit_damage"] else "-"
+        gun_cell = f"{r['gun_body']:,}" if r["gun_body"] else "-"
+        crit_cell = f"{r['gun_headshot']:,}" if r["gun_headshot"] else "-"
 
         print(
             f"  {hero_shown:<{width}} {r['side']:<6} {r['Shots']:>7,} {r['hit_rate']:>8.1f}%"
@@ -2662,14 +2653,16 @@ def winrate_report(args: argparse.Namespace, config: str | Path | None = None) -
     """W/L table per day, week, or month with net wins and a running total."""
     tz = config_timezone(config)
     try:
-        games = queries.record_games(
-            args.parquet,
-            accounts=args.account,
-            tz=tz,
-            days=args.days,
-            since=args.since,
-            hero=args.hero,
-        )
+        games = queries.view_frame(
+            queries.record_games(
+                accounts=args.account,
+                tz=tz,
+                days=args.days,
+                since=args.since,
+                hero=args.hero,
+            ),
+            parquet_dir=args.parquet,
+        ).collect()
         df = queries.daily_record(args.parquet, by=args.by, games=games)
     except ValueError as e:
         print(e)
@@ -2702,17 +2695,31 @@ def winrate_report(args: argparse.Namespace, config: str | Path | None = None) -
             f"{r['net']:>+11}{r['cum_net']:>+17}"
         )
 
-    total_games = int(df.get_column("games").sum())
-    wins = int(df.get_column("wins").sum())
-    rate = wins / total_games * 100
-    net = df.item(-1, "cum_net")
-    mvps = int(df.get_column("mvps").sum())
-    keys = int(df.get_column("key_players").sum())
-    rated = int(df.get_column("rated_games").sum())
+    overall = queries.summarize(
+        queries.record_games,
+        measures=(
+            "scored_games",
+            "wins",
+            "net",
+            "win_rate",
+            "mvps",
+            "key_players",
+            "subrank_sum",
+            "rated_games",
+        ),
+        lf=games.lazy(),
+    ).collect()
+    total_games = int(overall.item(0, "scored_games"))
+    wins = int(overall.item(0, "wins"))
+    rate = float(overall.item(0, "win_rate")) * 100
+    net = int(overall.item(0, "net"))
+    mvps = int(overall.item(0, "mvps"))
+    keys = int(overall.item(0, "key_players"))
+    rated = int(overall.item(0, "rated_games"))
     lobbies = ""
 
     if rated:
-        subrank = round(float(df.get_column("subrank_sum").sum()) / rated)
+        subrank = round(float(overall.item(0, "subrank_sum")) / rated)
         average = skill_rating.label(skill_rating.badge_from_subrank(subrank))
         lobbies = f", {average} lobbies"
 
@@ -3284,30 +3291,7 @@ def _aim_totals_table(title: str, values: dict[str, int], n_games: int) -> None:
 
 def _all_target_accuracy_totals(games: pl.DataFrame, args: argparse.Namespace) -> int | None:
     """Read the familiar all target accuracy summed over every listed game."""
-    df = (
-        queries.scan("stats", args.parquet)
-        .join(
-            games.lazy().select("match_id", "account_id"),
-            on=["match_id", "account_id"],
-            how="semi",
-        )
-        .group_by("match_id", "account_id")
-        .agg(pl.col("shots_hit").max(), pl.col("shots_missed").max())
-        .select(pl.col("shots_hit").sum(), pl.col("shots_missed").sum())
-        .collect()
-    )
-
-    if df.is_empty():
-        return None
-
-    hit, missed = df.row(0)
-    hit = hit or 0
-    missed = missed or 0
-
-    if not hit and not missed:
-        return None
-
-    return round(100 * hit / (hit + missed))
+    return _snapshot_accuracy(games, args.parquet)
 
 
 def _combat_aim_sections(
@@ -3404,15 +3388,11 @@ def _combat_gun_damage(
         return 0.0
 
     total = (
-        queries.scan("damage", parquet_dir)
-        .filter(
-            pl.col("match_id").is_in(list(matches)),
-            pl.col("dealer_account_id").is_in(list(accounts)),
-            pl.col("stat") == "damage",
-            queries.damage_category() == "gun",
-            pl.col("target_account_id").is_not_null(),
+        queries.summarize(
+            queries.hero_damage_games(accounts=accounts, matches=matches),
+            measures=("gun",),
+            parquet_dir=parquet_dir,
         )
-        .select(pl.col("damage").sum())
         .collect()
         .item()
     )
@@ -3714,6 +3694,10 @@ MOVEMENT_METRICS = [
     ("air dashes /min", "air_dashes_min"),
 ]
 
+MOVEMENT_MEASURES = {
+    column: "distance_min" if column == "meters_min" else column for _, column in MOVEMENT_METRICS
+}
+
 MOVEMENT_SHARES = (
     ("m /min", "meters_min", 7),
     ("Stationary %", "stationary_percent", 12),
@@ -3734,17 +3718,33 @@ def _movement_table(games: pl.DataFrame) -> None:
     - the wins and losses columns only appear when the window has both
     - games without movement rows stay out of the averages
     """
-    wins = games.filter(pl.col("won"))
-    losses = games.filter(~pl.col("won"))
-    buckets = [(f"All ({len(games)})", games)]
+    measures = tuple(MOVEMENT_MEASURES.values())
+    overall = queries.summarize(
+        queries.movement_games,
+        measures=measures,
+        lf=games.lazy(),
+    ).collect()
+    buckets = [(f"All ({len(games)})", overall.row(0, named=True))]
 
-    if not wins.is_empty() and not losses.is_empty():
-        buckets += [(f"Wins ({len(wins)})", wins), (f"Losses ({len(losses)})", losses)]
+    if games.get_column("won").n_unique() > 1:
+        results = queries.summarize(
+            queries.movement_games,
+            by="won",
+            measures=("games", *measures),
+            lf=games.lazy(),
+        ).collect()
+        by_result = {row["won"]: row for row in results.iter_rows(named=True)}
+        buckets += [
+            (f"Wins ({by_result[True]['games']})", by_result[True]),
+            (f"Losses ({by_result[False]['games']})", by_result[False]),
+        ]
 
     print(f"  {'Metric':<24}" + "".join(f"{label:>14}" for label, _ in buckets))
 
     for label, col in MOVEMENT_METRICS:
-        cells = "".join(f"{_mean(df, col):>14,.1f}" for _, df in buckets)
+        measure = MOVEMENT_MEASURES[col]
+        scale = UNITS_PER_METER if col == "meters_min" else 1
+        cells = "".join(f"{float(row[measure] or 0) / scale:>14,.1f}" for _, row in buckets)
 
         print(f"  {label:<24}{cells}")
 
@@ -3813,11 +3813,11 @@ def _movement_compare(
             queries.movement_metrics(args.parquet)
             .join(mine.lazy().select("match_id", "account_id"), on=["match_id", "account_id"])
             .with_columns(_movement_meters())
-            .select(columns),
+            .select("distance_min", *columns),
             queries.movement_metrics(players.PARQUET_DIR)
             .join(pool.lazy().select("match_id", "account_id"), on=["match_id", "account_id"])
             .with_columns(_movement_meters())
-            .select("match_id", "account_id", *columns),
+            .select("match_id", "account_id", "distance_min", *columns),
         ]
     )
 
@@ -3825,13 +3825,26 @@ def _movement_compare(
         print("\nNo movement rows for these games yet: run `deadlock sync`")
         return
 
+    gaps = (
+        queries.compare(
+            queries.movement_games,
+            [queries.Scope("you", lf=you.lazy()), queries.Scope("them", lf=top.lazy())],
+            measures=tuple(MOVEMENT_MEASURES.values()),
+        )
+        .collect()
+        .row(0, named=True)
+    )
+
     print(f"\n  {'Metric':<24}{'You':>9}{'Tracked':>9}{'Gap':>9}")
 
     for label, col in MOVEMENT_METRICS:
-        yours = _mean(you, col)
-        theirs = _mean(top, col)
+        measure = MOVEMENT_MEASURES[col]
+        scale = UNITS_PER_METER if col == "meters_min" else 1
+        yours, theirs, gap = (
+            float(gaps[f"{side}_{measure}"] or 0) / scale for side in ("you", "them", "gap")
+        )
 
-        print(f"  {label:<24}{yours:>9,.1f}{theirs:>9,.1f}{theirs - yours:>+9,.1f}")
+        print(f"  {label:<24}{yours:>9,.1f}{theirs:>9,.1f}{gap:>+9,.1f}")
 
     print()
     _movement_by_player(you, top, pool, {m["account_id"]: m["name"] for m in members})
