@@ -553,6 +553,70 @@ COMBAT_COUNTERS = (
 )
 
 
+def combat_hero_records(
+    accounts: Sequence[int] | None = None,
+    parquet_dir: str | Path | None = None,
+    tz: str | None = None,
+    days: int | None = None,
+    since: str | dt.date | None = None,
+) -> pl.DataFrame:
+    """Take one row per hero with overall aim and parry counters.
+
+    - rates use the summed counters, so games with more shots carry their
+      proper weight instead of averaging per-game percentages
+    - shots, hits, and headshots count fire at enemy heroes only
+    - hit_pct is hits over shots and headshot_pct is headshots over hits,
+      with both null for a hero with no tracked shots
+    - parries include Counterspell auto-parries
+    - days and since filter on the local day across all heroes
+    """
+    accounts = _resolved_accounts(accounts)
+    mine = my_games(parquet_dir, accounts, tz)
+
+    if since is not None:
+        since = dt.date.fromisoformat(since) if isinstance(since, str) else since
+        mine = mine.filter(pl.col("day") >= since)
+
+    if days is not None:
+        mine = mine.filter(pl.col("day").rank("dense", descending=True) <= days)
+
+    games = mine.select("match_id", "account_id", "hero").unique()
+    finals = _final_custom_values(
+        scan("custom_stats", parquet_dir).filter(pl.col("account_id").is_in(accounts))
+    ).join(games, on=["match_id", "account_id"])
+    totals = finals.group_by("hero").agg(
+        *[
+            pl.col("value")
+            .filter(
+                pl.col("group").is_null() if group is None else pl.col("group") == group,
+                pl.col("stat") == stat,
+            )
+            .sum()
+            .cast(pl.Int64)
+            .alias(name)
+            for group, stat, name in COMBAT_COUNTERS
+        ]
+    )
+    counters = [name for _, _, name in COMBAT_COUNTERS]
+
+    return (
+        games.group_by("hero")
+        .agg(pl.len().cast(pl.Int64).alias("games"))
+        .join(totals, on="hero", how="left")
+        .with_columns(pl.col(*counters).fill_null(0))
+        .with_columns(
+            pl.when(pl.col("shots") > 0)
+            .then((pl.col("hits") / pl.col("shots") * 100).round(1))
+            .alias("hit_pct"),
+            pl.when(pl.col("hits") > 0)
+            .then((pl.col("headshots") / pl.col("hits") * 100).round(1))
+            .alias("headshot_pct"),
+        )
+        .sort("games", "hero", descending=[True, False])
+        .collect()
+    )
+
+
 def combat_game_records(
     hero: str,
     accounts: Sequence[int] | None = None,

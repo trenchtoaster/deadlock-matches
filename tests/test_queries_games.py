@@ -336,6 +336,58 @@ def test_combat_game_records_counts_and_rates(tmp_path):
     assert row["day"] == LOCAL_DAY
 
 
+def test_combat_hero_records_uses_weighted_rates(tmp_path):
+    first = build_match(match_id=100)
+    add_custom_stats(
+        first,
+        [
+            ("Enemy Hero Accuracy##Shots", 100),
+            ("Enemy Hero Accuracy##Hits", 25),
+            ("Enemy Hero Accuracy##Headshots", 5),
+            ("Parry Success", 2),
+        ],
+    )
+    second = build_match(match_id=101)
+    add_custom_stats(
+        second,
+        [
+            ("Enemy Hero Accuracy##Shots", 300),
+            ("Enemy Hero Accuracy##Hits", 150),
+            ("Enemy Hero Accuracy##Headshots", 75),
+            ("Parry Success", 3),
+            ("Parry Miss", 1),
+        ],
+    )
+    haze = build_match(match_id=102)
+    haze.players[0].hero_id = 13
+    add_custom_stats(
+        haze,
+        [
+            ("Enemy Hero Accuracy##Shots", 200),
+            ("Enemy Hero Accuracy##Hits", 100),
+            ("Enemy Hero Accuracy##Headshots", 25),
+        ],
+    )
+
+    for name, df in export.build_tables([first, second, haze], exclude=("movement",)).items():
+        df.write_parquet(tmp_path / f"{name}.parquet")
+
+    df = queries.combat_hero_records(accounts=[42], parquet_dir=tmp_path, tz="America/Chicago")
+    rows = {row["hero"]: row for row in df.iter_rows(named=True)}
+
+    assert rows["Mirage"]["games"] == 2
+    assert rows["Mirage"]["shots"] == 400
+    assert rows["Mirage"]["hits"] == 175
+    assert rows["Mirage"]["headshots"] == 80
+    assert rows["Mirage"]["hit_pct"] == 43.8
+    assert rows["Mirage"]["headshot_pct"] == 45.7
+    assert rows["Mirage"]["parries"] == 5
+    assert rows["Mirage"]["missed_parries"] == 1
+    assert rows["Haze"]["games"] == 1
+    assert rows["Haze"]["hit_pct"] == 50.0
+    assert rows["Haze"]["headshot_pct"] == 25.0
+
+
 def test_combat_game_records_fills_missing_counters(pq):
     df = queries.combat_game_records("Mirage", accounts=[42], parquet_dir=pq)
     row = df.row(0, named=True)
