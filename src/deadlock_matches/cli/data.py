@@ -51,7 +51,9 @@ TEAMS = {0: "The Hidden King", 1: "The Archmother"}
 
 MVP_LABELS = {1: "1 (MVP)", 2: "2 (Key)", 3: "3 (Key)"}
 
-AGENT_SKILL_RESOURCE = "agent/skills/deadlock-matches/SKILL.md"
+AGENT_SKILL_DIR = "agent/skills/deadlock-matches"
+AGENT_SKILL_RESOURCE = f"{AGENT_SKILL_DIR}/SKILL.md"
+AGENT_SKILL_REFERENCES = ("references/schema-caveats.md",)
 LEADERBOARD_NAME_WIDTH = 20
 
 
@@ -84,6 +86,10 @@ def _bundled_skill() -> resources.abc.Traversable:
     return resources.files("deadlock_matches").joinpath(AGENT_SKILL_RESOURCE)
 
 
+def _bundled_skill_file(relative_path: str) -> resources.abc.Traversable:
+    return resources.files("deadlock_matches").joinpath(AGENT_SKILL_DIR, relative_path)
+
+
 def skill_report(args: argparse.Namespace) -> None:
     """Handle `deadlock skill`."""
     action = args.skill_action or "path"
@@ -106,6 +112,10 @@ def skill_report(args: argparse.Namespace) -> None:
 
     target.parent.mkdir(parents=True, exist_ok=True)
     target.write_text(skill.read_text(encoding="utf-8"), encoding="utf-8")
+    for relative_path in AGENT_SKILL_REFERENCES:
+        reference_target = target.parent / relative_path
+        reference_target.parent.mkdir(parents=True, exist_ok=True)
+        reference_target.write_bytes(_bundled_skill_file(relative_path).read_bytes())
     print(f"Installed agent skill at {_tilde(target)}")
     print(
         "Allow Bash(deadlock *) in Claude settings to skip the permission prompt on these commands."

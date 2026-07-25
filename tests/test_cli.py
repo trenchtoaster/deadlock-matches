@@ -1901,10 +1901,13 @@ def test_skill_command_installs_bundled_agent_skill(capsys, tmp_path):
     main(["skill", "install", "--dir", str(root)], config=tmp_path / "none.json")
 
     target = root / "deadlock-matches" / "SKILL.md"
+    caveats = root / "deadlock-matches" / "references" / "schema-caveats.md"
     out = capsys.readouterr().out
 
     assert target.exists()
     assert "Deadlock match metadata" in target.read_text()
+    assert caveats.exists()
+    assert 'id="matches.not-scored"' in caveats.read_text()
     assert "skills/deadlock-matches/SKILL.md" in out
 
 
@@ -1950,6 +1953,15 @@ def test_project_skill_matches_bundled_skill():
         root / "src" / "deadlock_matches" / "agent" / "skills" / "deadlock-matches" / "SKILL.md"
     )
     project = root / ".claude" / "skills" / "deadlock-matches" / "SKILL.md"
+
+    assert project.read_text(encoding="utf-8") == bundled.read_text(encoding="utf-8")
+
+
+def test_project_caveats_match_bundled_skill_reference():
+    root = Path(__file__).parent.parent
+    relative = Path("references/schema-caveats.md")
+    bundled = root / "src" / "deadlock_matches" / "agent" / "skills" / "deadlock-matches" / relative
+    project = root / ".claude" / "skills" / "deadlock-matches" / relative
 
     assert project.read_text(encoding="utf-8") == bundled.read_text(encoding="utf-8")
 
