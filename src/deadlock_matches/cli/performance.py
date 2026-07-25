@@ -723,7 +723,7 @@ def _players_store_fallback(match_id: int, args: argparse.Namespace) -> bool:
         return False
 
     found = (
-        queries.scan("players", players.PARQUET_DIR)
+        queries.player_rows(players.PARQUET_DIR)
         .filter(pl.col("match_id") == match_id)
         .head(1)
         .collect()
@@ -740,7 +740,7 @@ def _players_store_fallback(match_id: int, args: argparse.Namespace) -> bool:
 
 def _match_player(match_id: int, args: argparse.Namespace, tz: str) -> pl.DataFrame:
     """Look up the row for one player in a match, by hero name or your accounts."""
-    lf = queries.scan("players", args.parquet).filter(pl.col("match_id") == match_id)
+    lf = queries.player_rows(args.parquet).filter(pl.col("match_id") == match_id)
 
     if args.hero is not None:
         lf = lf.filter(pl.col("hero") == args.hero)
@@ -767,7 +767,7 @@ def _final_scoreboard(row: dict[str, Any], args: argparse.Namespace) -> None:
 
     match_ids = pl.LazyFrame({"match_id": [row["match_id"]]}, schema={"match_id": pl.Int64})
     lf = (
-        queries.scan("players", args.parquet)
+        queries.player_rows(args.parquet)
         .filter(pl.col("match_id") == row["match_id"])
         .join(final_stats(match_ids, args.parquet), on=["match_id", "account_id"], how="left")
         .with_columns(
@@ -1080,7 +1080,7 @@ def death_log_report(row: dict[str, Any], args: argparse.Namespace, *, kills: bo
         return
 
     heroes_in_match = (
-        queries.scan("players", args.parquet)
+        queries.player_rows(args.parquet)
         .filter(pl.col("match_id") == row["match_id"])
         .select("account_id", "hero")
         .collect()
@@ -1164,7 +1164,7 @@ def match_report(args: argparse.Namespace, config: str | Path | None = None) -> 
 
     if game.is_empty():
         in_match = (
-            queries.scan("players", args.parquet)
+            queries.player_rows(args.parquet)
             .filter(pl.col("match_id") == match_id)
             .select("hero")
             .collect()
@@ -1406,7 +1406,7 @@ def _objective_income_events(
     match_id = row["match_id"]
 
     roster = (
-        queries.scan("players", args.parquet)
+        queries.player_rows(args.parquet)
         .filter(pl.col("match_id") == match_id)
         .select("account_id", "team", "hero")
         .collect()
@@ -1644,6 +1644,7 @@ def items_report(row: dict[str, Any], args: argparse.Namespace) -> None:
             pl.col("account_id") == row["account_id"],
             pl.col("item").is_not_null(),
         )
+        .with_columns(queries.imbued_ability_name().alias("imbued_ability"))
         .sort("game_time_s")
         .collect()
     )
@@ -1682,6 +1683,7 @@ def accolades_report(row: dict[str, Any], args: argparse.Namespace) -> None:
             pl.col("match_id") == row["match_id"],
             pl.col("account_id") == row["account_id"],
         )
+        .with_columns(queries.accolade_name().alias("accolade"))
         .sort("accolade_id")
         .collect()
     )
@@ -1886,13 +1888,14 @@ def stacks_report(row: dict[str, Any], args: argparse.Namespace) -> None:
         return
 
     in_match = (
-        queries.scan("players", args.parquet)
+        queries.player_rows(args.parquet)
         .filter(pl.col("match_id") == row["match_id"])
         .select("account_id", "hero", "team")
     )
     df = (
         queries.scan("stacks", args.parquet)
         .filter(pl.col("match_id") == row["match_id"])
+        .pipe(queries.with_stack_labels)
         .join(in_match, on="account_id")
         .with_columns(
             side=pl.when(pl.col("team") == row["team"])
@@ -2129,7 +2132,7 @@ def _melee_item_buys(row: dict[str, Any], args: argparse.Namespace) -> list[tupl
 def _rebuttal_returned(row: dict[str, Any], args: argparse.Namespace) -> int:
     """Sum the Rebuttal damage this player returned to enemy heroes on a parry."""
     heroes = (
-        queries.scan("players", args.parquet)
+        queries.player_rows(args.parquet)
         .filter(pl.col("match_id") == row["match_id"])
         .select("account_id")
         .collect()
@@ -2366,7 +2369,7 @@ def _lobby_aim_table(row: dict[str, Any], args: argparse.Namespace) -> None:
     if lobby.is_empty():
         return
 
-    teams = queries.scan("players", args.parquet).select("match_id", "account_id", "team")
+    teams = queries.player_rows(args.parquet).select("match_id", "account_id", "team")
     gun = (
         queries.scan("damage", args.parquet)
         .filter(
@@ -3675,7 +3678,7 @@ def deaths_report(args: argparse.Namespace, config: str | Path | None = None) ->
         df.lazy()
         .filter(pl.col("killer_account_id").is_not_null())
         .join(
-            queries.scan("players", args.parquet).select(
+            queries.player_rows(args.parquet).select(
                 "match_id",
                 killer_account_id=pl.col("account_id"),
                 killer=pl.col("hero"),

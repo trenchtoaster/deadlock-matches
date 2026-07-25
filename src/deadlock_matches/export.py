@@ -22,16 +22,7 @@ from deadlock_matches import (
     paths,
     schemas,
 )
-from deadlock_matches.assets import (
-    abilities,
-    accolades,
-    heroes,
-    history,
-    items,
-    statues,
-    store,
-    unnest,
-)
+from deadlock_matches.assets import history, items, statues, store, unnest
 
 if TYPE_CHECKING:
     from collections.abc import Collection, Iterable, Iterator
@@ -273,9 +264,6 @@ def build_tables(
       still builds when movement itself is excluded
     """
     infos = list(infos)
-    ability_names = {a.id: a.name for a in abilities.ability_map().values()}
-    accolade_names = {a.id: a.class_name for a in accolades.accolade_map().values()}
-
     matches: list[dict] = []
     players: list[dict] = []
     stats: list[dict] = []
@@ -351,7 +339,6 @@ def build_tables(
                     "match_id": info.match_id,
                     "account_id": p.account_id,
                     "hero_id": p.hero_id,
-                    "hero": heroes.hero_name(p.hero_id),
                     "team": p.team,
                     "player_slot": p.player_slot,
                     "assigned_lane": p.assigned_lane,
@@ -437,7 +424,6 @@ def build_tables(
                         "sold_time_s": it.sold_time_s,
                         "flags": it.flags,
                         "imbued_ability_id": it.imbued_ability_id or None,
-                        "imbued_ability": ability_names.get(it.imbued_ability_id),
                     }
                 )
 
@@ -446,7 +432,6 @@ def build_tables(
                     "match_id": info.match_id,
                     "account_id": p.account_id,
                     "accolade_id": a.accolade_id,
-                    "accolade": accolade_names.get(a.accolade_id),
                     "value": a.accolade_stat_value,
                     "threshold": a.accolade_threshold_achieved,
                 }
@@ -467,20 +452,15 @@ def build_tables(
                     }
                 )
 
-            for st in p.ability_stats:
-                item = im.get(st.ability_id)
-                cls = item.class_name if item else abilities.class_by_token(st.ability_id)
-
-                stack_rows.append(
-                    {
-                        "match_id": info.match_id,
-                        "account_id": p.account_id,
-                        "ability_id": st.ability_id,
-                        "class_name": cls or None,
-                        "name": item.name if item else abilities.label(cls) if cls else None,
-                        "value": st.ability_value,
-                    }
-                )
+            stack_rows.extend(
+                {
+                    "match_id": info.match_id,
+                    "account_id": p.account_id,
+                    "ability_id": st.ability_id,
+                    "value": st.ability_value,
+                }
+                for st in p.ability_stats
+            )
         for account_id, named in extract.custom_stats(info).items():
             custom_rows.extend(
                 {
@@ -513,7 +493,6 @@ def build_tables(
                             "dealer_account_id": slot_to_account.get(d.dealer_player_slot),
                             "target_account_id": slot_to_account.get(t.target_player_slot),
                             "target_player_slot": t.target_player_slot,
-                            "source_name": abilities.label(details.source_name[i]),
                             "source_class": details.source_name[i],
                             "stat": STAT_NAMES.get(details.stat_type[i], str(details.stat_type[i])),
                             "damage": t.damage[-1],
@@ -545,7 +524,6 @@ def build_tables(
                 {
                     "match_id": info.match_id,
                     "dealer_account_id": slot_to_account.get(slot),
-                    "source_name": abilities.label(source),
                     "source_class": source,
                     "stat": STAT_NAMES.get(details.stat_type[i], str(details.stat_type[i])),
                     "vs_heroes": vs_heroes,
@@ -563,7 +541,6 @@ def build_tables(
                     "match_id": info.match_id,
                     "dealer_account_id": slot_to_account.get(slot),
                     "target_account_id": slot_to_account.get(target_slot),
-                    "source_name": abilities.label(source),
                     "source_class": source,
                     "stat": STAT_NAMES.get(details.stat_type[i], str(details.stat_type[i])),
                     "time_stamp_s": ts,
@@ -721,6 +698,61 @@ def schema_drift(out_dir: Path, exclude: Collection[str] = ()) -> str | None:
                 return f"{name} {month_file.stem} columns differ from schemas.py"
 
     return None
+
+
+def drop_only_drift(out_dir: Path, exclude: Collection[str] = ()) -> bool:
+    """Whether the drift is only columns schemas.py stopped storing.
+
+    - every table has to be on disk already, a missing one needs a real decode
+    - every column the schema still asks for has to be in the footer, a new one needs a decode too
+    """
+    for name in sorted(schemas.PARTITIONED):
+        if name in exclude:
+            continue
+
+        directory = out_dir / name
+
+        if not directory.is_dir():
+            return False
+
+        expected = set(schemas.TABLES[name])
+
+        for month_file in sorted(directory.glob("*.parquet")):
+            if not expected <= set(pl.read_parquet_schema(month_file)):
+                return False
+
+    return True
+
+
+def reshape_partitions(out_dir: Path, exclude: Collection[str] = ()) -> int:
+    """Drop the columns the schema no longer stores and return how many files changed.
+
+    - decodes nothing, so it only fits the drift drop_only_drift accepts
+    - writes a temp file and renames it, so a crash mid-write leaves the old file intact
+    """
+    rewritten = 0
+
+    for name in sorted(schemas.PARTITIONED):
+        if name in exclude:
+            continue
+
+        directory = out_dir / name
+
+        if not directory.is_dir():
+            continue
+
+        expected = set(schemas.TABLES[name])
+
+        for month_file in sorted(directory.glob("*.parquet")):
+            if set(pl.read_parquet_schema(month_file)) == expected:
+                continue
+
+            tmp = month_file.with_name(f"{month_file.name}.tmp")
+            _reshape_to_schema(name, pl.read_parquet(month_file)).write_parquet(tmp)
+            tmp.replace(month_file)
+            rewritten += 1
+
+    return rewritten
 
 
 def _new_archive_paths(archive_dir: Path, exported: set[int]) -> list[Path]:
@@ -1096,8 +1128,8 @@ def export_new(
     - a legacy single-file store is re-laid-out into partitions first, without decoding anything
     - decodes only the .bin files whose match_id is new so processed matches are never re-read
     - old month partitions are left alone and only the months the new matches fall in are rewritten
-    - rebuilds every table when the columns drifted from schemas.py and puts
-      the reason on the result
+    - a drift that only drops columns is reshaped in place, decoding nothing
+    - any other drift rebuilds every table and puts the reason on the result
     """
     archive_dir = extract.ARCHIVE_DIR if archive_dir is None else Path(archive_dir)
     out_dir = PARQUET_DIR if out_dir is None else Path(out_dir)
@@ -1112,6 +1144,11 @@ def export_new(
         return export_all(archive_dir, out_dir, exclude, accounts)
 
     drift = schema_drift(out_dir, exclude)
+
+    if drift and drop_only_drift(out_dir, exclude):
+        print("Dropping the columns the tables no longer store")
+        reshape_partitions(out_dir, exclude)
+        drift = schema_drift(out_dir, exclude)
 
     if drift:
         result = export_all(archive_dir, out_dir, exclude, accounts)

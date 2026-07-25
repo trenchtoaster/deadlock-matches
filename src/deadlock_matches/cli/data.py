@@ -191,7 +191,7 @@ def match_history(args: argparse.Namespace, config: str | Path | None = None) ->
     days = getattr(args, "days", None)
 
     accounts = args.account
-    players_lf = queries.scan("players", args.parquet).filter(pl.col("account_id").is_in(accounts))
+    players_lf = queries.player_rows(args.parquet).filter(pl.col("account_id").is_in(accounts))
 
     matches_lf = (
         queries.scan("matches", args.parquet)
@@ -270,7 +270,7 @@ def _archived_games(parquet_dir: str | Path, ids: list[int]) -> dict[int, int] |
         return None
 
     rows = (
-        queries.scan("players", parquet_dir)
+        queries.player_rows(parquet_dir)
         .filter(pl.col("account_id").is_in(ids))
         .group_by("account_id")
         .agg(pl.len().alias("games"))

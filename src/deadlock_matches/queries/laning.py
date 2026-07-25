@@ -9,7 +9,7 @@ from typing import TYPE_CHECKING
 import polars as pl
 
 from deadlock_matches.assets import heroes
-from deadlock_matches.queries.core import my_games, scan
+from deadlock_matches.queries.core import my_games, player_rows, scan
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
@@ -42,7 +42,7 @@ def laning_stats(
     - one row per player with hero, team, and lane joined
     """
     players = (
-        scan("players", parquet_dir)
+        player_rows(parquet_dir)
         .filter(pl.col("match_id") == match_id)
         .select("account_id", "hero", "team", "lane")
         .collect()
@@ -141,7 +141,7 @@ def lane_records(
     )
 
     lobby = (
-        scan("players", parquet_dir)
+        player_rows(parquet_dir)
         .join(mine.select("match_id"), on="match_id", how="semi")
         .select("match_id", "account_id", "team", "lane", "abandon_time_s")
     )

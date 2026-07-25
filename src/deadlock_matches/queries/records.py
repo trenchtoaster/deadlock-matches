@@ -12,7 +12,7 @@ import polars.selectors as cs
 from deadlock_matches import config
 from deadlock_matches.assets import heroes
 from deadlock_matches.assets import skill_rating as sr
-from deadlock_matches.queries.core import my_games, scan
+from deadlock_matches.queries.core import my_games, player_rows, scan
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
@@ -51,7 +51,7 @@ def daily_record(
     games = _scored(games)
 
     abandoned_ids = (
-        scan("players", parquet_dir)
+        player_rows(parquet_dir)
         .filter(
             pl.col("abandon_time_s").is_not_null(),
             pl.col("match_id").is_in(games.get_column("match_id").implode()),
@@ -207,7 +207,7 @@ def abandon_record(
     games = _scored(games)
 
     leaver_rows = (
-        scan("players", parquet_dir)
+        player_rows(parquet_dir)
         .filter(
             pl.col("abandon_time_s").is_not_null(),
             pl.col("match_id").is_in(games.get_column("match_id").implode()),

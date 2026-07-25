@@ -427,8 +427,12 @@ def test_players_abandon_time():
     assert abandons == {42: None, 43: 367}
 
 
-def test_item_events_denormalized():
+def test_item_events_keep_imbued_id_and_resolve_name_at_read_time():
     events = export.build_tables([build_match()])["item_events"]
+    assert "imbued_ability" not in events.columns
+    events = (
+        events.lazy().with_columns(queries.imbued_ability_name().alias("imbued_ability")).collect()
+    )
 
     ee = events.filter(pl.col("item_id") == EE)
 
@@ -457,8 +461,10 @@ def test_item_events_priced_from_committed_history():
     assert ee.get_column("cost")[0] == priced.cost
 
 
-def test_accolades_named_from_snapshot():
+def test_accolades_resolve_current_name_at_read_time():
     acc = export.build_tables([build_match()])["accolades"]
+    assert "accolade" not in acc.columns
+    acc = acc.lazy().with_columns(queries.accolade_name().alias("accolade")).collect()
 
     kills = acc.filter(pl.col("accolade_id") == 1)
 
@@ -506,8 +512,11 @@ def test_custom_stats_drop_unregistered_ids():
     assert len(df) == 2
 
 
-def test_stacks_resolved_from_string_tokens():
+def test_stacks_resolve_current_labels_at_read_time():
     stacks = export.build_tables([build_match()])["stacks"]
+    assert "class_name" not in stacks.columns
+    assert "name" not in stacks.columns
+    stacks = queries.with_stack_labels(stacks.lazy()).collect()
     by_id = {r["ability_id"]: r for r in stacks.to_dicts()}
 
     assert by_id[2521902222]["class_name"] == "citadel_ability_sticky_bomb"
@@ -559,8 +568,10 @@ def test_stat_names_from_proto_enum():
     assert export.STAT_NAMES[4] == "lethal_damage"
 
 
-def test_damage_source_names_resolved():
+def test_damage_source_names_resolved_at_read_time():
     dmg = export.build_tables([build_match()])["damage"]
+    assert "source_name" not in dmg.columns
+    dmg = queries.with_damage_source_name(dmg.lazy()).collect()
 
     assert dmg.get_column("source_name")[0] == "Escalating Exposure"
     assert dmg.get_column("source_class")[0] == "upgrade_escalating_exposure"
@@ -676,7 +687,7 @@ def test_export_all_writes_parquet(tmp_path):
     assert (out / "movement").is_dir()
     assert next((out / "movement").glob("*.parquet"), None) is not None
 
-    df = queries.scan("players", out).collect()
+    df = queries.player_rows(out).collect()
 
     assert df.filter(pl.col("account_id") == 42)["hero"][0] == "Mirage"
 
@@ -740,6 +751,14 @@ def _drop_column(out, table, column):
     """Rewrite one month file without a column, like a table written by older code."""
     target = next((out / table).glob("*.parquet"))
     pl.read_parquet(target).drop(column).write_parquet(target)
+
+    return target
+
+
+def _add_column(out, table, column):
+    """Rewrite one month file with an extra column, like a table written by older code."""
+    target = next((out / table).glob("*.parquet"))
+    pl.read_parquet(target).with_columns(pl.lit("stale").alias(column)).write_parquet(target)
 
     return target
 
@@ -818,6 +837,85 @@ def test_export_new_heals_drift_without_new_matches(tmp_path):
 
     assert result.rebuilt is not None
     assert "player_spirit_damage" in pl.read_parquet_schema(target)
+
+
+def test_drop_only_drift_accepts_an_extra_column(tmp_path):
+    arc = tmp_path / "arc"
+    arc.mkdir()
+    out = tmp_path / "pq"
+    _archive_match(arc, 7, dt.datetime(2026, 6, 1, tzinfo=dt.UTC))
+    export.export_all(arc, out)
+
+    _add_column(out, "players", "hero")
+
+    assert export.schema_drift(out) is not None
+    assert export.drop_only_drift(out) is True
+
+
+def test_drop_only_drift_rejects_a_missing_column(tmp_path):
+    arc = tmp_path / "arc"
+    arc.mkdir()
+    out = tmp_path / "pq"
+    _archive_match(arc, 7, dt.datetime(2026, 6, 1, tzinfo=dt.UTC))
+    export.export_all(arc, out)
+
+    _drop_column(out, "objectives", "player_spirit_damage")
+
+    assert export.drop_only_drift(out) is False
+
+
+def test_drop_only_drift_rejects_a_missing_table(tmp_path):
+    import shutil
+
+    arc = tmp_path / "arc"
+    arc.mkdir()
+    out = tmp_path / "pq"
+    _archive_match(arc, 7, dt.datetime(2026, 6, 1, tzinfo=dt.UTC))
+    export.export_all(arc, out)
+
+    shutil.rmtree(out / "buffs")
+
+    assert export.drop_only_drift(out) is False
+    assert export.drop_only_drift(out, exclude=("buffs",)) is True
+
+
+def test_reshape_partitions_drops_the_column_and_keeps_every_row(tmp_path):
+    arc = tmp_path / "arc"
+    arc.mkdir()
+    out = tmp_path / "pq"
+    _archive_match(arc, 7, dt.datetime(2026, 6, 1, tzinfo=dt.UTC))
+    export.export_all(arc, out)
+
+    target = _add_column(out, "players", "hero")
+    before = pl.read_parquet(target)
+
+    assert export.reshape_partitions(out) == 1
+    assert export.schema_drift(out) is None
+
+    after = pl.read_parquet(target)
+
+    assert "hero" not in after.columns
+    assert after.equals(before.drop("hero").select(after.columns))
+
+
+def test_export_new_reshapes_a_dropped_column_without_decoding(tmp_path, monkeypatch):
+    arc = tmp_path / "arc"
+    arc.mkdir()
+    out = tmp_path / "pq"
+    _archive_match(arc, 7, dt.datetime(2026, 6, 1, tzinfo=dt.UTC))
+    export.export_all(arc, out)
+
+    target = _add_column(out, "players", "hero")
+
+    def fail(*args, **kwargs):
+        raise AssertionError("a dropped column must not trigger a full rebuild")
+
+    monkeypatch.setattr(export, "export_all", fail)
+    result = export.export_new(arc, out)
+
+    assert result.rebuilt is None
+    assert "hero" not in pl.read_parquet_schema(target)
+    assert export.exported_match_ids(out) == {7}
 
 
 def test_export_new_no_rebuild_when_clean(tmp_path):

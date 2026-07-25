@@ -10,7 +10,7 @@ import polars as pl
 import polars.selectors as cs
 
 from deadlock_matches.assets import heroes
-from deadlock_matches.queries.core import _local_day, my_games, scan, table_exists
+from deadlock_matches.queries.core import _local_day, my_games, player_rows, scan, table_exists
 from deadlock_matches.queries.delivery import damage_category
 
 if TYPE_CHECKING:
@@ -84,7 +84,7 @@ def custom_stats(
         frame = _final_custom_values(frame)
 
     frame = frame.join(
-        scan("players", parquet_dir).select("match_id", "account_id", "hero", "won"),
+        player_rows(parquet_dir).select("match_id", "account_id", "hero", "won"),
         on=["match_id", "account_id"],
         how="left",
     )
@@ -167,7 +167,7 @@ def melee_by_player(match_id: int, parquet_dir: str | Path | None = None) -> pl.
     - parries and missed_parries read the final parry snapshot
     """
     players = (
-        scan("players", parquet_dir)
+        player_rows(parquet_dir)
         .filter(pl.col("match_id") == match_id)
         .select("match_id", "account_id", "hero", "team")
     )
@@ -224,7 +224,7 @@ def melee_taken_by_attacker(
 ) -> pl.LazyFrame:
     """Total the melee one player took per attacking hero."""
     attackers = (
-        scan("players", parquet_dir)
+        player_rows(parquet_dir)
         .filter(pl.col("match_id") == match_id)
         .select(pl.col("account_id").alias("dealer_account_id"), pl.col("hero").alias("attacker"))
     )
@@ -266,7 +266,7 @@ def final_stats(parquet_dir: str | Path | None = None, tz: str | None = None) ->
             .alias("headshot_rate"),
         )
         .join(
-            scan("players", parquet_dir).select("match_id", "account_id", "hero_id", "hero", "won"),
+            player_rows(parquet_dir).select("match_id", "account_id", "hero_id", "hero", "won"),
             on=["match_id", "account_id"],
         )
     )
@@ -281,7 +281,7 @@ def team_damage_ranks(parquet_dir: str | Path | None = None) -> pl.LazyFrame:
     - rank 1 is the team damage chart top, flagged by top_team_damage
     """
     finals = final_stats(parquet_dir).select("match_id", "account_id", "player_damage")
-    teams = scan("players", parquet_dir).select("match_id", "account_id", "team")
+    teams = player_rows(parquet_dir).select("match_id", "account_id", "team")
 
     return (
         finals.join(teams, on=["match_id", "account_id"])
@@ -323,7 +323,7 @@ def death_context(
         raise ValueError(msg)
 
     deaths = my_deaths(parquet_dir, accounts, tz)
-    teams = scan("players", parquet_dir).select("match_id", "account_id", "team")
+    teams = player_rows(parquet_dir).select("match_id", "account_id", "team")
 
     mine = deaths.select("match_id", "account_id", "game_time_s", "x", "y").join(
         teams, on=["match_id", "account_id"]

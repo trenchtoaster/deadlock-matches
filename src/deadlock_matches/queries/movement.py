@@ -8,7 +8,7 @@ from typing import TYPE_CHECKING
 
 import polars as pl
 
-from deadlock_matches.queries.core import _resolved_accounts, scan, table_exists
+from deadlock_matches.queries.core import _resolved_accounts, player_rows, scan, table_exists
 from deadlock_matches.queries.games import _collect_game_records, _hero_game_rows
 
 if TYPE_CHECKING:
@@ -123,7 +123,7 @@ def movement_scoreboard(match_id: int, parquet_dir: str | Path | None = None) ->
         .agg(pl.col(MOVEMENT_COUNTS).sum())
         .with_columns(_movement_percents())
         .join(
-            scan("players", parquet_dir).select("match_id", "account_id", "hero", "team"),
+            player_rows(parquet_dir).select("match_id", "account_id", "hero", "team"),
             on=["match_id", "account_id"],
         )
     )

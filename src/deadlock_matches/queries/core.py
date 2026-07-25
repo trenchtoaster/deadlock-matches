@@ -10,6 +10,7 @@ import polars as pl
 
 from deadlock_matches import config, export, schemas
 from deadlock_matches.assets import skill_rating as sr
+from deadlock_matches.queries.labels import with_hero_name
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
@@ -69,6 +70,11 @@ def table_exists(table: str, parquet_dir: str | Path | None = None) -> bool:
         return True
 
     return table in schemas.ASSET_TABLES and schemas.table_path(table, export.PARQUET_DIR).exists()
+
+
+def player_rows(parquet_dir: str | Path | None = None) -> pl.LazyFrame:
+    """Read players with the current hero display name derived from hero_id."""
+    return with_hero_name(scan("players", parquet_dir))
 
 
 def _asof_era_join(
@@ -141,7 +147,7 @@ def my_games(
     tz = config.config_timezone() if tz is None else tz
 
     return (
-        scan("players", parquet_dir)
+        player_rows(parquet_dir)
         .filter(pl.col("account_id").is_in(accounts))
         .join(scan("matches", parquet_dir), on="match_id")
         .with_columns(pl.col("start_time").dt.convert_time_zone(tz).alias("start_local"))

@@ -14,14 +14,14 @@ Use `deadlock schema [table]` when you want the exact columns, data types, and d
 ## Tables
 
 - `matches`: one row per match.
-- `players`: one row per player per match, with `hero`, `won`, and `lane` (the starting lane color).
+- `players`: one row per player per match, with `hero_id`, `won`, and `lane` (the starting lane color). `queries.player_rows()` adds the current hero display name as `hero`.
 - `stats`: cumulative stat snapshots, every 3 minutes through 15:00 and every 5 minutes after, plus one at match end.
 - `soul_sources`: souls per income source per snapshot.
-- `item_events`: item purchases, with names, prices, and tiers merged in from the cached API data. Prices reflect the patch each match was played on.
+- `item_events`: item purchases, with historical item names, prices, and tiers merged in from the cached API data. Prices reflect the patch each match was played on; the current imbued-ability name is derived from `imbued_ability_id` at read time.
 - `buffs`: the buffs each player ended the match with, one row per pickup type with the buff family and level. Permanent statue buffs and temporary bridge buffs are told apart by the `permanent` column. `statue_history` holds the per-pickup values by patch.
-- `stacks`: the final counters from stacking abilities and items, one row per counter per player, with the class and display name resolved from the id.
+- `stacks`: the final counters from stacking abilities and items, one row per counter per player. Parquet stores `ability_id`; `queries.with_stack_labels()` adds its current class and display name.
 - `custom_stats`: the named stat counters the game tracks but never shows, one row per stat per player per snapshot with the family and name split out. Examples include parries, accuracy against heroes, damage by range, comeback souls, and per-hero counters.
-- `damage`: damage, healing, and mitigation per source and target, with the names you see in game like Dust Devil or "Promises Kept (crit)" for headshots. The totals from the match screen and the individual source rows have different `category` values, so filter to one or the other.
+- `damage`: damage, healing, and mitigation per source and target. Parquet stores stable `source_class`; `queries.hero_damage()` and `queries.with_damage_source_name()` add current labels such as Dust Devil or "Promises Kept (crit)". `queries.damage_category()` distinguishes match-screen totals from individual sources.
 - `damage_sources`: the same sources over time, cumulative like the in-game damage graph. Summed over targets, split into hero targets and everything else.
 - `mid_boss`: one row per midboss kill, with when it died, which team killed it, and which team claimed the Rejuvenator.
 - `movement`: the position of every player, health percent, and movement state (sliding, dashing, ziplining, in combat or not) for every second of the match. The starter config excludes it because it is larger than every other table combined. Delete it from `exclude` if you want exact position or nearby-player queries.
@@ -43,11 +43,14 @@ Questions like these are a few lines of polars each:
 `deadlock_matches.queries` handles common joins and filters, so a query is mostly the aggregation. The helpers are ordinary Python functions, so inspect the module or use editor autocomplete for the current list. Stable starting points include:
 
 - `queries.scan("damage")` to read any table by name.
+- `queries.player_rows()` to read `players` with the current hero display name.
 - `queries.my_games()` for one row per match you played, with the local day for grouping by session.
 - `queries.final_stats()` for final stats of every player in every match, including accuracy and headshot rate.
 - item, damage, soul, death, movement, and record helpers for the frames behind CLI reports.
 
 Every query in the module is a lazy polars plan and all collections use the streaming engine. Nothing is read until `.collect()`, the plan prunes the scan down to the columns and rows it actually touches, and memory stays bounded at any archive size. Keep your own queries lazy from `scan()` to `.collect()` and they get the same treatment.
+
+Current asset labels are deliberately not stored in match parquet. Hero, damage-source, imbued-ability, stack, and accolade labels resolve from their stable IDs or engine classes when queried, so an asset refresh fixes old-match displays without a full archive rebuild. Aggregate on the stable key first and attach the label to the reduced frame when writing a new aggregate query.
 
 Here is the general shape. Start from one of the helper frames, filter to the games you care about, then aggregate:
 

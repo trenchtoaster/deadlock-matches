@@ -10,9 +10,16 @@ import polars as pl
 
 from deadlock_matches import config
 from deadlock_matches.assets import heroes, items
-from deadlock_matches.queries.core import _resolved_accounts, my_games, scan, table_exists
+from deadlock_matches.queries.core import (
+    _resolved_accounts,
+    my_games,
+    player_rows,
+    scan,
+    table_exists,
+)
 from deadlock_matches.queries.delivery import hero_damage
 from deadlock_matches.queries.items import _item_windows, item_events_effective
+from deadlock_matches.queries.labels import damage_source_name
 from deadlock_matches.queries.stats import _final_custom_values
 
 if TYPE_CHECKING:
@@ -53,7 +60,7 @@ def damage_by_source(
     rows = (
         hero_damage(stat=stat, parquet_dir=parquet_dir)
         .filter(predicate)
-        .select("match_id", "source_name", "source_class", "delivery", "damage")
+        .select("match_id", "source_class", "delivery", "damage")
         .collect()
     )
 
@@ -81,10 +88,10 @@ def damage_by_source(
         ]
     )
     source_minutes = (
-        rows.select("source_name", "source_class", "delivery", "match_id")
+        rows.select("source_class", "delivery", "match_id")
         .unique()
         .join(durations, on="match_id")
-        .group_by("source_name", "source_class", "delivery")
+        .group_by("source_class", "delivery")
         .agg((pl.col("duration_s").sum() / 60).alias("minutes"))
     )
     grand = rows.get_column("damage").sum()
@@ -103,13 +110,14 @@ def damage_by_source(
     item_row = pl.col("delivery").str.ends_with("_proc")
 
     return (
-        rows.group_by("source_name", "source_class", "delivery")
+        rows.group_by("source_class", "delivery")
         .agg(
             pl.col("damage").sum().alias("total"),
             pl.col("match_id").n_unique().alias("games"),
         )
-        .join(source_minutes, on=["source_name", "source_class", "delivery"])
+        .join(source_minutes, on=["source_class", "delivery"])
         .with_columns(
+            damage_source_name().alias("source_name"),
             (pl.col("total") / pl.col("minutes")).round(1).alias("per_min"),
             pl.when(item_row)
             .then((pl.col("total") / owned_min).round(1))
@@ -429,7 +437,7 @@ def souls_by_source(
         raise ValueError(msg)
 
     hero_games = (
-        scan("players", parquet_dir)
+        player_rows(parquet_dir)
         .filter(pl.col("hero") == hero, pl.col("account_id").is_in(accounts))
         .select("match_id", "account_id")
     )

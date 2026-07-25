@@ -237,7 +237,7 @@ def melee_pq(tmp_path):
         {
             "match_id": [700, 700, 701],
             "account_id": [42, 99, 42],
-            "hero": ["Mirage", "Yamato", "Mirage"],
+            "hero_id": [52, 27, 52],
             "team": [1, 0, 1],
         }
     )

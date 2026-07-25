@@ -410,6 +410,41 @@ def test_write_player_tables_rebuilds_drifted_tables(tmp_path, monkeypatch):
     assert "party" in pl.read_parquet_schema(target)
 
 
+def test_write_player_tables_reshapes_a_dropped_column_without_decoding(tmp_path, monkeypatch):
+    monkeypatch.setattr(
+        players, "match_info", lambda mid, archive_dir: extract.from_api_json(_match_json(mid))
+    )
+
+    row = {
+        "match_id": 900,
+        "account_id": 11,
+        "player": "someone",
+        "hero_id": 52,
+        "rank": 3,
+        "region": "Asia",
+        "downloaded_at": dt.datetime(2026, 7, 1, tzinfo=dt.UTC),
+    }
+    out = tmp_path / "pq"
+    players.write_player_tables([row], out_dir=out)
+
+    target = next((out / "players").glob("*.parquet"))
+    pl.read_parquet(target).with_columns(pl.lit("stale").alias("hero")).write_parquet(target)
+
+    attempted = []
+
+    def fail(mid, archive_dir):
+        attempted.append(mid)
+        raise AssertionError("a dropped column must not trigger a body decode")
+
+    monkeypatch.setattr(players, "match_info", fail)
+    counts = players.write_player_tables([], out_dir=out)
+
+    assert attempted == []
+    assert counts["matches"] == 1
+    assert "hero" not in pl.read_parquet_schema(target)
+    assert export.schema_drift(out) is None
+
+
 def test_write_player_tables_carries_forward_undecodable_matches(tmp_path, monkeypatch):
     monkeypatch.setattr(
         players, "match_info", lambda mid, archive_dir: extract.from_api_json(_match_json(mid))

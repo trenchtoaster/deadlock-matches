@@ -7,8 +7,9 @@ from typing import TYPE_CHECKING
 
 import polars as pl
 
-from deadlock_matches.queries.core import scan
+from deadlock_matches.queries.core import player_rows, scan
 from deadlock_matches.queries.delivery import damage_category, hero_damage, with_delivery
+from deadlock_matches.queries.labels import damage_source_name
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
@@ -545,7 +546,7 @@ def damage_intervals(
         pl.col("damage") != 0,
     )
     samples = with_delivery(rows, parquet_dir).select(
-        "source_name", "delivery", "time_stamp_s", "damage"
+        "source_class", "delivery", "time_stamp_s", "damage"
     )
     duration, samples = pl.collect_all([duration, samples])
 
@@ -558,8 +559,12 @@ def damage_intervals(
         raise ValueError(msg)
 
     duration_s = int(duration.item())
-    gains = _diffed_grid(samples, ["source_name", "delivery"], ["damage"], interval_s).with_columns(
-        pl.col("damage").sum().over("source_name").alias("total")
+    gains = (
+        _diffed_grid(samples, ["source_class", "delivery"], ["damage"], interval_s)
+        .with_columns(damage_source_name().alias("source_name"))
+        .group_by("source_name", "delivery", "interval")
+        .agg(pl.col("damage").sum())
+        .with_columns(pl.col("damage").sum().over("source_name").alias("total"))
     )
 
     return (
@@ -607,7 +612,7 @@ def enemy_damage_intervals(
         .select(pl.col(other).alias("enemy_account_id"), "source_class", "time_stamp_s", "damage")
     )
     in_match = (
-        scan("players", parquet_dir)
+        player_rows(parquet_dir)
         .filter(pl.col("match_id") == match_id)
         .select(pl.col("account_id").alias("enemy_account_id"), pl.col("hero").alias("enemy"))
     )
@@ -682,7 +687,7 @@ def enemy_damage_totals(
         .agg(pl.col("damage").sum())
     )
 
-    enemies = scan("players", parquet_dir).select(
+    enemies = player_rows(parquet_dir).select(
         "match_id",
         pl.col("account_id").alias("enemy_account_id"),
         pl.col("hero").alias("enemy"),
@@ -780,11 +785,11 @@ def source_intervals(
     samples = (
         with_delivery(rows, parquet_dir)
         .with_columns(bucket)
-        .group_by(*keys, "source_name", "delivery", "interval")
+        .group_by(*keys, "source_class", "delivery", "interval")
         .agg(pl.col("damage").max())
     )
 
-    sources = samples.select(*keys, "source_name", "delivery").unique()
+    sources = samples.select(*keys, "source_class", "delivery").unique()
     spans = samples.group_by(keys).agg(pl.col("interval").max().alias("n"))
     grid = (
         sources.join(spans, on=keys)
@@ -795,14 +800,17 @@ def source_intervals(
     durations = scan("matches", parquet_dir).select("match_id", "duration_s")
 
     return (
-        grid.join(samples, on=[*keys, "source_name", "delivery", "interval"], how="left")
-        .sort(*keys, "source_name", "interval")
+        grid.join(samples, on=[*keys, "source_class", "delivery", "interval"], how="left")
+        .sort(*keys, "source_class", "interval")
         .with_columns(
-            pl.col("damage").fill_null(strategy="forward").fill_null(0).over(*keys, "source_name")
+            pl.col("damage").fill_null(strategy="forward").fill_null(0).over(*keys, "source_class")
         )
         .with_columns(
-            pl.col("damage") - pl.col("damage").shift(1).fill_null(0).over(*keys, "source_name")
+            pl.col("damage") - pl.col("damage").shift(1).fill_null(0).over(*keys, "source_class")
         )
+        .with_columns(damage_source_name().alias("source_name"))
+        .group_by(*keys, "source_name", "delivery", "interval")
+        .agg(pl.col("damage").sum())
         .with_columns(pl.col("damage").sum().over(*keys, "source_name").alias("total"))
         .join(durations, on="match_id")
         .with_columns(
@@ -841,6 +849,9 @@ def source_totals(
 
     return (
         detail.join(wanted, on=keys)
+        .group_by(*keys, "source_class", "delivery")
+        .agg(pl.col("damage").sum())
+        .with_columns(damage_source_name().alias("source_name"))
         .group_by(*keys, "source_name", "delivery")
         .agg(pl.col("damage").sum())
         .sort([*keys, "damage"], descending=[False, False, True])
@@ -869,9 +880,7 @@ def team_intervals(
         .select("account_id", "time_stamp_s", "net_worth")
     )
     teams = (
-        scan("players", parquet_dir)
-        .filter(pl.col("match_id") == match_id)
-        .select("account_id", "team")
+        player_rows(parquet_dir).filter(pl.col("match_id") == match_id).select("account_id", "team")
     )
     duration, snaps, teams = pl.collect_all([duration, snaps, teams])
 

@@ -4016,7 +4016,6 @@ def test_schema_command_prints_sample_rows(capsys, tmp_path):
                 "match_id": i,
                 "account_id": 42,
                 "hero_id": 52,
-                "hero": "Mirage",
                 "team": 1,
                 "player_slot": 0,
                 "assigned_lane": 4,
@@ -4042,8 +4041,9 @@ def test_schema_command_prints_sample_rows(capsys, tmp_path):
 
     assert "account_id" in out
     assert "Sample rows from" in out
-    assert "Mirage" in out
-    assert "shape: (5, 18)" in out
+    assert "hero_id" in out
+    assert "Mirage" not in out
+    assert "shape: (5, 17)" in out
 
 
 def test_schema_command_samples_asset_table(capsys, tmp_path):

@@ -135,8 +135,7 @@ class Players(Table):
 
     match_id = MATCH_ID
     account_id = ACCOUNT_ID
-    hero_id = Column(pl.Int64, "Numeric hero id (heroes.py maps to names)")
-    hero = Column(pl.String, "Hero display name")
+    hero_id = Column(pl.Int64, "Numeric hero id (queries.player_rows adds the name)")
     team = Column(pl.Int64, "0 = The Hidden King (Amber internally), 1 = The Archmother (Sapphire)")
     player_slot = Column(pl.Int64, "Slot within the match, joins to damage target/dealer")
     assigned_lane = Column(pl.Int64, "Starting lane, raw engine id (1/4/6 on the three-lane map)")
@@ -243,8 +242,11 @@ class ItemEvents(Table):
     tier = Column(pl.Int64, "Item tier 1-4")
     sold_time_s = Column(pl.Int64, "When it left the inventory (sold or consumed), 0 if kept")
     flags = Column(pl.Int64, "1 = consumed as a component of an upgrade, NOT a sell, 0 = normal")
-    imbued_ability_id = Column(pl.Int64, "Ability the item was imbued into, null when not imbued")
-    imbued_ability = Column(pl.String, "Display name of the imbued ability, null when not imbued")
+    imbued_ability_id = Column(
+        pl.Int64,
+        "Ability the item was imbued into, null when not imbued "
+        "(queries.imbued_ability_name maps it)",
+    )
 
 
 class Accolades(Table):
@@ -252,10 +254,7 @@ class Accolades(Table):
 
     match_id = MATCH_ID
     account_id = ACCOUNT_ID
-    accolade_id = Column(pl.Int64, "Numeric accolade id")
-    accolade = Column(
-        pl.String, "Stat the accolade grades (kills, headshot_damage, ...), null for unknown ids"
-    )
+    accolade_id = Column(pl.Int64, "Numeric accolade id (queries.accolade_name maps it)")
     value = Column(pl.Int64, "The player's number for that stat this match")
     threshold = Column(pl.Int64, "Highest star threshold reached, 0-based, -1 = none reached")
 
@@ -285,9 +284,10 @@ class Stacks(Table):
 
     match_id = MATCH_ID
     account_id = ACCOUNT_ID
-    ability_id = Column(pl.Int64, "The murmur2 string token of the engine class name")
-    class_name = Column(pl.String, "Engine class name of the ability or item, null for unknown ids")
-    name = Column(pl.String, "Display name of the ability or item, null for unknown ids")
+    ability_id = Column(
+        pl.Int64,
+        "The murmur2 string token of the engine class name (queries.with_stack_labels maps it)",
+    )
     value = Column(pl.Int64, "Final count (stacks, charges, or kills, whatever the source counts)")
 
 
@@ -317,11 +317,10 @@ class Damage(Table):
         pl.Int64, "Who received it, null for non-player targets (objectives, creeps)"
     )
     target_player_slot = Column(pl.Int64, "Raw target slot, kept for non-player targets")
-    source_name = Column(
-        pl.String, "Current display name (Dust Devil, 'Promises Kept (crit)' for headshots)"
-    )
     source_class = Column(
-        pl.String, "Engine class_name, stable across patches unlike display names"
+        pl.String,
+        "Engine class_name, stable across patches unlike display names "
+        "(queries.with_damage_source_name adds source_name)",
     )
     stat = Column(
         pl.String, "Which figure this row carries: damage/healing/mitigated/... (EStatType)"
@@ -337,11 +336,10 @@ class DamageSources(Table):
 
     match_id = MATCH_ID
     dealer_account_id = Column(pl.Int64, "Who dealt it, null for non-player slots")
-    source_name = Column(
-        pl.String, "Current display name (Dust Devil, 'Promises Kept (crit)' for headshots)"
-    )
     source_class = Column(
-        pl.String, "Engine class_name, stable across patches unlike display names"
+        pl.String,
+        "Engine class_name, stable across patches unlike display names "
+        "(queries.with_damage_source_name adds source_name)",
     )
     stat = Column(
         pl.String, "Which figure this row carries: damage/healing/mitigated/... (EStatType)"
@@ -366,11 +364,10 @@ class DamageTargets(Table):
     match_id = MATCH_ID
     dealer_account_id = Column(pl.Int64, "Who dealt it, null for non-player slots")
     target_account_id = Column(pl.Int64, "Who received it, hero targets only")
-    source_name = Column(
-        pl.String, "Current display name (Dust Devil, 'Promises Kept (crit)' for headshots)"
-    )
     source_class = Column(
-        pl.String, "Engine class_name, stable across patches unlike display names"
+        pl.String,
+        "Engine class_name, stable across patches unlike display names "
+        "(queries.with_damage_source_name adds source_name)",
     )
     stat = Column(
         pl.String, "Which figure this row carries: damage/healing/mitigated/... (EStatType)"

@@ -221,7 +221,7 @@ def tracked_player_games(
         tracked = tracked.filter(pl.col("player").str.to_lowercase().is_in(wanted))
 
     games = (
-        tracked.join(queries.scan("players", parquet_dir), on=["match_id", "account_id"])
+        tracked.join(queries.player_rows(parquet_dir), on=["match_id", "account_id"])
         .join(queries.scan("matches", parquet_dir), on="match_id")
         .with_columns(pl.col("start_time").dt.convert_time_zone(tz).alias("start_local"))
         .with_columns(pl.col("start_local").dt.date().alias("day"))
@@ -345,7 +345,7 @@ def pool_builds(
         .join(queries.scan("item_events", parquet_dir), on=["match_id", "account_id"])
         .filter(pl.col("item").is_not_null(), pl.col("cost") > 0)
         .join(
-            queries.scan("players", parquet_dir).select("match_id", "account_id", "won"),
+            queries.player_rows(parquet_dir).select("match_id", "account_id", "won"),
             on=["match_id", "account_id"],
         )
         .sort("match_id", "account_id", "game_time_s")
@@ -600,7 +600,8 @@ def write_player_tables(
     - downloads accumulates across runs and the earliest downloaded_at wins per (match, player, hero)
     - match bodies are immutable so only match_ids not already built get decoded and appended
     - a legacy single-file store is re-laid-out into partitions first, without decoding anything
-    - a schema drift rebuilds from the stored bodies into a staging area and swaps it in,
+    - a drift that only drops columns is reshaped in place, decoding nothing
+    - any other drift rebuilds from the stored bodies into a staging area and swaps it in,
       carrying any match that cannot be decoded forward so live tables are never lost
     - nothing is pruned, so player history builds up across runs
     """
@@ -612,6 +613,9 @@ def write_player_tables(
 
     if export.is_legacy_layout(out_dir):
         export.migrate_to_partitions(out_dir, exclude)
+
+    if export.schema_drift(out_dir, exclude) and export.drop_only_drift(out_dir, exclude):
+        export.reshape_partitions(out_dir, exclude)
 
     if export.schema_drift(out_dir, exclude):
         export.rebuild_drifted_partitions(_decode_bodies(wanted, archive_dir), out_dir, exclude)

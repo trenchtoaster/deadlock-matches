@@ -10,7 +10,14 @@ import polars as pl
 
 from deadlock_matches import config
 from deadlock_matches.assets import abilities, heroes, items
-from deadlock_matches.queries.core import _ERA_SENTINEL, asset_asof, my_games, scan, table_exists
+from deadlock_matches.queries.core import (
+    _ERA_SENTINEL,
+    asset_asof,
+    my_games,
+    player_rows,
+    scan,
+    table_exists,
+)
 from deadlock_matches.queries.delivery import damage_category
 from deadlock_matches.queries.scaling import _hero_by_era, _with_hero_era
 
@@ -261,9 +268,7 @@ def item_value(
 
     if hero is not None:
         played = (
-            scan("players", parquet_dir)
-            .filter(pl.col("hero") == hero)
-            .select("match_id", "account_id")
+            player_rows(parquet_dir).filter(pl.col("hero") == hero).select("match_id", "account_id")
         )
         windows = windows.join(played, on=["match_id", "account_id"])
 
