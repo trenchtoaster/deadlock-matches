@@ -4,14 +4,16 @@ import polars as pl
 import pytest
 from builders import (
     LOCAL_DAY,
+    _write_effective_assets,
     _write_item_history,
     add_custom_stats,
     build_heal_match,
     build_match,
     build_movement_match,
+    build_upgrade_match,
 )
 
-from deadlock_matches import export, queries
+from deadlock_matches import export, queries, schemas
 
 
 def test_damage_by_source_totals_share_and_rate(pq):
@@ -51,6 +53,25 @@ def test_damage_source_measures_group_damage_and_healing(pq, heal_pq):
     assert damage.get_column("games").to_list() == [1, 1]
     assert healing.get_column("total").sum() == 80
     assert healing.get_column("self").sum() == 50
+
+
+def test_damage_source_games_counts_player_games_not_match_ids():
+    rows = pl.LazyFrame(
+        {
+            "match_id": [100, 100],
+            "account_id": [42, 43],
+            "amount": [10, 20],
+            "game_minutes": [10.0, 10.0],
+        }
+    )
+    df = queries.summarize(
+        queries.damage_source_games,
+        measures=("games", "minutes"),
+        lf=rows,
+    ).collect()
+
+    assert df.item(0, "games") == 2
+    assert df.item(0, "minutes") == 20.0
 
 
 def test_damage_by_source_item_rate_ends_at_the_sell(sold_pq):
@@ -543,3 +564,178 @@ def test_buff_games_group_by_family_and_join_players(buff_pq):
 
     assert df.get_column("hero").unique().to_list() == ["Mirage"]
     assert dict(df.select("buff", "held").iter_rows()) == {"casting": 0, "hp": 4, "wp": 3}
+
+
+def _silent_mystic_shot(match_id):
+    """An upgrade match where Mystic Shot was bought but never landed a proc."""
+    info = build_upgrade_match(match_id=match_id)
+    del info.damage_matrix.damage_dealers[0].damage_sources[3]
+
+    return info
+
+
+def _write(infos, path):
+    for name, df in export.build_tables(infos, exclude=("movement",)).items():
+        df.write_parquet(path / f"{name}.parquet")
+
+
+def test_per_1k_divides_by_every_soul_spent_including_a_game_the_item_sat_out(tmp_path):
+    _write([build_upgrade_match(310), _silent_mystic_shot(311)], tmp_path)
+    _write_effective_assets(tmp_path)
+
+    df = queries.damage_by_source("Mirage", accounts=[42], parquet_dir=tmp_path)
+    row = next(r for r in df.iter_rows(named=True) if r["source_name"] == "Mystic Shot")
+
+    assert row["games"] == 1
+    assert row["per_1k"] == 36.0
+
+
+def test_owned_minutes_count_a_game_the_item_dealt_nothing_in(tmp_path):
+    _write([build_upgrade_match(310), _silent_mystic_shot(311)], tmp_path)
+    _write_item_history(tmp_path)
+
+    one, two = (
+        queries.summarize(
+            queries.damage_source_games,
+            by="source_name",
+            measures=("owned_minutes",),
+            hero="Mirage",
+            accounts=[42],
+            matches=matches,
+            parquet_dir=tmp_path,
+        )
+        .collect()
+        .filter(pl.col("source_name") == "Mystic Shot")
+        .item(0, "owned_minutes")
+        for matches in ([310], [310, 311])
+    )
+
+    assert two == pytest.approx(one * 2)
+
+
+def test_silent_item_rows_use_the_delivery_from_their_own_era(tmp_path):
+    first = build_upgrade_match(310)
+    second = _silent_mystic_shot(311)
+    second.start_time += 86400
+    _write([first, second], tmp_path)
+
+    eras = [
+        {
+            "item_id": 9000,
+            "name": "Mystic Shot",
+            "class_name": "upgrade_crackshot",
+            "cost": 500,
+            "slot": slot,
+            "tier": 1,
+            "is_active": False,
+            "description": None,
+            "era_from": era_from,
+            "client_version": version,
+        }
+        for slot, era_from, version in (
+            ("weapon", dt.datetime(2020, 1, 1, tzinfo=dt.UTC), 1),
+            (
+                "spirit",
+                dt.datetime.fromtimestamp(second.start_time - 1, tz=dt.UTC),
+                2,
+            ),
+        )
+    ]
+    path = schemas.table_path("item_history", tmp_path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    schemas.conform("item_history", eras).write_parquet(path)
+
+    df = queries.summarize(
+        queries.damage_source_games,
+        by=("match_id", "delivery"),
+        measures=("owned_minutes",),
+        hero="Mirage",
+        accounts=[42],
+        matches=[310, 311],
+        parquet_dir=tmp_path,
+    ).collect()
+    mystic = df.filter(pl.col("owned_minutes") > 0)
+
+    assert dict(mystic.select("match_id", "delivery").iter_rows()) == {
+        310: "gun_proc",
+        311: "spirit_proc",
+    }
+
+
+def test_window_measures_divide_by_every_game_of_the_hero(tmp_path):
+    _write([build_heal_match(100), build_match(101)], tmp_path)
+    _write_item_history(tmp_path)
+
+    df = queries.summarize(
+        queries.damage_source_games,
+        measures=("total", "games", "per_game", "per_window_game", "per_window_min", "share"),
+        hero="Mirage",
+        accounts=[42],
+        matches=[100, 101],
+        stat="heal_prevented",
+        parquet_dir=tmp_path,
+    ).collect()
+    row = df.row(0, named=True)
+
+    assert row["total"] == 25
+    assert row["games"] == 1
+    assert row["per_game"] == 25.0
+    assert row["per_window_game"] == 12.5
+    assert row["per_window_min"] == pytest.approx(25 / 60)
+    assert row["share"] == 1.0
+
+
+def test_a_share_of_the_window_adds_to_one_across_the_sources(pq):
+    df = queries.summarize(
+        queries.damage_source_games,
+        by="source_name",
+        measures=("share",),
+        hero="Mirage",
+        accounts=[42],
+        parquet_dir=pq,
+    ).collect()
+
+    assert df.get_column("share").sum() == pytest.approx(1.0)
+
+
+def test_combat_games_counts_every_game_and_rates_read_the_summed_counters(tmp_path):
+    first = build_match(100)
+    add_custom_stats(
+        first,
+        [
+            ("Enemy Hero Accuracy##Shots", 100),
+            ("Enemy Hero Accuracy##Hits", 40),
+            ("Enemy Hero Accuracy##Headshots", 10),
+            ("Parry Success", 3),
+            ("Parry Miss", 5),
+            ("Enemy Hero Accuracy - Incoming##Shots", 50),
+            ("Enemy Hero Accuracy - Incoming##Hits", 20),
+        ],
+    )
+    _write([first, build_match(101)], tmp_path)
+
+    df = queries.summarize(
+        queries.combat_games,
+        measures=(
+            "games",
+            "shots",
+            "hits",
+            "hit_rate",
+            "headshot_rate",
+            "incoming_hit_rate",
+            "parries_per_game",
+            "missed_parries_per_game",
+        ),
+        hero="Mirage",
+        accounts=[42],
+        parquet_dir=tmp_path,
+    ).collect()
+    row = df.row(0, named=True)
+
+    assert row["games"] == 2
+    assert row["shots"] == 100
+    assert row["hit_rate"] == pytest.approx(0.4)
+    assert row["headshot_rate"] == pytest.approx(0.25)
+    assert row["incoming_hit_rate"] == pytest.approx(0.4)
+    assert row["parries_per_game"] == pytest.approx(1.5)
+    assert row["missed_parries_per_game"] == pytest.approx(2.5)

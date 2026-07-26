@@ -1492,7 +1492,7 @@ def test_compare_command_damage_stat_prints_sources_first(tmp_path, monkeypatch,
     assert "citadel_weapon_mirage" in out
     assert "Toxic Bullets" in out
     assert "Damage over time" in out
-    assert re.search(r"citadel_weapon_mirage\s+Gun\s+250\s+600\s+-350\s+8\.30\s+20\s+-12", out)
+    assert re.search(r"citadel_weapon_mirage\s+Gun\s+250\s+600\s+-350\s+8\.33\s+20\s+-12", out)
     assert re.search(r"Total\s+400\s+1,200\s+-800\s+13\s+40\s+-27\s+-\s+-\s+3/3", out)
 
 
@@ -1548,7 +1548,7 @@ def test_compare_command_healing_stat_prints_sources_first(tmp_path, monkeypatch
     assert "Healing by source" in out
     assert "Dust Devil" in out
     assert "Healing over time" in out
-    assert re.search(r"Dust Devil\s+Abilities\s+100\s+300\s+-200\s+3\.30\s+10\s+-6\.70", out)
+    assert re.search(r"Dust Devil\s+Abilities\s+100\s+300\s+-200\s+3\.33\s+10\s+-6\.67", out)
     assert re.search(r"Total\s+100\s+300\s+-200\s+3\.33\s+10\s+-6\.67\s+-\s+-\s+3/3", out)
 
 
@@ -2518,6 +2518,42 @@ def test_movement_command_splits_wins_and_losses(capsys, tmp_path):
     assert "Wins (1)" in out
     assert "Losses (1)" in out
     assert "loss" in out
+
+
+def test_movement_table_ignores_null_results_and_prints_null_means_as_missing(capsys):
+    games = pl.DataFrame(
+        {
+            "won": [True, None],
+            "distance_min": [None, None],
+            "stationary_percent": [None, None],
+            "slide_percent": [None, None],
+            "in_air_percent": [None, None],
+            "zipline_percent": [None, None],
+            "combat_percent": [None, None],
+            "dashes_min": [None, None],
+            "air_dashes_min": [None, None],
+        },
+        schema_overrides={
+            "won": pl.Boolean,
+            "distance_min": pl.Float64,
+            "stationary_percent": pl.Float64,
+            "slide_percent": pl.Float64,
+            "in_air_percent": pl.Float64,
+            "zipline_percent": pl.Float64,
+            "combat_percent": pl.Float64,
+            "dashes_min": pl.Float64,
+            "air_dashes_min": pl.Float64,
+        },
+    )
+
+    performance._movement_table(games)
+    out = capsys.readouterr().out
+
+    assert "All (2)" in out
+    assert "Wins (" not in out
+    assert re.search(r"meters /min\s+-", out)
+    assert "0.0" not in out
+    assert performance._movement_cell(None, 1, 9, sign=True).strip() == "-"
 
 
 def test_movement_command_game_without_rows_prints_dashes(capsys, tmp_path):

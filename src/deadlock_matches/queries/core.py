@@ -204,15 +204,23 @@ MY_GAMES_DIMENSIONS = {
 }
 
 MY_GAMES_MEASURES = {
-    "games": Measure(pl.len(), "count", comment="Every game, scored or not."),
-    "scored_games": Measure(SCORED.sum(), "count", comment="The win rate denominator."),
+    "games": Measure(pl.len(), "count", comment="Every game, scored or not.", missing="zero"),
+    "scored_games": Measure(
+        SCORED.sum(), "count", comment="The win rate denominator.", missing="zero"
+    ),
     "wins": Measure(
         (pl.col("won") & SCORED).sum(),
         "count",
         comment="Wins in scored games, an unscored win is not counted.",
         direction="maximize",
+        missing="zero",
     ),
-    "losses": Measure((~pl.col("won") & SCORED).sum(), "count", direction="minimize"),
+    "losses": Measure(
+        (~pl.col("won") & SCORED).sum(),
+        "count",
+        direction="minimize",
+        missing="zero",
+    ),
     "win_rate": Measure(
         lambda measure: try_divide(measure["wins"], measure["scored_games"]),
         "proportion",
@@ -220,22 +228,23 @@ MY_GAMES_MEASURES = {
         synonyms=("winrate",),
         direction="maximize",
     ),
-    "kills": Measure(pl.col("kills").sum(), "count", direction="maximize"),
-    "deaths": Measure(pl.col("deaths").sum(), "count", direction="minimize"),
-    "assists": Measure(pl.col("assists").sum(), "count", direction="maximize"),
+    "kills": Measure(pl.col("kills").sum(), "count", direction="maximize", missing="zero"),
+    "deaths": Measure(pl.col("deaths").sum(), "count", direction="minimize", missing="zero"),
+    "assists": Measure(pl.col("assists").sum(), "count", direction="maximize", missing="zero"),
     "kda": Measure(
         lambda measure: try_divide(measure["kills"] + measure["assists"], measure["deaths"]),
         "ratio",
         comment="Kills plus assists over deaths, pooled across the group.",
         direction="maximize",
     ),
-    "last_hits": Measure(pl.col("last_hits").sum(), "count", direction="maximize"),
-    "denies": Measure(pl.col("denies").sum(), "count", direction="maximize"),
+    "last_hits": Measure(pl.col("last_hits").sum(), "count", direction="maximize", missing="zero"),
+    "denies": Measure(pl.col("denies").sum(), "count", direction="maximize", missing="zero"),
     "net_worth": Measure(
         pl.col("net_worth").sum(),
         "souls",
         comment="Final net worth summed, not gross souls earned, souls_by_source has those.",
         direction="maximize",
+        missing="zero",
     ),
     "net_worth_per_game": Measure(
         lambda measure: try_divide(measure["net_worth"], measure["games"]),

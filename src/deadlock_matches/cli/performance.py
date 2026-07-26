@@ -7,7 +7,6 @@ import itertools
 import re
 import statistics as st
 import unicodedata
-from collections.abc import Sequence
 from contextlib import suppress
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
@@ -29,6 +28,7 @@ from deadlock_matches.assets import (
     skill_rating,
     statues,
 )
+from deadlock_matches.cli import render
 from deadlock_matches.cli.cards import UNITS_PER_METER
 from deadlock_matches.cli.data import MVP_LABELS, TEAMS, final_stats, no_pool_hint
 from deadlock_matches.config import (
@@ -114,6 +114,54 @@ LOWER_IS_BETTER = ("deaths", "damage_taken")
 
 COUNT_STATS = ("kills", "deaths")
 
+WIN_RATE = queries.view_measure(queries.record_games, "win_rate").display_format
+
+
+def _win_rate(wins: int, games: int) -> str:
+    """Print a win rate the way record_games declares it."""
+    return WIN_RATE.render(wins / games if games else None, render.BLANK)
+
+
+def _pool_scopes(
+    mine: pl.DataFrame,
+    pool: pl.DataFrame,
+    args: argparse.Namespace,
+    arguments: dict[str, Any] | None = None,
+) -> list[queries.Scope]:
+    """Build the two sides of one comparison over the personal and tracked exports.
+
+    - the sides read different exports, so a scope carries the directory
+      alongside the view arguments instead of only a predicate
+    - arguments go to both sides, so only the accounts and matches differ
+    """
+    shared = dict(arguments or {})
+
+    return [
+        queries.Scope(
+            "you",
+            parquet_dir=args.parquet,
+            arguments={
+                **shared,
+                "accounts": list(args.account),
+                "matches": mine.get_column("match_id").to_list(),
+            },
+        ),
+        queries.Scope(
+            "them",
+            parquet_dir=players.PARQUET_DIR,
+            arguments={
+                **shared,
+                "accounts": pool.get_column("account_id").unique().to_list(),
+                "matches": pool.get_column("match_id").to_list(),
+            },
+        ),
+    ]
+
+
+MARK_MINUTES = (6, 10, 15, 20, 25)
+
+STANDING_MARK_S = 20 * 60
+
 
 def sources_report(
     mine: pl.LazyFrame,
@@ -122,22 +170,46 @@ def sources_report(
     pool_dir: str | Path | None,
 ) -> None:
     """Compare income from each soul source between your games and the pool."""
-    marks = [6, 10, 15, 20, 25]
-    marks_s = [m * 60 for m in marks]
+    marks_s = [m * 60 for m in MARK_MINUTES]
     frames = pl.collect_all(
-        [_mark_medians(queries.cumulative_at(mine, s, marks_s, my_dir)) for s in SOURCE_ROWS]
-        + [_mark_medians(queries.cumulative_at(pool, s, marks_s, pool_dir)) for s in SOURCE_ROWS]
+        [
+            queries.compare(
+                queries.cumulative_marks,
+                [
+                    queries.Scope(
+                        "you",
+                        parquet_dir=my_dir,
+                        arguments={"games": mine, "stat": stat, "marks_s": marks_s},
+                    ),
+                    queries.Scope(
+                        "them",
+                        parquet_dir=pool_dir,
+                        arguments={"games": pool, "stat": stat, "marks_s": marks_s},
+                    ),
+                ],
+                by="mark_s",
+                measures=("median",),
+            )
+            for stat in SOURCE_ROWS
+        ]
     )
-
-    header = "".join(f"  {f'{m}m gap':>8}" for m in marks)
+    fmt = queries.view_measure(queries.cumulative_marks, "median").display_format
+    header = "".join(f"{f'{m}m gap':>10}" for m in MARK_MINUTES)
     print(f"\n  {'source':<12}{header}  {'you@20m':>9}  {'them@20m':>9}")
 
-    for i, stat in enumerate(SOURCE_ROWS):
-        you = dict(frames[i].iter_rows())
-        them = dict(frames[i + len(SOURCE_ROWS)].iter_rows())
-        gaps = "".join(f"  {_cell(_gap(you, them, m * 60), sign=True)}" for m in marks)
+    for stat, frame in zip(SOURCE_ROWS, frames, strict=True):
+        rows = {r["mark_s"]: r for r in frame.iter_rows(named=True)}
+        gaps = "".join(
+            fmt.render(rows.get(m, {}).get("gap_median"), render.BLANK, sign=True).rjust(10)
+            for m in marks_s
+        )
+        standing = rows.get(STANDING_MARK_S, {})
 
-        print(f"  {stat:<12}{gaps}  {_cell(you.get(1200), 9)}  {_cell(them.get(1200), 9)}")
+        print(
+            f"  {stat:<12}{gaps}"
+            f"  {fmt.render(standing.get('you_median'), render.BLANK):>9}"
+            f"  {fmt.render(standing.get('them_median'), render.BLANK):>9}"
+        )
 
     print(
         "\n  souls is net worth. It runs a little over the other rows summed, the game"
@@ -145,78 +217,32 @@ def sources_report(
     )
 
 
-def _compare_source_frame(
-    side: str,
-    sources: pl.DataFrame,
-) -> pl.DataFrame:
-    """Keep the source columns used by the compare tables."""
-    return sources.select(
-        "source_name",
-        "delivery",
-        pl.col("games").alias(f"{side}_games"),
-        (pl.col("total") / pl.col("games")).alias(f"{side}_game"),
-        pl.col("per_min").alias(f"{side}_min"),
-        pl.col("per_min_owned").alias(f"{side}_owned"),
-        pl.col("per_1k").alias(f"{side}_1k"),
-        pl.col("percent").alias(f"{side}_percent"),
-    )
+SHARE = queries.Format(scale=100, suffix="%")
 
+DELIVERY_WIDTH = max(len(label) for label in DELIVERY_LABELS.values()) + 2
 
-def _player_game_minutes(games: pl.DataFrame, parquet_dir: str | Path | None) -> float:
-    """Sum duration over player-games, not unique matches."""
-    minutes = (
-        games.lazy()
-        .join(queries.scan("matches", parquet_dir).select("match_id", "duration_s"), on="match_id")
-        .select((pl.col("duration_s").sum() / 60).alias("minutes"))
-        .collect()
-        .item()
-    )
+_WINDOW_FIELDS = [
+    *render.spread("per_window_game", ("You/game", "Them/game", "Gap/game"), (10, 11, 10)),
+    *render.spread("per_window_min", ("You/min", "Them/min", "Gap/min"), (9, 10, 10)),
+]
 
-    return float(minutes or 0)
+DELIVERY_COLUMNS = [
+    render.Key("delivery", "Delivery", 23, DELIVERY_LABELS),
+    *_WINDOW_FIELDS,
+    *render.spread("share", ("You %", "Them %"), (8, 8), SHARE, ("you", "them")),
+]
 
+SOURCE_FIELDS = [
+    *render.spread("per_game", ("You/game", "Them/game", "Gap/game"), (10, 11, 10)),
+    *render.spread("per_min", ("You/min", "Them/min", "Gap/min"), (9, 10, 10)),
+    *render.spread("per_1k", ("You/1k", "Them/1k"), (9, 9), sides=("you", "them")),
+]
 
-def _delivery_compare_rows(
-    you: pl.DataFrame,
-    them: pl.DataFrame,
-    you_minutes: float,
-    them_minutes: float,
-    you_games: int,
-    them_games: int,
-) -> pl.DataFrame:
-    """Build delivery-level compare rows for damage or healing."""
-    totals = (
-        pl.concat(
-            [
-                you.select("delivery", pl.col("total").alias("you_total")).with_columns(
-                    pl.lit(0, dtype=pl.Int64).alias("them_total")
-                ),
-                them.select("delivery", pl.col("total").alias("them_total")).with_columns(
-                    pl.lit(0, dtype=pl.Int64).alias("you_total")
-                ),
-            ],
-            how="diagonal",
-        )
-        .group_by("delivery")
-        .agg(pl.col("you_total").sum(), pl.col("them_total").sum())
-    )
-    you_total = float(you.get_column("total").sum())
-    them_total = float(them.get_column("total").sum())
-
-    return (
-        totals.with_columns(
-            (pl.col("you_total") / you_games).alias("you_game"),
-            (pl.col("them_total") / them_games).alias("them_game"),
-            (pl.col("you_total") / you_minutes).alias("you_min"),
-            (pl.col("them_total") / them_minutes).alias("them_min"),
-            (pl.col("you_total") / you_total * 100).alias("you_percent"),
-            (pl.col("them_total") / them_total * 100).alias("them_percent"),
-        )
-        .with_columns(
-            (pl.col("you_game") - pl.col("them_game")).alias("gap_game"),
-            (pl.col("you_min") - pl.col("them_min")).alias("gap_min"),
-        )
-        .sort("them_total", descending=True)
-    )
+STAT_LABELS = {
+    "damage": "Damage to heroes",
+    "healing": "Healing",
+    "heal_prevented": "Healing prevented",
+}
 
 
 def _compare_damage_sources(
@@ -226,107 +252,97 @@ def _compare_damage_sources(
     hero: str,
     stat: str,
 ) -> None:
-    """Print damage or healing by source before the interval table."""
-    label = {
-        "damage": "Damage to heroes",
-        "healing": "Healing",
-        "heal_prevented": "Healing prevented",
-    }[stat]
-    you = queries.damage_by_source(
-        hero,
-        accounts=args.account,
-        matches=mine.get_column("match_id").to_list(),
-        parquet_dir=args.parquet,
-        stat=stat,
-    )
-    them = queries.damage_by_source(
-        hero,
-        accounts=pool.get_column("account_id").unique().to_list(),
-        matches=pool.get_column("match_id").to_list(),
-        parquet_dir=players.PARQUET_DIR,
-        stat=stat,
+    """Print damage or healing by source before the interval table.
+
+    - the delivery table divides by every game of the hero, the source table
+      by the games each source appeared in, which is what per_window_game
+      and per_game say apart
+    """
+    scopes = _pool_scopes(mine, pool, args, {"hero": hero, "stat": stat})
+    delivery, sources, total = pl.collect_all(
+        [
+            queries.compare(
+                queries.damage_source_games,
+                scopes,
+                by="delivery",
+                measures=("total", "per_window_game", "per_window_min", "share"),
+            ),
+            queries.compare(
+                queries.damage_source_games,
+                scopes,
+                by=("source_name", "delivery"),
+                measures=("games", "per_game", "per_min", "per_1k"),
+            ),
+            queries.compare(
+                queries.damage_source_games,
+                scopes,
+                measures=("per_window_game", "per_window_min"),
+            ),
+        ]
     )
 
-    you_minutes = _player_game_minutes(mine, args.parquet)
-    them_minutes = _player_game_minutes(pool, players.PARQUET_DIR)
-    you_total = float(you.get_column("total").sum())
-    them_total = float(them.get_column("total").sum())
-    you_total_game = you_total / len(mine)
-    them_total_game = them_total / len(pool)
-    you_total_min = you_total / you_minutes
-    them_total_min = them_total / them_minutes
-    delivery = _delivery_compare_rows(you, them, you_minutes, them_minutes, len(mine), len(pool))
-    print(f"\n{label} by source\n")
+    if total.is_empty() or total.item(0, "you_per_window_game") is None:
+        msg = f"no {stat} rows for {hero} on accounts {args.account}"
+        raise ValueError(msg)
+
+    print(f"\n{STAT_LABELS[stat]} by source\n")
+    delivery_rows = delivery.sort("them_total", descending=True, nulls_last=True).to_dicts()
+
+    for line in render.table(queries.damage_source_games, delivery_rows, DELIVERY_COLUMNS):
+        print(line)
+
     print(
-        f"  {'Delivery':<23}{'You/game':>10}{'Them/game':>11}{'Gap/game':>10}"
-        f"{'You/min':>9}{'Them/min':>10}{'Gap/min':>10}{'You %':>8}{'Them %':>8}"
-    )
-
-    for r in delivery.iter_rows(named=True):
-        name = DELIVERY_LABELS.get(r["delivery"], r["delivery"])
-        print(
-            f"  {name:<23}{r['you_game']:>10,.0f}{r['them_game']:>11,.0f}"
-            f"{r['gap_game']:>+10,.0f}{r['you_min']:>9,.0f}{r['them_min']:>10,.0f}"
-            f"{r['gap_min']:>+10,.0f}{r['you_percent']:>7.0f}%{r['them_percent']:>7.0f}%"
+        render.total_line(
+            queries.damage_source_games,
+            total.row(0, named=True),
+            DELIVERY_COLUMNS[: 1 + len(_WINDOW_FIELDS)],
+            delivery_rows,
         )
-
-    print(
-        f"  {'Total':<23}{you_total_game:>10,.0f}{them_total_game:>11,.0f}"
-        f"{you_total_game - them_total_game:>+10,.0f}{you_total_min:>9,.0f}"
-        f"{them_total_min:>10,.0f}{you_total_min - them_total_min:>+10,.0f}"
     )
+    _source_compare_table(sources, total, len(mine), len(pool))
 
+
+def _source_compare_table(
+    sources: pl.DataFrame, total: pl.DataFrame, you_games: int, them_games: int
+) -> None:
+    """Print one line per damage source ordered by whichever side leans on it hardest."""
+    pair = pl.format(
+        "{}/{}", pl.col("you_games").fill_null(0), pl.col("them_games").fill_null(0)
+    ).alias("games_pair")
     rows = (
-        _compare_source_frame("you", you)
-        .join(_compare_source_frame("them", them), on=["source_name", "delivery"], how="full")
-        .with_columns(
-            pl.coalesce("source_name", "source_name_right").alias("source_name"),
-            pl.coalesce("delivery", "delivery_right").alias("delivery"),
-            (pl.col("you_game").fill_null(0) - pl.col("them_game").fill_null(0)).alias("gap_game"),
-            (pl.col("you_min").fill_null(0) - pl.col("them_min").fill_null(0)).alias("gap_min"),
+        sources.with_columns(
+            pair,
             pl.max_horizontal(
-                pl.col("you_min").fill_null(0), pl.col("them_min").fill_null(0)
+                pl.col("you_per_min").fill_null(0), pl.col("them_per_min").fill_null(0)
             ).alias("sort_min"),
         )
         .sort("sort_min", descending=True)
+        .to_dicts()
     )
-    width = max(max(len(n) for n in rows.get_column("source_name")), 14) + 2
-    dwidth = max(len(label) for label in DELIVERY_LABELS.values()) + 2
+    width = max(max((len(r["source_name"]) for r in rows), default=0), 14) + 2
+    columns = [
+        render.Key("source_name", "Source", width),
+        render.Key("delivery", "Delivery", DELIVERY_WIDTH, DELIVERY_LABELS),
+        *SOURCE_FIELDS,
+        render.Key("games_pair", "Games", 9, right=True),
+    ]
 
-    print(
-        f"\n  {'Source':<{width}}{'Delivery':<{dwidth}}"
-        f"{'You/game':>10}{'Them/game':>11}{'Gap/game':>10}"
-        f"{'You/min':>9}{'Them/min':>10}{'Gap/min':>10}"
-        f"{'You/1k':>9}{'Them/1k':>9}{'Games':>9}"
-    )
+    print()
 
-    for r in rows.iter_rows(named=True):
-        delivery_label = DELIVERY_LABELS.get(r["delivery"], r["delivery"])
-        you_1k = "-" if r["you_1k"] is None else f"{r['you_1k']:,.0f}"
-        them_1k = "-" if r["them_1k"] is None else f"{r['them_1k']:,.0f}"
-        games = f"{r['you_games'] or 0:.0f}/{r['them_games'] or 0:.0f}"
-        print(
-            f"  {r['source_name']:<{width}}{delivery_label:<{dwidth}}"
-            f"{_cell(r['you_game'], 10)}{_cell(r['them_game'], 11)}"
-            f"{_cell(r['gap_game'], 10, sign=True)}"
-            f"{_cell(r['you_min'], 9)}{_cell(r['them_min'], 10)}{_cell(r['gap_min'], 10, sign=True)}"
-            f"{you_1k:>9}{them_1k:>9}{games:>9}"
-        )
+    for line in render.table(queries.damage_source_games, rows, columns):
+        print(line)
 
-    games = f"{len(mine)}/{len(pool)}"
-    print(
-        f"  {'Total':<{width}}{'':<{dwidth}}"
-        f"{_cell(you_total_game, 10)}{_cell(them_total_game, 11)}"
-        f"{_cell(you_total_game - them_total_game, 10, sign=True)}"
-        f"{_cell(you_total_min, 9)}{_cell(them_total_min, 10)}"
-        f"{_cell(you_total_min - them_total_min, 10, sign=True)}"
-        f"{'-':>9}{'-':>9}{games:>9}"
-    )
-
-
-def _mark_medians(values: pl.LazyFrame) -> pl.LazyFrame:
-    """Aggregate a cumulative_at frame to the median value per mark."""
-    return values.group_by("mark_s").agg(pl.col("value").median())
+    summary = {
+        **total.row(0, named=True),
+        "you_per_game": total.item(0, "you_per_window_game"),
+        "them_per_game": total.item(0, "them_per_window_game"),
+        "gap_per_game": total.item(0, "gap_per_window_game"),
+        "you_per_min": total.item(0, "you_per_window_min"),
+        "them_per_min": total.item(0, "them_per_window_min"),
+        "gap_per_min": total.item(0, "gap_per_window_min"),
+        "games_pair": f"{you_games}/{them_games}",
+    }
+    print(render.total_line(queries.damage_source_games, summary, columns, rows))
 
 
 MILESTONE_MIN_GAMES = 3
@@ -362,17 +378,12 @@ def _milestone_targets(step: int) -> list[int]:
     return list(range(step, MILESTONE_CAP + 1, step))
 
 
-def _milestone_medians(target_times: pl.LazyFrame) -> pl.LazyFrame:
-    """Median minute and game count for each target."""
-    return target_times.group_by("target").agg(
-        (pl.col("target_time_s").median() / 60).alias("minutes"),
-        pl.len().alias("games"),
-    )
+MILESTONE_MINUTES = queries.view_measure(queries.milestone_games, "minutes").display_format
 
 
-def _milestone_map(medians: pl.DataFrame) -> dict[int, tuple[float, int]]:
-    """Map target to median minute and game count."""
-    return {r["target"]: (r["minutes"], r["games"]) for r in medians.iter_rows(named=True)}
+def _milestone_rows(frame: pl.DataFrame) -> dict[int, dict[str, Any]]:
+    """Index a milestone result by the target each row reached."""
+    return {r["target"]: r for r in frame.iter_rows(named=True)}
 
 
 def souls_milestones_report(
@@ -380,9 +391,14 @@ def souls_milestones_report(
 ) -> None:
     """Print the median minute you reach each net-worth mark across your games."""
     targets = _milestone_targets(args.step)
-    you = _milestone_map(
-        _milestone_medians(
-            queries.cumulative_stat_target_times(games.lazy(), targets, "souls", args.parquet)
+    you = _milestone_rows(
+        queries.summarize(
+            queries.milestone_games,
+            by="target",
+            measures=("minutes", "games"),
+            games=games.lazy(),
+            targets=targets,
+            parquet_dir=args.parquet,
         ).collect()
     )
 
@@ -393,13 +409,12 @@ def souls_milestones_report(
     for target in targets:
         row = you.get(target)
 
-        if row is None or row[1] < MILESTONE_MIN_GAMES:
-            n = 0 if row is None else row[1]
+        if row is None or row["games"] < MILESTONE_MIN_GAMES:
+            n = 0 if row is None else row["games"]
             print(f"\n  Stopped before {target:,}: only {n} games reached it.")
             break
 
-        minutes, n = row
-        print(f"  {target:>7}  {minutes:>7.1f}  {n:>5}")
+        print(f"  {target:>7}  {MILESTONE_MINUTES.render(row['minutes']):>7}  {row['games']:>5}")
 
 
 def compare_milestones_report(
@@ -411,44 +426,37 @@ def compare_milestones_report(
 ) -> None:
     """Print your median minute to each net-worth mark against the tracked pool."""
     targets = _milestone_targets(args.step)
-    you_frame, them_frame = pl.collect_all(
-        [
-            _milestone_medians(
-                queries.cumulative_stat_target_times(mine.lazy(), targets, "souls", args.parquet)
-            ),
-            _milestone_medians(
-                queries.cumulative_stat_target_times(
-                    pool.lazy(), targets, "souls", players.PARQUET_DIR
-                )
-            ),
-        ]
+    shared = {"targets": targets}
+    rows = _milestone_rows(
+        queries.compare(
+            queries.milestone_games,
+            [
+                queries.Scope("you", args.parquet, {**shared, "games": mine.lazy()}),
+                queries.Scope("them", players.PARQUET_DIR, {**shared, "games": pool.lazy()}),
+            ],
+            by="target",
+            measures=("minutes", "games"),
+        ).collect()
     )
-    you = _milestone_map(you_frame)
-    them = _milestone_map(them_frame)
 
     print("  Minutes to reach a net worth, median across games")
     print(
         f"  You: {ids}, {_hero_games(len(mine), hero)}     Them: {_hero_games(len(pool), hero)}\n"
     )
-    print(f"  {'Souls':>7}  {'You':>7}  {'Them':>7}  {'Behind':>7}  {'Games':>7}")
+    print(f"  {'Souls':>7}  {'You':>7}  {'Them':>7}  {'Gap':>7}  {'Games':>7}")
 
     for target in targets:
-        y = you.get(target)
-        t = them.get(target)
+        row = rows.get(target)
 
-        if y is None or t is None or y[1] < MILESTONE_MIN_GAMES or t[1] < MILESTONE_MIN_GAMES:
+        if row is None or min(row["you_games"] or 0, row["them_games"] or 0) < MILESTONE_MIN_GAMES:
             break
 
-        behind = y[0] - t[0]
-        print(f"  {target:>7}  {y[0]:>7.1f}  {t[0]:>7.1f}  {behind:>+7.1f}  {y[1]:>3}/{t[1]:<3}")
-
-
-def _gap(you: dict[int, float], them: dict[int, float], mark_s: int) -> float | None:
-    """Difference of the two medians at a mark, None when either side is missing."""
-    if mark_s not in you or mark_s not in them:
-        return None
-
-    return you[mark_s] - them[mark_s]
+        print(
+            f"  {target:>7}  {MILESTONE_MINUTES.render(row['you_minutes']):>7}"
+            f"  {MILESTONE_MINUTES.render(row['them_minutes']):>7}"
+            f"  {MILESTONE_MINUTES.render(row['gap_minutes'], sign=True):>7}"
+            f"  {row['you_games']:>3}/{row['them_games']:<3}"
+        )
 
 
 def compare_report(args: argparse.Namespace, config: str | Path | None = None) -> None:
@@ -2038,7 +2046,9 @@ def _snapshot_accuracy(
     if not row["shots_hit"] and not row["shots_missed"]:
         return None
 
-    return round(100 * row["accuracy"])
+    scale = queries.view_measure(queries.stat_snapshots, "accuracy").display_format.scale
+
+    return round(scale * row["accuracy"])
 
 
 def _aim_section(
@@ -2691,7 +2701,8 @@ def winrate_report(args: argparse.Namespace, config: str | Path | None = None) -
 
         print(
             f"  {day!s:<12}{r['games']:>7}{r['wins']:>5}{r['losses']:>5}"
-            f"{r['win_rate']:>10.1f}%{lobby:>14}{r['mvps']:>6}{r['key_players']:>6}{left:>10}"
+            f"{WIN_RATE.render(r['win_rate'], render.BLANK):>11}{lobby:>14}"
+            f"{r['mvps']:>6}{r['key_players']:>6}{left:>10}"
             f"{r['net']:>+11}{r['cum_net']:>+17}"
         )
 
@@ -2711,7 +2722,7 @@ def winrate_report(args: argparse.Namespace, config: str | Path | None = None) -
     ).collect()
     total_games = int(overall.item(0, "scored_games"))
     wins = int(overall.item(0, "wins"))
-    rate = float(overall.item(0, "win_rate")) * 100
+    rate = WIN_RATE.render(overall.item(0, "win_rate"), render.BLANK)
     net = int(overall.item(0, "net"))
     mvps = int(overall.item(0, "mvps"))
     keys = int(overall.item(0, "key_players"))
@@ -2724,7 +2735,7 @@ def winrate_report(args: argparse.Namespace, config: str | Path | None = None) -
         lobbies = f", {average} lobbies"
 
     print(
-        f"\nOverall: {total_games} games, {wins}-{total_games - wins}, {rate:.1f}% win rate, "
+        f"\nOverall: {total_games} games, {wins}-{total_games - wins}, {rate} win rate, "
         f"{net:+} net wins, {mvps} MVP, {keys} Key Player{lobbies}."
     )
 
@@ -2770,10 +2781,9 @@ def _abandon_lines(abandons: pl.DataFrame, games: int, wins: int) -> None:
     clean_wins = wins - int(abandons.get_column("won").cast(pl.Int32).sum())
 
     if clean_games > 0:
-        clean_rate = clean_wins / clean_games * 100
         print(
             f"  Without them: {clean_games} games, "
-            f"{clean_wins}-{clean_games - clean_wins}, {clean_rate:.1f}% win rate."
+            f"{clean_wins}-{clean_games - clean_wins}, {_win_rate(clean_wins, clean_games)} win rate."
         )
 
 
@@ -2847,10 +2857,9 @@ def _rate_table(games: pl.DataFrame, bucket: pl.Expr, header: str) -> None:
     print(f"  {header:<24}{'Games':>7}{'W':>6}{'L':>6}{'Win rate':>11}")
 
     for r in rows.iter_rows(named=True):
-        rate = r["wins"] / r["games"] * 100
         print(
             f"  {r['bucket']!s:<24}{r['games']:>7}{r['wins']:>6}"
-            f"{r['games'] - r['wins']:>6}{rate:>10.1f}%"
+            f"{r['games'] - r['wins']:>6}{_win_rate(r['wins'], r['games']):>11}"
         )
 
 
@@ -2914,7 +2923,7 @@ def laning_games_report(args: argparse.Namespace, config: str | Path | None = No
     total = len(games)
     wins = int(games.get_column("won").cast(pl.Int32).sum())
 
-    print(f"\nOverall: {total} games, {wins}-{total - wins}, {wins / total * 100:.1f}% win rate.")
+    print(f"\nOverall: {total} games, {wins}-{total - wins}, {_win_rate(wins, total)} win rate.")
 
 
 DAMAGE_SHARES = (
@@ -3348,60 +3357,20 @@ def _combat_parry_lines(games: pl.DataFrame, stats: dict[tuple[str | None, str],
     )
 
 
-def _combat_total(rows: pl.DataFrame, group: str | None, stat: str) -> float:
-    """Read one custom stat total from custom_stat_totals output."""
-    found = rows.filter(
-        pl.col("group").is_null() if group is None else pl.col("group") == group,
-        pl.col("stat") == stat,
-    )
-
-    if found.is_empty():
-        return 0.0
-
-    return float(found.item(0, "total") or 0)
-
-
-def _combat_rate(rows: pl.DataFrame, group: str, numerator: str, denominator: str) -> float | None:
-    """Calculate one percent rate from custom stat totals."""
-    den = _combat_total(rows, group, denominator)
-
-    if not den:
-        return None
-
-    return 100 * _combat_total(rows, group, numerator) / den
-
-
-def _combat_cell(value: float, *, percent: bool = False, sign: bool = False) -> str:
-    """Format one combat compare cell."""
-    prefix = "+" if sign and value > 0 else ""
-    suffix = "%" if percent else ""
-    return f"{prefix}{value:,.1f}{suffix}"
-
-
-def _combat_gun_damage(
-    accounts: Sequence[int],
-    matches: Sequence[int],
-    parquet_dir: str | Path | None,
-) -> float:
-    """Sum gun damage to heroes for the combat compare window."""
-    if not queries.table_exists("damage", parquet_dir):
-        return 0.0
-
-    total = (
-        queries.summarize(
-            queries.hero_damage_games(accounts=accounts, matches=matches),
-            measures=("gun",),
-            parquet_dir=parquet_dir,
-        )
-        .collect()
-        .item()
-    )
-
-    return float(total or 0)
+COMBAT_METRICS = (
+    render.Metric("hit_rate", "Hero hit %"),
+    render.Metric("headshot_rate", "Hero headshot %"),
+    render.Metric("shots_per_game", "Hero shots /game"),
+    render.Metric("gun_damage_per_game", "Gun damage /game"),
+    render.Metric("gun_damage_per_hit", "Gun damage /hit"),
+    render.Metric("incoming_hit_rate", "Incoming hit %"),
+    render.Metric("parries_per_game", "Parries /game"),
+    render.Metric("missed_parries_per_game", "Missed parries /game"),
+)
 
 
 def _combat_compare(mine: pl.DataFrame, pool: pl.DataFrame, args: argparse.Namespace) -> None:
-    """Print combat counters for both sides."""
+    """Print the fight counters of both sides and the gap between them."""
     if not queries.table_exists("custom_stats", args.parquet):
         print("\nNo custom_stats table yet, run `deadlock sync --full`")
         return
@@ -3410,81 +3379,20 @@ def _combat_compare(mine: pl.DataFrame, pool: pl.DataFrame, args: argparse.Names
         print("\nNo downloaded combat stats yet: run `deadlock download --hero " + args.hero + "`")
         return
 
-    you = queries.custom_stat_totals(
-        args.account, mine.get_column("match_id").to_list(), parquet_dir=args.parquet
-    )
-    them = queries.custom_stat_totals(
-        pool.get_column("account_id").unique().to_list(),
-        pool.get_column("match_id").to_list(),
-        parquet_dir=players.PARQUET_DIR,
-    )
-    you_hits = _combat_total(you, "Enemy Hero Accuracy", "Hits")
-    them_hits = _combat_total(them, "Enemy Hero Accuracy", "Hits")
-    you_gun = _combat_gun_damage(args.account, mine.get_column("match_id").to_list(), args.parquet)
-    them_gun = _combat_gun_damage(
-        pool.get_column("account_id").unique().to_list(),
-        pool.get_column("match_id").to_list(),
-        players.PARQUET_DIR,
-    )
-    rows = [
-        (
-            "Hero hit %",
-            _combat_rate(you, "Enemy Hero Accuracy", "Hits", "Shots"),
-            _combat_rate(them, "Enemy Hero Accuracy", "Hits", "Shots"),
-        ),
-        (
-            "Hero headshot %",
-            _combat_rate(you, "Enemy Hero Accuracy", "Headshots", "Hits"),
-            _combat_rate(them, "Enemy Hero Accuracy", "Headshots", "Hits"),
-        ),
-        (
-            "Hero shots /game",
-            _combat_total(you, "Enemy Hero Accuracy", "Shots") / len(mine),
-            _combat_total(them, "Enemy Hero Accuracy", "Shots") / len(pool),
-        ),
-        (
-            "Gun damage /game",
-            you_gun / len(mine),
-            them_gun / len(pool),
-        ),
-        (
-            "Gun damage /hit",
-            you_gun / you_hits if you_hits else None,
-            them_gun / them_hits if them_hits else None,
-        ),
-        (
-            "Incoming hit %",
-            _combat_rate(you, "Enemy Hero Accuracy - Incoming", "Hits", "Shots"),
-            _combat_rate(them, "Enemy Hero Accuracy - Incoming", "Hits", "Shots"),
-        ),
-        (
-            "Parries /game",
-            _combat_total(you, None, "Parry Success") / len(mine),
-            _combat_total(them, None, "Parry Success") / len(pool),
-        ),
-        (
-            "Missed parries /game",
-            _combat_total(you, None, "Parry Miss") / len(mine),
-            _combat_total(them, None, "Parry Miss") / len(pool),
-        ),
-    ]
-
-    print(f"\n  {'Metric':<22}{'You':>11}{'Them':>11}{'Gap':>11}")
-
-    for label, yours, theirs in rows:
-        if yours is None and theirs is None:
-            continue
-
-        y = 0.0 if yours is None else yours
-        t = 0.0 if theirs is None else theirs
-        percent = label.endswith("%")
-        gap = y - t
-        print(
-            f"  {label:<22}"
-            f"{_combat_cell(y, percent=percent):>11}"
-            f"{_combat_cell(t, percent=percent):>11}"
-            f"{_combat_cell(gap, percent=percent, sign=True):>11}"
+    gaps = (
+        queries.compare(
+            queries.combat_games,
+            _pool_scopes(mine, pool, args, {"hero": args.hero}),
+            measures=[metric.measure for metric in COMBAT_METRICS],
         )
+        .collect()
+        .row(0, named=True)
+    )
+
+    print()
+
+    for line in render.gap_lines(queries.combat_games, gaps, COMBAT_METRICS):
+        print(line)
 
 
 def combat_games_report(args: argparse.Namespace, config: str | Path | None = None) -> None:
@@ -3712,6 +3620,16 @@ def _movement_meters() -> pl.Expr:
     return (pl.col("distance_min") / UNITS_PER_METER).alias("meters_min")
 
 
+def _movement_cell(value: float | None, scale: float, width: int, *, sign: bool = False) -> str:
+    """Format one movement mean without turning a missing mean into zero."""
+    if value is None:
+        return f"{'-':>{width}}"
+
+    number = float(value) / scale
+
+    return f"{number:>+{width},.1f}" if sign else f"{number:>{width},.1f}"
+
+
 def _movement_table(games: pl.DataFrame) -> None:
     """Print each movement metric averaged per game and split by result.
 
@@ -3726,7 +3644,7 @@ def _movement_table(games: pl.DataFrame) -> None:
     ).collect()
     buckets = [(f"All ({len(games)})", overall.row(0, named=True))]
 
-    if games.get_column("won").n_unique() > 1:
+    if games.get_column("won").drop_nulls().n_unique() > 1:
         results = queries.summarize(
             queries.movement_games,
             by="won",
@@ -3744,7 +3662,7 @@ def _movement_table(games: pl.DataFrame) -> None:
     for label, col in MOVEMENT_METRICS:
         measure = MOVEMENT_MEASURES[col]
         scale = UNITS_PER_METER if col == "meters_min" else 1
-        cells = "".join(f"{float(row[measure] or 0) / scale:>14,.1f}" for _, row in buckets)
+        cells = "".join(_movement_cell(row[measure], scale, 14) for _, row in buckets)
 
         print(f"  {label:<24}{cells}")
 
@@ -3840,11 +3758,13 @@ def _movement_compare(
     for label, col in MOVEMENT_METRICS:
         measure = MOVEMENT_MEASURES[col]
         scale = UNITS_PER_METER if col == "meters_min" else 1
-        yours, theirs, gap = (
-            float(gaps[f"{side}_{measure}"] or 0) / scale for side in ("you", "them", "gap")
+        cells = (
+            _movement_cell(gaps[f"you_{measure}"], scale, 9)
+            + _movement_cell(gaps[f"them_{measure}"], scale, 9)
+            + _movement_cell(gaps[f"gap_{measure}"], scale, 9, sign=True)
         )
 
-        print(f"  {label:<24}{yours:>9,.1f}{theirs:>9,.1f}{gap:>+9,.1f}")
+        print(f"  {label:<24}{cells}")
 
     print()
     _movement_by_player(you, top, pool, {m["account_id"]: m["name"] for m in members})

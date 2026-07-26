@@ -1,5 +1,6 @@
 import datetime as dt
 import inspect
+from typing import Any
 
 import polars as pl
 import pytest
@@ -8,6 +9,16 @@ from deadlock_matches import queries, schemas
 from deadlock_matches.assets import heroes
 
 START = dt.datetime(2026, 7, 1, 18, tzinfo=dt.UTC)
+
+
+def untyped(value: Any) -> Any:
+    """Hand a value over with its static type erased.
+
+    - the runtime guards exist for callers that run no type checker, so a
+      test of one has to reach them the same way
+    """
+    return value
+
 
 MATCHES = [
     (1, False),
@@ -86,9 +97,12 @@ def summarize(pq, **kwargs):
 def test_only_composable_sources_are_registered():
     assert [spec.name for spec in queries.registered_views()] == [
         "buff_games",
+        "combat_games",
         "compare_intervals",
+        "cumulative_marks",
         "damage_source_games",
         "hero_damage_games",
+        "milestone_games",
         "movement_games",
         "my_games",
         "record_games",
@@ -181,6 +195,20 @@ def test_filters_take_a_value_a_collection_or_an_expression(semantic_pq):
     assert hero.get_column("games").item() == 3
     assert accounts.get_column("games").item() == 1
     assert expression.get_column("games").item() == 0
+
+
+def test_a_filter_expression_can_name_a_derived_dimension(semantic_pq):
+    scored = summarize(semantic_pq, measures=["games"], filters={"scored": pl.col("scored")})
+    since = summarize(
+        semantic_pq, measures=["games"], filters={"day": pl.col("day") >= dt.date(2026, 7, 2)}
+    )
+    from_the_first = summarize(
+        semantic_pq, measures=["games"], filters={"day": pl.col("day") >= dt.date(2026, 7, 1)}
+    )
+
+    assert scored.get_column("games").item() == 3
+    assert since.get_column("games").item() == 0
+    assert from_the_first.get_column("games").item() == 4
 
 
 def test_a_collection_filter_resolves_every_member(semantic_pq):
@@ -294,10 +322,10 @@ def test_a_supplied_row_set_has_to_be_lazy(semantic_pq):
     ).collect()
 
     with pytest.raises(TypeError, match=r"lf takes a LazyFrame, not a DataFrame"):
-        queries.summarize(queries.record_games, measures=["games"], lf=games).collect()
+        queries.summarize(queries.record_games, measures=["games"], lf=untyped(games)).collect()
 
     with pytest.raises(TypeError, match=r"scope 'you': lf takes a LazyFrame"):
-        queries.Scope("you", lf=games)
+        queries.Scope("you", lf=untyped(games))
 
 
 def test_try_divide_is_null_when_the_denominator_is_zero():
@@ -327,6 +355,14 @@ def test_validate_grain_catches_duplicate_rows(semantic_pq):
         queries.validate_grain(queries.my_games, pl.concat([df, df.head(1)]))
 
 
+def test_validate_grain_catches_missing_grain_columns():
+    with pytest.raises(AssertionError, match=r"missing grain columns \['account_id'\]"):
+        queries.validate_grain(
+            queries.my_games,
+            pl.DataFrame({"match_id": [1]}),
+        )
+
+
 def test_every_measure_declares_a_known_unit():
     for spec in queries.registered_views():
         for name, measure in spec.measures.items():
@@ -343,7 +379,7 @@ def test_every_measure_declares_a_known_unit():
 def test_a_measure_without_a_format_gets_the_one_its_unit_implies():
     assert queries.MY_GAMES_MEASURES["win_rate"].format is None
     assert queries.MY_GAMES_MEASURES["win_rate"].display_format == queries.Format(
-        decimals=1, percent=True, suffix="%"
+        decimals=1, scale=100, suffix="%"
     )
     assert queries.MY_GAMES_MEASURES["net_worth"].display_format == queries.Format(group=True)
 
@@ -353,7 +389,7 @@ def test_a_measure_without_a_format_gets_the_one_its_unit_implies():
 
 
 def test_a_format_scales_and_prints_but_the_unit_never_does():
-    percent = queries.Format(decimals=1, percent=True, suffix="%")
+    percent = queries.Format(decimals=1, scale=100, suffix="%")
     souls = queries.Format(group=True)
 
     assert percent.render(0.6667) == "66.7%"
@@ -361,6 +397,26 @@ def test_a_format_scales_and_prints_but_the_unit_never_does():
     assert percent.render(None, blank="-") == "-"
     assert souls.render(41250) == "41,250"
     assert queries.Format(decimals=2).render(1.5) == "1.50"
+
+
+def test_a_gap_column_keeps_its_sign_and_a_value_column_does_not():
+    souls = queries.Format(group=True)
+
+    assert souls.render(1250, sign=True) == "+1,250"
+    assert souls.render(-1250, sign=True) == "-1,250"
+    assert souls.render(0, sign=True) == "+0"
+    assert souls.render(1250) == "1,250"
+
+
+def test_small_keeps_the_decimals_a_whole_number_column_would_round_away():
+    flat = queries.Format(group=True, small=2)
+
+    assert flat.render(9257) == "9,257"
+    assert flat.render(8.333) == "8.33"
+    assert flat.render(-7.01) == "-7.01"
+    assert flat.render(8.0) == "8"
+    assert flat.render(12.4) == "12"
+    assert queries.Format(group=True).render(8.333) == "8"
 
 
 def test_a_composed_measure_divides_two_named_measures(semantic_pq):
@@ -405,7 +461,7 @@ def test_a_composed_measure_cannot_read_an_unknown_or_circular_sibling():
         )
 
     with pytest.raises(TypeError, match="composed to int, not an expression"):
-        queries.resolve_measures({"a": queries.Measure(lambda m: 1, "ratio")})  # ty: ignore[invalid-argument-type]
+        queries.resolve_measures({"a": queries.Measure(untyped(lambda m: 1), "ratio")})
 
 
 def test_a_synonym_reaches_the_measure_and_lands_under_its_declared_name(semantic_pq):
@@ -1025,6 +1081,38 @@ def test_a_semiadditive_measure_reads_the_last_sample_not_the_biggest():
     assert per_match.get_column("net_worth").to_list() == [900, 4000]
 
 
+def test_a_semiadditive_measure_can_read_the_first_sample():
+    first = queries.Window(
+        order="time_stamp_s",
+        partition=("match_id", "account_id"),
+        semiadditive="first",
+    )
+    view = queries.MetricView(
+        source=_snapshot_rows,
+        name="snaps",
+        dimensions={},
+        measures={
+            "net_worth": queries.Measure(pl.col("net_worth").sum(), "souls", window=first),
+        },
+    )
+
+    assert queries.summarize(view, measures=["net_worth"]).collect().item() == 1500
+
+
+def test_filters_run_on_the_surviving_semiadditive_sample():
+    view = queries.MetricView(
+        source=_snapshot_rows,
+        name="snaps",
+        dimensions={"worth": queries.Dimension(pl.col("net_worth"))},
+        measures={
+            "games": queries.Measure(pl.len(), "count", window=SERIES),
+        },
+    )
+    df = queries.summarize(view, measures=["games"], filters={"worth": 2000}).collect()
+
+    assert df.item() == 0
+
+
 def test_a_window_declared_on_one_measure_has_to_cover_them_all():
     with pytest.raises(ValueError, match=r"measures \['games'\] have no window"):
         queries.MetricView(
@@ -1034,6 +1122,41 @@ def test_a_window_declared_on_one_measure_has_to_cover_them_all():
             measures={
                 "net_worth": queries.Measure(pl.col("net_worth").sum(), "souls", window=SERIES),
                 "games": queries.Measure(pl.len(), "count"),
+            },
+        )
+
+
+def test_a_semiadditive_view_rejects_every_different_window_shape():
+    first = queries.Window(
+        order="time_stamp_s",
+        partition=("match_id", "account_id"),
+        semiadditive="first",
+    )
+    cumulative = queries.Window(order="time_stamp_s", range="cumulative")
+
+    with pytest.raises(ValueError, match="different semiadditive windows"):
+        queries.MetricView(
+            source=_snapshot_rows,
+            name="snaps",
+            dimensions={},
+            measures={
+                "last": queries.Measure(pl.col("net_worth").sum(), "souls", window=SERIES),
+                "first": queries.Measure(pl.col("net_worth").sum(), "souls", window=first),
+            },
+        )
+
+    with pytest.raises(ValueError, match="declare a different window"):
+        queries.MetricView(
+            source=_snapshot_rows,
+            name="snaps",
+            dimensions={},
+            measures={
+                "last": queries.Measure(pl.col("net_worth").sum(), "souls", window=SERIES),
+                "running": queries.Measure(
+                    pl.col("net_worth").sum(),
+                    "souls",
+                    window=cumulative,
+                ),
             },
         )
 
@@ -1145,13 +1268,31 @@ def test_compare_keeps_every_group_key_either_side_has(semantic_pq):
             scope("them", semantic_pq, accounts=[20]),
         ],
         by="hero",
-        measures=["games"],
+        measures=["games", "win_rate"],
     ).collect()
 
     assert df.get_column("hero").to_list() == ["Haze", "Mirage"]
     assert df.get_column("you_games").to_list() == [1, 2]
     assert df.get_column("them_games").to_list() == [None, 1]
     assert df.get_column("gap_games").to_list() == [1, 1]
+    assert df.get_column("you_win_rate").to_list() == [None, 0.5]
+    assert df.get_column("them_win_rate").to_list() == [None, 1.0]
+    assert df.get_column("gap_win_rate").to_list() == [None, -0.5]
+
+
+def test_compare_does_not_invent_a_median_for_a_missing_group():
+    you = pl.LazyFrame({"match_id": [1], "account_id": [10], "mark_s": [300], "value": [1000.0]})
+    them = pl.LazyFrame({"match_id": [2], "account_id": [20], "mark_s": [600], "value": [2000.0]})
+    df = queries.compare(
+        queries.cumulative_marks,
+        [queries.Scope("you", lf=you), queries.Scope("them", lf=them)],
+        by="mark_s",
+        measures=["games", "median"],
+    ).collect()
+
+    assert df.get_column("mark_s").to_list() == [300, 600]
+    assert df.get_column("gap_games").to_list() == [1, -1]
+    assert df.get_column("gap_median").to_list() == [None, None]
 
 
 def test_a_scope_can_narrow_its_own_side_with_a_filter(semantic_pq):
@@ -1180,6 +1321,32 @@ def test_a_scope_can_narrow_its_own_side_with_a_filter(semantic_pq):
     assert df.get_column("them_games").item() == 1
 
 
+def test_scope_filters_intersect_with_shared_compare_filters(semantic_pq):
+    sides = [
+        queries.Scope(
+            "you",
+            parquet_dir=semantic_pq,
+            arguments={"accounts": [10, 20], "tz": "America/Chicago"},
+            filters={"hero": "Haze"},
+        ),
+        queries.Scope(
+            "them",
+            parquet_dir=semantic_pq,
+            arguments={"accounts": [10, 20], "tz": "America/Chicago"},
+            filters={"hero": "Mirage"},
+        ),
+    ]
+    df = queries.compare(
+        queries.my_games,
+        sides,
+        measures=["games"],
+        filters={"hero": "Mirage"},
+    ).collect()
+
+    assert df.get_column("you_games").item() == 0
+    assert df.get_column("them_games").item() == 3
+
+
 def test_a_scope_can_supply_its_own_frame(semantic_pq):
     built = queries.view_frame(queries.my_games(accounts=[10, 20]), parquet_dir=semantic_pq)
     sides = [
@@ -1191,9 +1358,29 @@ def test_a_scope_can_supply_its_own_frame(semantic_pq):
     assert df.get_column("gap_games").item() == 2
 
 
+def test_a_supplied_frame_can_still_be_filtered(semantic_pq):
+    built = queries.view_frame(
+        queries.my_games(accounts=[10, 20], tz="America/Chicago"),
+        parquet_dir=semantic_pq,
+    )
+    df = queries.summarize(
+        queries.my_games,
+        measures=["games"],
+        filters={"hero": "Haze"},
+        lf=built,
+    ).collect()
+
+    assert df.item() == 1
+
+
 def test_a_scope_with_a_frame_cannot_also_bind_arguments():
     with pytest.raises(ValueError, match="supplies lf"):
         queries.Scope("you", lf=pl.LazyFrame(), arguments={"accounts": [10]})
+
+
+def test_a_scope_with_a_frame_cannot_silently_ignore_parquet_dir(tmp_path):
+    with pytest.raises(ValueError, match="parquet_dir would be ignored"):
+        queries.Scope("you", lf=pl.LazyFrame(), parquet_dir=tmp_path)
 
 
 def test_compare_takes_exactly_two_differently_named_scopes(semantic_pq):
@@ -1217,6 +1404,18 @@ def test_a_scope_needs_a_name():
         queries.Scope("")
 
 
+def test_a_view_name_cannot_be_registered_twice():
+    def my_games():
+        return queries.MetricView(source="players")
+
+    with pytest.raises(ValueError, match="already registered"):
+        queries.view(
+            grain=("match_id",),
+            dimensions={},
+            measures={"games": queries.Measure(pl.len(), "count")},
+        )(my_games)
+
+
 def test_compare_lands_a_synonym_under_the_declared_name(semantic_pq):
     df = queries.compare(
         queries.my_games,
@@ -1229,15 +1428,30 @@ def test_compare_lands_a_synonym_under_the_declared_name(semantic_pq):
 
 
 def test_a_measure_says_which_way_is_good():
-    assert queries.my_games.__view__.measures["deaths"].direction == "minimize"
-    assert queries.my_games.__view__.measures["wins"].direction == "maximize"
-    assert queries.my_games.__view__.measures["last_hits"].direction == "maximize"
-    assert queries.my_games.__view__.measures["games"].direction == ""
+    measures = queries.semantic_spec(queries.my_games).measures
+
+    assert measures["deaths"].direction == "minimize"
+    assert measures["wins"].direction == "maximize"
+    assert measures["last_hits"].direction == "maximize"
+    assert measures["games"].direction == ""
+
+
+def test_a_measure_says_what_an_absent_group_contributes():
+    assert queries.MY_GAMES_MEASURES["games"].missing == "zero"
+    assert queries.MY_GAMES_MEASURES["net_worth"].missing == "zero"
+    assert queries.MY_GAMES_MEASURES["win_rate"].missing == "null"
+    assert queries.CUMULATIVE_MARK_MEASURES["median"].missing == "null"
+    assert queries.MILESTONE_MEASURES["minutes"].missing == "null"
 
 
 def test_a_direction_outside_the_vocabulary_is_rejected():
     with pytest.raises(ValueError, match="unknown direction 'higher'"):
         queries.Measure(pl.len(), "count", direction="higher")
+
+
+def test_a_missing_policy_outside_the_vocabulary_is_rejected():
+    with pytest.raises(ValueError, match="unknown missing policy 'average'"):
+        queries.Measure(pl.len(), "count", missing="average")  # ty: ignore[invalid-argument-type]
 
 
 def test_describe_names_the_direction():
@@ -1249,5 +1463,7 @@ def test_describe_names_the_direction():
 
     assert "[minimize]" in lines["deaths"]
     assert "[maximize]" in lines["wins"]
+    assert "[zero if missing]" in lines["wins"]
+    assert "[zero if missing]" not in lines["win_rate"]
     assert "[minimize]" not in lines["games"]
     assert "[maximize]" not in lines["games"]

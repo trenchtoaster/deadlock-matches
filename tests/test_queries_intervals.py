@@ -142,6 +142,19 @@ def test_cumulative_at_reads_last_sample_before_the_mark(movement_pq):
     assert dict(farm.select("mark_s", "value").iter_rows()) == {360: 0, 900: 700}
 
 
+def test_stats_comparisons_read_the_last_sample_not_the_peak(death_loss_pq):
+    games = pl.LazyFrame({"match_id": [100], "account_id": [42]})
+    gains = queries.view_frame(
+        queries.compare_intervals(games, "souls", 900), parquet_dir=death_loss_pq
+    ).collect()
+    total = queries.game_totals(games, "souls", death_loss_pq).collect()
+    mark = queries.cumulative_at(games, "souls", [900], death_loss_pq).collect()
+
+    assert gains.filter(pl.col("interval") == 0).item(0, "gain") == 5200
+    assert total.item(0, "total") == 5200
+    assert mark.item(0, "value") == 5200
+
+
 def test_cumulative_at_skips_marks_past_match_end(movement_pq):
     games = pl.LazyFrame({"match_id": [100], "account_id": [42]})
     souls = queries.cumulative_at(games, "souls", [900, 7200], movement_pq).collect()
@@ -188,6 +201,12 @@ def test_match_intervals_gains_per_interval(interval_pq):
     assert df.get_column("obj_damage").to_list() == [300, 0, 0, 1200]
     assert df.get_column("healing").to_list() == [200, 300, 0, 400]
     assert df.get_column("heal_prevented").to_list() == [0, 150, 0, 250]
+
+
+def test_match_intervals_reads_the_last_snapshot_inside_each_bucket(death_loss_pq):
+    df = queries.match_intervals(100, 42, interval_s=900, parquet_dir=death_loss_pq)
+
+    assert df.get_column("souls").to_list() == [5200]
 
 
 def test_match_intervals_kills_and_deaths_from_death_record(interval_pq):
@@ -482,6 +501,13 @@ def test_team_intervals_gains_and_lead(pq):
     assert df.get_column("lead").to_list() == [-1800, -6000]
 
 
+def test_team_intervals_reads_each_players_last_snapshot_inside_the_bucket(death_loss_pq):
+    df = queries.team_intervals(100, interval_s=900, parquet_dir=death_loss_pq)
+
+    assert df.get_column("souls_team1").to_list() == [5200]
+    assert df.get_column("lead").to_list() == [-5200]
+
+
 def test_team_intervals_unknown_match(pq):
     with pytest.raises(ValueError, match="not in the tables"):
         queries.team_intervals(999, parquet_dir=pq)
@@ -512,3 +538,69 @@ def test_everything_stays_lazy(interval_pq, movement_pq):
 
     assert "Parquet SCAN" in plan
     assert all(line.startswith('DF ["match_id", "account_id"]') for line in materialized)
+
+
+def test_milestone_games_medians_the_minute_each_target_was_crossed(movement_pq):
+    games = pl.LazyFrame({"match_id": [100], "account_id": [42]})
+    df = queries.summarize(
+        queries.milestone_games,
+        by="target",
+        measures=("minutes", "games"),
+        games=games,
+        targets=[3000, 6000],
+        parquet_dir=movement_pq,
+    ).collect()
+
+    assert df.get_column("target").to_list() == [3000, 6000]
+    assert df.get_column("minutes").to_list() == [5.0, 10.0]
+    assert df.get_column("games").to_list() == [1, 1]
+
+
+def test_milestone_games_leave_out_a_target_no_game_reached(movement_pq):
+    games = pl.LazyFrame({"match_id": [100], "account_id": [42]})
+    df = queries.summarize(
+        queries.milestone_games,
+        by="target",
+        measures=("minutes",),
+        games=games,
+        targets=[3000, 70000],
+        parquet_dir=movement_pq,
+    ).collect()
+
+    assert df.get_column("target").to_list() == [3000]
+
+
+def test_cumulative_marks_read_the_last_sample_at_or_before_each_mark(movement_pq):
+    games = pl.LazyFrame({"match_id": [100], "account_id": [42]})
+    df = queries.summarize(
+        queries.cumulative_marks,
+        by="mark_s",
+        measures=("median", "games"),
+        games=games,
+        stat="souls",
+        marks_s=[300, 600],
+        parquet_dir=movement_pq,
+    ).collect()
+
+    assert df.get_column("mark_s").to_list() == [300, 600]
+    assert df.get_column("median").to_list() == [1800.0, 6000.0]
+    assert df.get_column("games").to_list() == [1, 1]
+
+
+def test_a_mark_gap_reads_the_first_scope_minus_the_second(movement_pq):
+    one = pl.LazyFrame({"match_id": [100], "account_id": [42]})
+    df = queries.compare(
+        queries.cumulative_marks,
+        [
+            queries.Scope(
+                "you", movement_pq, {"games": one, "stat": "souls", "marks_s": [300, 600]}
+            ),
+            queries.Scope("them", movement_pq, {"games": one, "stat": "souls", "marks_s": [600]}),
+        ],
+        by="mark_s",
+        measures=("median",),
+    ).collect()
+    rows = {r["mark_s"]: r for r in df.iter_rows(named=True)}
+
+    assert rows[600]["gap_median"] == 0.0
+    assert rows[300]["them_median"] is None

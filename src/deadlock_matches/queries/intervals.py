@@ -70,12 +70,14 @@ INTERVAL_GAIN_MEASURES = {
         pl.len(),
         "count",
         comment="Account-games that reached the interval.",
+        missing="zero",
     ),
     "total_gain": Measure(
         pl.col("gain").sum(),
         "count",
         comment="Whichever stat was passed, gained inside the interval and summed over games.",
         direction="maximize",
+        missing="zero",
     ),
     "mean_gain": Measure(
         pl.col("gain").mean(),
@@ -418,6 +420,91 @@ def cumulative_at(
         .with_columns(pl.col("value").fill_null(0))
         .select(*_KEYS, "mark_s", "value")
     )
+
+
+CUMULATIVE_MARK_DIMENSIONS = {
+    "match_id": Dimension(pl.col("match_id")),
+    "account_id": Dimension(pl.col("account_id")),
+    "mark_s": Dimension(
+        pl.col("mark_s"),
+        comment="Seconds into the match the cumulative value was read at.",
+    ),
+}
+
+CUMULATIVE_MARK_MEASURES = {
+    "median": Measure(
+        pl.col("value").median(),
+        "souls",
+        comment="Median cumulative value across the games that lasted to the mark.",
+        direction="maximize",
+    ),
+    "mean": Measure(
+        pl.col("value").mean(),
+        "souls",
+        comment="Mean cumulative value, which one runaway game moves more than the median.",
+        direction="maximize",
+    ),
+    "games": Measure(pl.len(), "count", comment="Games that lasted to the mark.", missing="zero"),
+}
+
+
+@view(
+    grain=("match_id", "account_id", "mark_s"),
+    dimensions=CUMULATIVE_MARK_DIMENSIONS,
+    measures=CUMULATIVE_MARK_MEASURES,
+)
+def cumulative_marks(
+    games: pl.LazyFrame,
+    stat: str,
+    marks_s: Sequence[int],
+) -> MetricView:
+    """One row per game and mark holding the cumulative value of one compare stat.
+
+    - the value is the last sample at or before the mark, so it never counts
+      a snapshot twice the way summing gains would
+    - a game that ended before a mark contributes no row for it, which is
+      what keeps a short game out of the later medians
+    """
+    return MetricView(source=lambda: cumulative_at(games, stat, marks_s))
+
+
+MILESTONE_DIMENSIONS = {
+    "match_id": Dimension(pl.col("match_id")),
+    "account_id": Dimension(pl.col("account_id")),
+    "target": Dimension(pl.col("target"), comment="The cumulative value the game had to reach."),
+}
+
+MILESTONE_MEASURES = {
+    "minutes": Measure(
+        pl.col("target_time_s").median() / 60,
+        "minutes",
+        comment="Median minute the target was first crossed, over the games that reached it.",
+        direction="minimize",
+    ),
+    "games": Measure(
+        pl.len(), "count", comment="Games that reached the target at all.", missing="zero"
+    ),
+}
+
+
+@view(
+    grain=("match_id", "account_id", "target"),
+    dimensions=MILESTONE_DIMENSIONS,
+    measures=MILESTONE_MEASURES,
+)
+def milestone_games(
+    games: pl.LazyFrame,
+    targets: Sequence[int],
+    stat: str = "souls",
+) -> MetricView:
+    """One row per game and target holding when that game first crossed it.
+
+    - times are interpolated between snapshots, so a target lands between
+      two samples rather than at whichever one happened to pass it
+    - a game that never reached a target contributes no row for it, which is
+      why games has to be read alongside the minutes
+    """
+    return MetricView(source=lambda: cumulative_stat_target_times(games, targets, stat))
 
 
 def cumulative_stat_target_times(

@@ -54,6 +54,7 @@ def daily_record(
 
     - unscored matches stay out of every count, unscored_record has those
     - abandons counts the games where anyone abandoned
+    - win_rate is a proportion, not a percent, like the measure it comes from
     - lobby is the average lobby rating label, averaged in subrank steps
     - subrank_sum and rated_games are the raw pieces, for an overall average
     """
@@ -123,7 +124,6 @@ def daily_record(
                 "rated_games",
             ).cast(pl.Int32),
             pl.col("abandons").fill_null(0).cast(pl.Int32),
-            (pl.col("win_rate") * 100).alias("win_rate"),
         )
         .with_columns(skill_rating("lobby_badge").alias("lobby"))
         .drop("lobby_badge")
@@ -191,15 +191,20 @@ RECORD_GAMES_DIMENSIONS = {
 _SCORED_SUBRANK = pl.when(_SCORED).then(pl.col("lobby_subrank"))
 
 RECORD_GAMES_MEASURES = {
-    "games": Measure(pl.len(), "count", comment="Every game, scored or not."),
-    "scored_games": Measure(_SCORED.sum(), "count", comment="The win rate denominator."),
-    "wins": Measure((pl.col("won") & _SCORED).sum(), "count", direction="maximize"),
-    "losses": Measure((~pl.col("won") & _SCORED).sum(), "count", direction="minimize"),
+    "games": Measure(pl.len(), "count", comment="Every game, scored or not.", missing="zero"),
+    "scored_games": Measure(
+        _SCORED.sum(), "count", comment="The win rate denominator.", missing="zero"
+    ),
+    "wins": Measure((pl.col("won") & _SCORED).sum(), "count", direction="maximize", missing="zero"),
+    "losses": Measure(
+        (~pl.col("won") & _SCORED).sum(), "count", direction="minimize", missing="zero"
+    ),
     "net": Measure(
         lambda measure: measure["wins"].cast(pl.Int64) - measure["losses"].cast(pl.Int64),
         "count",
         comment="Wins minus losses.",
         direction="maximize",
+        missing="zero",
     ),
     "cum_net": Measure(
         lambda measure: measure["net"],
@@ -220,22 +225,26 @@ RECORD_GAMES_MEASURES = {
         "count",
         comment="MVP awards in scored games.",
         direction="maximize",
+        missing="zero",
     ),
     "key_players": Measure(
         ((pl.col("mvp_rank") >= 2) & _SCORED).sum(),
         "count",
         comment="Key Player awards in scored games.",
         direction="maximize",
+        missing="zero",
     ),
     "subrank_sum": Measure(
         _SCORED_SUBRANK.sum(),
         "subrank",
         comment="Additive lobby subrank total over scored games for recomputing an overall lobby average.",
+        missing="zero",
     ),
     "rated_games": Measure(
         _SCORED_SUBRANK.count(),
         "count",
         comment="Scored games that carried a lobby badge average.",
+        missing="zero",
     ),
     "lobby_subrank": Measure(
         lambda measure: try_divide(measure["subrank_sum"], measure["rated_games"]),

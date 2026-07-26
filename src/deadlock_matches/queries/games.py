@@ -15,11 +15,17 @@ from deadlock_matches.queries.core import (
     scan,
     table_exists,
 )
-from deadlock_matches.queries.delivery import hero_damage
+from deadlock_matches.queries.delivery import hero_damage, with_delivery
 from deadlock_matches.queries.items import _item_windows, item_events_effective
-from deadlock_matches.queries.labels import hero_name, stack_class_name, stack_name
+from deadlock_matches.queries.labels import (
+    hero_name,
+    stack_class_name,
+    stack_name,
+    with_damage_source_name,
+)
 from deadlock_matches.queries.semantic import (
     Dimension,
+    Format,
     Join,
     Measure,
     MetricView,
@@ -33,6 +39,8 @@ from deadlock_matches.queries.stats import _final_custom_values
 if TYPE_CHECKING:
     from collections.abc import Sequence
 
+
+FLAT = Format(group=True, small=2)
 
 STACK_GAME_DIMENSIONS = {
     "match_id": Dimension(pl.col("match_id")),
@@ -49,11 +57,13 @@ STACK_GAME_MEASURES = {
         pl.col("value").sum(),
         "count",
         comment="Sum of final counters; the counter meaning depends on the ability or item.",
+        missing="zero",
     ),
     "games": Measure(
         pl.col("match_id").n_unique(),
         "count",
         comment="Distinct matches that recorded the counter.",
+        missing="zero",
     ),
     "mean": Measure(
         pl.col("value").mean(),
@@ -97,16 +107,19 @@ BUFF_GAME_MEASURES = {
         pl.col("count").filter(pl.col("permanent")).sum(),
         "count",
         comment="Permanent buffs the player finished with, whatever they were picked up from.",
+        missing="zero",
     ),
     "bridge": Measure(
         pl.col("count").filter(~pl.col("permanent")).sum(),
         "count",
         comment="Temporary bridge buffs claimed.",
+        missing="zero",
     ),
     "games": Measure(
         pl.col("match_id").n_unique(),
         "count",
         comment="Distinct matches that recorded a buff in the group.",
+        missing="zero",
     ),
 }
 
@@ -189,16 +202,19 @@ HERO_DAMAGE_MEASURES = {
         "count",
         comment="Selected stat summed over detail rows.",
         direction="maximize",
+        missing="zero",
     ),
     "games": Measure(
         pl.col("match_id").n_unique(),
         "count",
         comment="Distinct matches with a detail row in the group.",
+        missing="zero",
     ),
     "targets": Measure(
         pl.col("target_account_id").n_unique(),
         "count",
         comment="Distinct enemy heroes the group landed on.",
+        missing="zero",
     ),
     "per_game": Measure(
         lambda measure: try_divide(measure["total"], measure["games"]),
@@ -211,18 +227,21 @@ HERO_DAMAGE_MEASURES = {
         "count",
         comment="Body shots and headshots together.",
         direction="maximize",
+        missing="zero",
     ),
     "gun_body": Measure(
         _DAMAGE.filter(_BULLET & ~_HEADSHOT).sum(),
         "count",
         comment="Bullet damage from shots that were not headshots.",
         direction="maximize",
+        missing="zero",
     ),
     "gun_headshot": Measure(
         _DAMAGE.filter(_BULLET & _HEADSHOT).sum(),
         "count",
         comment="Bullet damage from the _crit sources. gun_body holds the rest.",
         direction="maximize",
+        missing="zero",
     ),
 }
 
@@ -274,22 +293,88 @@ DAMAGE_SOURCE_DIMENSIONS = {
 
 _AMOUNT = pl.col("amount")
 
+_DEALT = _AMOUNT != 0
+
+_DEALT_GAMES = pl.struct("match_id", "account_id").filter(_DEALT)
+
 DAMAGE_SOURCE_MEASURES = {
     "total": Measure(
         _AMOUNT.sum(),
         "count",
         comment="Selected stat summed over detail rows.",
         direction="maximize",
+        missing="zero",
     ),
     "games": Measure(
-        pl.col("match_id").n_unique(),
+        _DEALT_GAMES.n_unique(),
         "count",
-        comment="Distinct matches where the source recorded the selected stat.",
+        comment="Distinct player-games where the source recorded the selected stat.",
+        missing="zero",
+    ),
+    "minutes": Measure(
+        pl.col("game_minutes").filter(_DEALT).filter(_DEALT_GAMES.is_first_distinct()).sum(),
+        "minutes",
+        comment="Combined length of the games where the source recorded the selected stat.",
+        missing="zero",
     ),
     "per_game": Measure(
         lambda measure: try_divide(measure["total"], measure["games"]),
         "ratio",
         comment="Selected stat per match where the source appeared.",
+        format=FLAT,
+        direction="maximize",
+    ),
+    "per_min": Measure(
+        lambda measure: try_divide(measure["total"], measure["minutes"]),
+        "ratio",
+        comment="Selected stat per minute of the games where the source appeared.",
+        format=FLAT,
+        direction="maximize",
+    ),
+    "owned_minutes": Measure(
+        pl.col("owned_minutes").sum(),
+        "minutes",
+        comment="Minutes an item source was owned, counting the games where it dealt nothing.",
+        missing="zero",
+    ),
+    "per_min_owned": Measure(
+        lambda measure: try_divide(measure["total"], measure["owned_minutes"]),
+        "ratio",
+        comment="Item sources only, and null for a gun or an ability, which nobody buys.",
+        format=FLAT,
+        direction="maximize",
+    ),
+    "outlay": Measure(
+        pl.col("effective_cost").sum(),
+        "souls",
+        comment="Effective souls put into an item source, its era price less its components.",
+        missing="zero",
+    ),
+    "per_1k": Measure(
+        lambda measure: try_divide(measure["total"] * 1000, measure["outlay"]),
+        "ratio",
+        comment="Selected stat per 1,000 souls of effective outlay, item sources only.",
+        format=FLAT,
+        direction="maximize",
+    ),
+    "share": Measure(
+        lambda measure: try_divide(measure["total"], pl.col("window_total").max()),
+        "proportion",
+        comment="The share of everything the window recorded, so the sources add to one.",
+        direction="maximize",
+    ),
+    "per_window_game": Measure(
+        lambda measure: try_divide(measure["total"], pl.col("window_games").max()),
+        "ratio",
+        comment="Selected stat per game of the hero, counting the games the source sat out.",
+        format=FLAT,
+        direction="maximize",
+    ),
+    "per_window_min": Measure(
+        lambda measure: try_divide(measure["total"], pl.col("window_minutes").max()),
+        "ratio",
+        comment="Selected stat per minute of every game of the hero, not only its own games.",
+        format=FLAT,
         direction="maximize",
     ),
     "gun": Measure(
@@ -297,25 +382,32 @@ DAMAGE_SOURCE_MEASURES = {
         "count",
         comment="Selected stat from gun shots only.",
         direction="maximize",
+        missing="zero",
     ),
     "abilities": Measure(
         _AMOUNT.filter(pl.col("delivery") == "ability").sum(),
         "count",
         comment="Selected stat from ability casts only.",
         direction="maximize",
+        missing="zero",
     ),
     "items": Measure(
         _AMOUNT.filter(pl.col("delivery").str.ends_with("_proc")).sum(),
         "count",
         comment="Gun-triggered and spirit-triggered item procs together.",
         direction="maximize",
+        missing="zero",
     ),
     "self": Measure(
         pl.col("self_amount").sum(),
         "count",
         comment="Healing or another selected stat whose target was its dealer.",
+        missing="zero",
     ),
 }
+
+
+_SOURCE_KEYS = ("match_id", "account_id", "source_class")
 
 
 def _damage_sources(
@@ -329,6 +421,13 @@ def _damage_sources(
 
     Source normalization and delivery classification live here. Measures
     then aggregate the selected stat by source, delivery, game, or date.
+
+    - the window columns repeat the whole covered game set on every row, so
+      a share or a per game rate divides by every game of the hero rather
+      than by the games the group happened to appear in
+    - an item source keeps a row in a game where it was owned and dealt
+      nothing, which is the only way per_1k divides by every soul spent on
+      it. Those rows carry a zero amount, so games and minutes read them out
     """
     resolved_accounts = _resolved_accounts(accounts)
     hero_name = _resolved_hero_name(hero)
@@ -337,15 +436,12 @@ def _damage_sources(
     if matches is not None:
         predicate &= pl.col("match_id").is_in(list(matches))
 
-    return (
+    detail = (
         hero_damage(stat=stat, tz=tz)
         .filter(predicate)
         .group_by(
             "match_id",
             pl.col("dealer_account_id").alias("account_id"),
-            "hero",
-            "day",
-            "start_local",
             "source_name",
             "source_class",
             "delivery",
@@ -357,6 +453,81 @@ def _damage_sources(
             .sum()
             .alias("self_amount"),
         )
+    )
+    games = _hero_window(hero_name, resolved_accounts, matches, tz)
+    rows = _with_item_facts(detail, games, resolved_accounts, matches)
+
+    return rows.join(games, on=["match_id", "account_id"], how="left").with_columns(
+        pl.col("amount").sum().alias("window_total")
+    )
+
+
+def _hero_window(
+    hero_name: str,
+    accounts: Sequence[int],
+    matches: Sequence[int] | None,
+    tz: str | None,
+) -> pl.LazyFrame:
+    """Take every player-game a damage source view covers with the length of each.
+
+    - the window is the games of the hero, not the games that recorded the
+      selected stat, so heal prevented still divides by every game
+    - the count and the combined minutes ride along on every row rather than
+      arriving by a cross join, which projection pushdown is free to undo
+    """
+    games = (
+        view_frame(my_games(accounts, tz))
+        .filter(pl.col("hero") == hero_name)
+        .select(
+            "match_id",
+            "account_id",
+            "hero",
+            "day",
+            "start_local",
+            (pl.col("matches.duration_s") / 60).alias("game_minutes"),
+        )
+    )
+
+    if matches is not None:
+        games = games.filter(pl.col("match_id").is_in(list(matches)))
+
+    return games.unique(subset=["match_id", "account_id"]).with_columns(
+        pl.len().alias("window_games"),
+        pl.col("game_minutes").sum().alias("window_minutes"),
+    )
+
+
+def _with_item_facts(
+    detail: pl.LazyFrame,
+    games: pl.LazyFrame,
+    accounts: Sequence[int],
+    matches: Sequence[int] | None,
+) -> pl.LazyFrame:
+    """Add the owned minutes and effective outlay of each item source per game.
+
+    - only the source classes the damage rows already hold take part, so an
+      item that never dealt the selected stat never becomes a source of its
+      own
+    - a game where one of them was owned and dealt nothing joins in as a
+      zero amount row, which is what makes the two denominators whole
+    """
+    classes = detail.select("source_class").unique()
+    owned = _owned_game_minutes(classes, games, accounts, matches)
+    outlay = _outlay_game_souls(classes, games, accounts, matches)
+    facts = with_damage_source_name(
+        with_delivery(
+            owned.join(outlay, on=list(_SOURCE_KEYS), how="full", coalesce=True),
+        )
+    )
+
+    return (
+        detail.join(facts, on=list(_SOURCE_KEYS), how="full", coalesce=True)
+        .with_columns(
+            pl.coalesce("source_name", "source_name_right").alias("source_name"),
+            pl.coalesce("delivery", "delivery_right").alias("delivery"),
+            pl.col("amount", "self_amount", "owned_minutes", "effective_cost").fill_null(0),
+        )
+        .drop("category", "source_name_right", "delivery_right")
     )
 
 
@@ -403,74 +574,33 @@ def damage_by_source(
     - stat swaps the figure like hero_damage: damage, healing, mitigated, ...
     """
     accounts = _resolved_accounts(accounts)
-    rows = view_frame(
-        damage_source_games(hero, accounts=accounts, matches=matches, stat=stat),
-        parquet_dir=parquet_dir,
-    ).collect()
-
-    if rows.is_empty():
-        msg = f"no {stat} rows for {hero} on accounts {accounts}"
-        raise ValueError(msg)
-
     sources = summarize(
         damage_source_games,
         by=("source_name", "source_class", "delivery"),
-        measures=("total", "games"),
-        lf=rows.lazy(),
+        measures=(
+            "games",
+            "total",
+            "per_min",
+            "per_min_owned",
+            "per_1k",
+            "share",
+        ),
+        hero=hero,
+        accounts=accounts,
+        matches=matches,
+        stat=stat,
+        parquet_dir=parquet_dir,
     ).collect()
-    source_minutes = (
-        rows.select(
-            "source_name",
-            "source_class",
-            "delivery",
-            "match_id",
-            pl.col("matches.duration_s").alias("duration_s"),
-        )
-        .unique()
-        .group_by("source_name", "source_class", "delivery")
-        .agg((pl.col("duration_s").sum() / 60).alias("minutes"))
-    )
-    sources = sources.join(source_minutes, on=["source_name", "source_class", "delivery"])
 
-    match_ids = (
-        pl.Series("match_id", matches, dtype=pl.Int64).unique()
-        if matches is not None
-        else rows.get_column("match_id").unique()
-    )
-    ids = _proc_item_ids(rows)
-    owned_rows, outlay_rows = pl.collect_all(
-        [
-            _owned_minutes(ids, accounts, match_ids, parquet_dir),
-            _effective_outlay(ids, accounts, match_ids, parquet_dir),
-        ]
-    )
-    grand = sources.get_column("total").sum()
-    owned = {ids[item_id]: minutes for item_id, minutes in owned_rows.iter_rows()}
-    owned_min = (
-        pl.col("source_class").replace_strict(owned, default=None, return_dtype=pl.Float64)
-        if owned
-        else pl.lit(None, dtype=pl.Float64)
-    )
-    outlay = {ids[item_id]: souls for item_id, souls in outlay_rows.iter_rows()}
-    outlay_souls = (
-        pl.col("source_class").replace_strict(outlay, default=None, return_dtype=pl.Float64)
-        if outlay
-        else pl.lit(None, dtype=pl.Float64)
-    )
-    item_row = pl.col("delivery").str.ends_with("_proc")
+    if sources.is_empty():
+        msg = f"no {stat} rows for {hero} on accounts {accounts}"
+        raise ValueError(msg)
 
     return (
-        sources.with_columns(
-            (pl.col("total") / pl.col("minutes")).round(1).alias("per_min"),
-            pl.when(item_row)
-            .then((pl.col("total") / owned_min).round(1))
-            .otherwise(pl.lit(None, dtype=pl.Float64))
-            .alias("per_min_owned"),
-            pl.when(item_row)
-            .then((pl.col("total") / outlay_souls * 1000).round(1))
-            .otherwise(pl.lit(None, dtype=pl.Float64))
-            .alias("per_1k"),
-            (pl.col("total") / grand * 100).round(1).alias("percent"),
+        sources.filter(pl.col("total") != 0)
+        .with_columns(
+            pl.col("per_min", "per_min_owned", "per_1k").round(1),
+            (pl.col("share") * 100).round(1).alias("percent"),
         )
         .select(
             "games",
@@ -486,86 +616,81 @@ def damage_by_source(
     )
 
 
-def _proc_item_ids(rows: pl.DataFrame) -> dict[int, str]:
-    """Map item ids to the proc source classes present in rows.
+def _item_source_class() -> pl.Expr:
+    """Resolve an item id to the engine class name a damage source carries."""
+    names = {item.id: item.class_name for item in items.item_map().values() if item.class_name}
 
-    - a source class resolving to no known item is left out
-    """
-    classes = (
-        rows.select("delivery", "source_class")
-        .filter(pl.col("delivery").str.ends_with("_proc"))
-        .get_column("source_class")
-        .unique()
-        .to_list()
+    return (
+        pl.col("item_id")
+        .replace_strict(names, default=None, return_dtype=pl.String)
+        .alias("source_class")
     )
-    ids = {}
-
-    for source_class in classes:
-        item = items.item_by_class_name(source_class)
-
-        if item is not None:
-            ids[item.id] = source_class
-
-    return ids
 
 
-def _owned_minutes(
-    ids: dict[int, str],
+def _item_predicate(accounts: Sequence[int], matches: Sequence[int] | None) -> pl.Expr:
+    """Cut an item event scan down to the accounts and matches the window covers."""
+    predicate = pl.col("account_id").is_in(list(accounts))
+
+    if matches is not None:
+        predicate &= pl.col("match_id").is_in(list(matches))
+
+    return predicate
+
+
+def _owned_game_minutes(
+    classes: pl.LazyFrame,
+    games: pl.LazyFrame,
     accounts: Sequence[int],
-    match_ids: pl.Series,
-    parquet_dir: str | Path | None,
+    matches: Sequence[int] | None,
 ) -> pl.LazyFrame:
-    """Sum the minutes each item damage source was owned across the given games, lazily.
+    """Sum the minutes each item damage source was owned into one row per game and source.
 
-    - one row per item id, only the item proc sources in ids appear, and the
-      frame stays empty without any
     - ownership windows come from the buys, like the item command: a sold or
       consumed buy ends at sold_time_s, a kept buy at the end of the match
     """
-    if not ids:
-        return pl.LazyFrame(schema={"item_id": pl.Int64, "minutes": pl.Float64})
-
     return (
-        _item_windows(
-            pl.col("item_id").is_in(list(ids))
-            & pl.col("match_id").is_in(match_ids.implode())
-            & pl.col("account_id").is_in(accounts),
-            parquet_dir,
-        )
-        .group_by("item_id")
-        .agg(((pl.col("end_s") - pl.col("game_time_s")).sum() / 60).alias("minutes"))
-        .filter(pl.col("minutes") > 0)
+        _item_windows(_item_predicate(accounts, matches), None)
+        .with_columns(_item_source_class())
+        .join(classes.select("source_class"), on="source_class", how="semi")
+        .join(games.select("match_id", "account_id"), on=["match_id", "account_id"], how="semi")
+        .group_by(*_SOURCE_KEYS)
+        .agg(((pl.col("end_s") - pl.col("game_time_s")).sum() / 60).alias("owned_minutes"))
     )
 
 
-def _effective_outlay(
-    ids: dict[int, str],
+def _outlay_game_souls(
+    classes: pl.LazyFrame,
+    games: pl.LazyFrame,
     accounts: Sequence[int],
-    match_ids: pl.Series,
-    parquet_dir: str | Path | None,
+    matches: Sequence[int] | None,
 ) -> pl.LazyFrame:
-    """Sum the effective souls put into each item damage source across the given games, lazily.
+    """Sum the effective souls put into each item damage source per game and source.
 
-    - one row per item id, only the item proc sources in ids appear
-    - empty when the versioned asset tables are missing
+    - effective means the era price minus the components already paid for,
+      so a tier four item is not charged twice
+    - empty when the versioned asset tables are missing, which leaves per_1k
+      null rather than wrong
     """
-    priced = table_exists("item_history", parquet_dir) and table_exists(
-        "item_component_history", parquet_dir
-    )
+    priced = table_exists("item_history") and table_exists("item_component_history")
 
-    if not ids or not priced:
-        return pl.LazyFrame(schema={"item_id": pl.Int64, "souls": pl.Int64})
+    if not priced:
+        return pl.LazyFrame(
+            schema={
+                "match_id": pl.Int64,
+                "account_id": pl.Int64,
+                "source_class": pl.String,
+                "effective_cost": pl.Int64,
+            }
+        )
 
     return (
-        item_events_effective(parquet_dir)
-        .filter(
-            pl.col("item_id").is_in(list(ids)),
-            pl.col("match_id").is_in(match_ids.implode()),
-            pl.col("account_id").is_in(list(accounts)),
-        )
-        .group_by("item_id")
-        .agg(pl.col("effective_cost").sum().alias("souls"))
-        .filter(pl.col("souls") > 0)
+        item_events_effective()
+        .filter(_item_predicate(accounts, matches))
+        .with_columns(_item_source_class())
+        .join(classes.select("source_class"), on="source_class", how="semi")
+        .join(games.select("match_id", "account_id"), on=["match_id", "account_id"], how="semi")
+        .group_by(*_SOURCE_KEYS)
+        .agg(pl.col("effective_cost").sum())
     )
 
 
@@ -781,17 +906,20 @@ SOUL_SOURCE_MEASURES = {
         "souls",
         comment="Gross souls including secured orb portions, not final net worth.",
         direction="maximize",
+        missing="zero",
     ),
     "secured_orbs": Measure(
         pl.col("secured_orbs").sum(),
         "souls",
         comment="The part of those souls that came from securing deniable orbs.",
         direction="maximize",
+        missing="zero",
     ),
     "games": Measure(
         pl.col("match_id").n_unique(),
         "count",
         comment="Distinct matches where the source paid nonzero souls.",
+        missing="zero",
     ),
     "souls_per_game": Measure(
         lambda measure: try_divide(measure["souls"], measure["games"]),
@@ -809,6 +937,7 @@ SOUL_SOURCE_MEASURES = {
             _SOULS.filter(pl.col("group") == group).sum(),
             "souls",
             direction="maximize",
+            missing="zero",
         )
         for group in ("waves", "roaming", "combat", "objectives")
     },
@@ -978,6 +1107,27 @@ COMBAT_COUNTERS = (
     (None, "Parry Miss", "missed_parries"),
 )
 
+COMBAT_GAME_COUNTERS = (
+    *COMBAT_COUNTERS,
+    ("Enemy Hero Accuracy - Incoming", "Shots", "incoming_shots"),
+    ("Enemy Hero Accuracy - Incoming", "Hits", "incoming_hits"),
+)
+
+
+def _counter_totals(counters: Sequence[tuple[str | None, str, str]]) -> list[pl.Expr]:
+    """Sum each named custom stat into a column of its own."""
+    return [
+        pl.col("value")
+        .filter(
+            pl.col("group").is_null() if group is None else pl.col("group") == group,
+            pl.col("stat") == stat,
+        )
+        .sum()
+        .cast(pl.Int64)
+        .alias(name)
+        for group, stat, name in counters
+    ]
+
 
 def combat_hero_records(
     accounts: Sequence[int] | None = None,
@@ -1010,19 +1160,7 @@ def combat_hero_records(
     finals = _final_custom_values(
         scan("custom_stats", parquet_dir).filter(pl.col("account_id").is_in(accounts))
     ).join(games, on=["match_id", "account_id"])
-    totals = finals.group_by("hero").agg(
-        *[
-            pl.col("value")
-            .filter(
-                pl.col("group").is_null() if group is None else pl.col("group") == group,
-                pl.col("stat") == stat,
-            )
-            .sum()
-            .cast(pl.Int64)
-            .alias(name)
-            for group, stat, name in COMBAT_COUNTERS
-        ]
-    )
+    totals = finals.group_by("hero").agg(*_counter_totals(COMBAT_COUNTERS))
     counters = [name for _, _, name in COMBAT_COUNTERS]
 
     return (
@@ -1068,20 +1206,7 @@ def combat_game_records(
         .join(mine.select("match_id", "account_id"), on=["match_id", "account_id"], how="semi")
     )
 
-    split = finals.group_by("match_id", "account_id").agg(
-        *[
-            pl.col("value")
-            .filter(
-                pl.col("group").is_null() if group is None else pl.col("group") == group,
-                pl.col("stat") == stat,
-            )
-            .sum()
-            .cast(pl.Int64)
-            .alias(name)
-            for group, stat, name in COMBAT_COUNTERS
-        ]
-    )
-
+    split = finals.group_by("match_id", "account_id").agg(*_counter_totals(COMBAT_COUNTERS))
     counters = [name for _, _, name in COMBAT_COUNTERS]
     games = (
         mine.join(split, on=["match_id", "account_id"], how="left")
@@ -1097,3 +1222,163 @@ def combat_game_records(
     )
 
     return _collect_game_records(games, hero, accounts)
+
+
+COMBAT_GAME_DIMENSIONS = {
+    "match_id": Dimension(pl.col("match_id")),
+    "account_id": Dimension(pl.col("account_id")),
+    "hero": Dimension(pl.col("hero")),
+    "won": Dimension(pl.col("won")),
+    "day": Dimension(pl.col("day"), comment="Local date, not the UTC date."),
+    "week": Dimension(pl.col("start_local").dt.strftime("%G-W%V")),
+    "month": Dimension(pl.col("start_local").dt.strftime("%Y-%m")),
+}
+
+_PER_GAME = Format(decimals=1, group=True)
+
+
+def _counter(column: str, comment: str, direction: str = "") -> Measure:
+    """Sum one fight counter across player-games."""
+    return Measure(
+        pl.col(column).sum(),
+        "count",
+        comment=comment,
+        direction=direction,
+        missing="zero",
+    )
+
+
+COMBAT_GAME_MEASURES = {
+    "games": Measure(
+        pl.len(),
+        "count",
+        comment="Every game of the hero, tracked counters or not.",
+        missing="zero",
+    ),
+    "shots": _counter("shots", "Shots fired at enemy heroes, never at troopers."),
+    "hits": _counter("hits", "Shots that landed on an enemy hero.", "maximize"),
+    "headshots": _counter("headshots", "Hits that landed on the head.", "maximize"),
+    "incoming_shots": _counter("incoming_shots", "Shots enemy heroes fired at the player."),
+    "incoming_hits": _counter("incoming_hits", "Enemy shots that landed.", "minimize"),
+    "parries": _counter("parries", "Counterspell auto-parries included.", "maximize"),
+    "missed_parries": _counter("missed_parries", "Parry attempts that whiffed.", "minimize"),
+    "gun_damage": _counter(
+        "gun_damage", "Bullet damage to heroes, headshots included.", "maximize"
+    ),
+    "hit_rate": Measure(
+        lambda measure: try_divide(measure["hits"], measure["shots"]),
+        "proportion",
+        comment="Hits over shots at enemy heroes, far below the all-target accuracy.",
+        direction="maximize",
+    ),
+    "headshot_rate": Measure(
+        lambda measure: try_divide(measure["headshots"], measure["hits"]),
+        "proportion",
+        comment="Headshots over hits, so it reads the aim inside the shots that landed.",
+        direction="maximize",
+    ),
+    "incoming_hit_rate": Measure(
+        lambda measure: try_divide(measure["incoming_hits"], measure["incoming_shots"]),
+        "proportion",
+        comment="How often enemy fire lands on the player, where lower is the harder target.",
+        direction="minimize",
+    ),
+    "shots_per_game": Measure(
+        lambda measure: try_divide(measure["shots"], measure["games"]),
+        "ratio",
+        comment="How much the player shoots, whether or not the shots land.",
+        format=_PER_GAME,
+    ),
+    "gun_damage_per_game": Measure(
+        lambda measure: try_divide(measure["gun_damage"], measure["games"]),
+        "ratio",
+        format=_PER_GAME,
+        direction="maximize",
+    ),
+    "gun_damage_per_hit": Measure(
+        lambda measure: try_divide(measure["gun_damage"], measure["hits"]),
+        "ratio",
+        comment="What one landed bullet is worth, which the build and the target decide.",
+        format=_PER_GAME,
+        direction="maximize",
+    ),
+    "parries_per_game": Measure(
+        lambda measure: try_divide(measure["parries"], measure["games"]),
+        "ratio",
+        format=_PER_GAME,
+        direction="maximize",
+    ),
+    "missed_parries_per_game": Measure(
+        lambda measure: try_divide(measure["missed_parries"], measure["games"]),
+        "ratio",
+        format=_PER_GAME,
+        direction="minimize",
+    ),
+}
+
+
+@view(
+    grain=("match_id", "account_id"),
+    dimensions=COMBAT_GAME_DIMENSIONS,
+    measures=COMBAT_GAME_MEASURES,
+)
+def combat_games(
+    hero: str,
+    accounts: Sequence[int] | None = None,
+    matches: Sequence[int] | None = None,
+    tz: str | None = None,
+) -> MetricView:
+    """One row per game of a hero with the fight counters the game tracks but never shows.
+
+    - shots, hits, and headshots count fire at enemy heroes only, and the
+      incoming pair counts enemy fire at the player
+    - parries include Counterspell auto-parries
+    - gun damage is the bullet damage to heroes of the same game, so the
+      damage per hit divides two figures that cover the same shots
+    - a game with no tracked counters keeps zeros rather than dropping out,
+      which is what makes the per game rates divide by every game
+    """
+    return MetricView(source=lambda: _combat_game_rows(hero, accounts, matches, tz))
+
+
+def _combat_game_rows(
+    hero: str,
+    accounts: Sequence[int] | None,
+    matches: Sequence[int] | None,
+    tz: str | None,
+) -> pl.LazyFrame:
+    """Join the fight counters and the gun damage onto every game of a hero."""
+    resolved = _resolved_accounts(accounts)
+    mine = _hero_game_rows(hero, resolved, None, tz, None, None)
+
+    if matches is not None:
+        mine = mine.filter(pl.col("match_id").is_in(list(matches)))
+
+    keys = mine.select("match_id", "account_id")
+    finals = _final_custom_values(
+        scan("custom_stats").join(keys, on=["match_id", "account_id"], how="semi")
+    )
+    counters = finals.group_by("match_id", "account_id").agg(*_counter_totals(COMBAT_GAME_COUNTERS))
+    names = [name for _, _, name in COMBAT_GAME_COUNTERS]
+    rows = mine.join(counters, on=["match_id", "account_id"], how="left").join(
+        _gun_damage_games(resolved, matches), on=["match_id", "account_id"], how="left"
+    )
+
+    return rows.with_columns(pl.col(*names, "gun_damage").fill_null(0))
+
+
+def _gun_damage_games(
+    accounts: Sequence[int],
+    matches: Sequence[int] | None,
+) -> pl.LazyFrame:
+    """Sum the bullet damage to heroes of each player-game."""
+    if not table_exists("damage"):
+        return pl.LazyFrame(
+            schema={"match_id": pl.Int64, "account_id": pl.Int64, "gun_damage": pl.Int64}
+        )
+
+    return summarize(
+        hero_damage_games(accounts=accounts, matches=matches),
+        by=("match_id", "account_id"),
+        measures=("gun",),
+    ).rename({"gun": "gun_damage"})

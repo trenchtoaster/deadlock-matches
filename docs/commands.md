@@ -1157,10 +1157,27 @@ deadlock compare souls --hero Mirage
 - `--since 2026-06-30` keeps only your games from that date, useful when a patch changed the soul economy and old games would drag your median
 - `--pool-since 2026-06-30` also filters the tracked comparison pool by match date. Use both flags when you want recent form vs recent form
 - `--against tracked1` compares you against only that tracked player. It takes tracked player names or account IDs, comma-separated for several
-- `compare souls --milestones` is the `souls --milestones` table against the pool: the median minute each side first reaches every net-worth mark, with a Behind column for how many minutes later you get there
+- `compare souls --milestones` is the `souls --milestones` table against the pool: the median minute each side first reaches every net-worth mark, with a Gap column for how many minutes later you get there
 
 ```
-You (111222333, 50 games) vs 3 tracked Mirage players (30 games): souls
+You (111222333, 50 Mirage games) vs 3 tracked Mirage players (30 Mirage games): souls
+
+  source          6m gap   10m gap   15m gap   20m gap   25m gap    you@20m   them@20m
+  troopers          -158      -252    -1,288    -1,510    -1,895      9,257     10,768
+  jungle             -62      -168      -734    -1,016    -1,315      1,586      2,602
+  breakables         +56       +67      +176      +292      +441      1,218        925
+  rift_urn            +0        +0      -247      +216      +352        648        432
+  deny_souls          -6       -34       -38       -48       -59         72        120
+  combat            -458      -642    -1,042    -1,721    -2,128      2,234      3,955
+  objectives          +0      -375      -154      -197      -392        923      1,120
+  catch_up            +0       +15      +218      +438      +661        438          0
+  other               +0        +0        +0        +0        +0          0          0
+  souls             -485    -1,447    -2,152    -3,076    -4,252     17,665     20,742
+
+  souls is net worth. It runs a little over the other rows summed, the game
+  credits some income (sell refunds and similar) to no source
+
+Souls over time
 
   Player             Games  Rank  Last download   Avg/min  Med/min
   you                   50     -              -       978      961
@@ -1190,7 +1207,7 @@ deadlock compare souls --hero Mirage --milestones
   Minutes to reach a net worth, median across games
   You: main, 64 Mirage games     Them: 49 Mirage games
 
-    Souls      You     Them   Behind    Games
+    Souls      You     Them      Gap    Games
      1600      2.8      2.4     +0.3    64/49
      3200      5.6      4.6     +1.0    64/48
      4800      7.7      6.5     +1.2    63/48
@@ -1205,6 +1222,8 @@ deadlock compare souls --hero Mirage --milestones --against tracked1
 
 ```
 deadlock compare damage --hero Mirage --against tracked1 --since 2026-07-14 --pool-since 2026-07-14
+
+You (111222333, 58 Mirage games since 2026-07-14) vs 1 tracked Mirage player (9 Mirage games since 2026-07-14): damage
 
 Damage to heroes by source
 
@@ -1222,6 +1241,31 @@ Damage to heroes by source
 Damage over time
 ```
 
+`compare combat` has no interval table and sums the aim counters over the whole window instead:
+
+```
+deadlock compare combat --hero Mirage
+
+You (111222333, 50 Mirage games) vs 3 tracked Mirage players (30 Mirage games): combat
+
+  Player             Games  Rank  Last download
+  tracked1            10     1  2026-07-18
+  tracked2            10     -  2026-07-01
+  tracked3            10     -  2026-07-11
+
+  Metric                        You       Them        Gap
+  Hero hit %                  43.1%      42.2%      +1.0%  better
+  Hero headshot %             16.9%      19.3%      -2.4%  worse
+  Hero shots /game            598.2      943.0     -344.8
+  Gun damage /game          7,316.9   12,669.3   -5,352.5  worse
+  Gun damage /hit              28.3       31.9       -3.5  worse
+  Incoming hit %              23.1%      23.7%      -0.7%  better
+  Parries /game                 0.7        1.6       -0.9  worse
+  Missed parries /game          1.5        3.8       -2.2  better
+```
+
+The sign of a gap does not say which way is good, so each metric that has a good direction reads `better` or `worse` after it. Fewer missed parries and less incoming fire both read `better` off a negative number, and a metric that is good in neither direction, like shot volume, reads as nothing.
+
 ### Movement vs your tracked players
 
 ```
@@ -1235,7 +1279,7 @@ deadlock compare movement --hero Mirage
 - the Tracked averages can blend playstyles: here every tracked player beats the you row on meters and stationary, while in air ranges from 13% to 31% because ground and air Mirages are both viable
 
 ```
-You (111222333, 50 games) vs 3 tracked Mirage players (34 games): movement
+You (111222333, 50 Mirage games) vs 3 tracked Mirage players (34 Mirage games): movement
 
   Player             Games  Rank  Last download
   tracked1            14     1  2026-07-01
@@ -1243,14 +1287,14 @@ You (111222333, 50 games) vs 3 tracked Mirage players (34 games): movement
   tracked3             10    23  2026-07-01
 
   Metric                        You  Tracked      Gap
-  meters /min                 388.3    430.0    +41.7
-  stationary %                  9.9      7.1     -2.8
-  slide %                       3.9      8.3     +4.4
-  in air %                      8.1     21.2    +13.1
-  zipline %                     6.7      8.5     +1.8
-  fighting players %           24.3     26.7     +2.4
-  ground dashes /min            1.7      2.4     +0.7
-  air dashes /min               0.2      0.8     +0.6
+  meters /min                 388.3    430.0    -41.7
+  stationary %                  9.9      7.1     +2.8
+  slide %                       3.9      8.3     -4.4
+  in air %                      8.1     21.2    -13.1
+  zipline %                     6.7      8.5     -1.8
+  fighting players %           24.3     26.7     -2.4
+  ground dashes /min            1.7      2.4     -0.7
+  air dashes /min               0.2      0.8     -0.6
 
   Player            Account  Games    Rank   m /min  Stationary   Slide  In air  Zipline  Fighting  Dash/min  Air dash
   you                     -     50       -    388.3        9.9%    3.9%    8.1%     6.7%     24.3%       1.7       0.2

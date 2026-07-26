@@ -8,7 +8,7 @@ import operator
 from collections.abc import Mapping
 from dataclasses import dataclass, field, replace
 from functools import reduce
-from typing import TYPE_CHECKING, Any, Literal
+from typing import TYPE_CHECKING, Any, ClassVar, Literal, Protocol
 
 import polars as pl
 
@@ -79,34 +79,54 @@ class Dimension:
 class Format:
     """How a number is printed, which the unit deliberately never says.
 
-    - percent scales by 100 on the way out, so a proportion stays a
-      proportion everywhere except inside the string
+    - scale multiplies on the way out, so a proportion stays a proportion
+      everywhere except inside the string, and game units print as meters
+      without any column ever holding meters
     - a measure that declares no format gets the one its unit implies,
       which is what stops a percent being scaled at one call site and
       missed at another
+    - small keeps decimals a column of whole numbers would otherwise round
+      away, so a source worth four a minute does not print beside one worth
+      nine thousand as though both were whole
     """
 
     decimals: int = 0
-    percent: bool = False
+    scale: float = 1.0
     group: bool = False
     prefix: str = ""
     suffix: str = ""
+    small: int = 0
 
-    def render(self, value: float | None, blank: str = "") -> str:
-        """Print one value, or blank when it is null."""
+    SMALL_BELOW: ClassVar[int] = 10
+
+    def places(self, scaled: float) -> int:
+        """Count the decimals one value prints with."""
+        if not self.small or abs(scaled) >= self.SMALL_BELOW:
+            return self.decimals
+
+        return self.decimals if abs(scaled - round(scaled)) < 1e-9 else self.small
+
+    def render(self, value: float | None, blank: str = "", *, sign: bool = False) -> str:
+        """Print one value, or blank when it is null.
+
+        - sign keeps a leading + on a positive number, which a gap column
+          needs and a plain value column does not
+        """
         if value is None:
             return blank
 
-        scaled = value * 100 if self.percent else value
+        scaled = value * self.scale
         separator = "," if self.group else ""
+        flag = "+" if sign else ""
 
-        return f"{self.prefix}{scaled:{separator}.{self.decimals}f}{self.suffix}"
+        return f"{self.prefix}{scaled:{flag}{separator}.{self.places(scaled)}f}{self.suffix}"
 
 
 _UNIT_FORMATS = {
     "badge": Format(),
     "count": Format(group=True),
-    "proportion": Format(decimals=1, percent=True, suffix="%"),
+    "minutes": Format(decimals=1),
+    "proportion": Format(decimals=1, scale=100, suffix="%"),
     "ratio": Format(decimals=2),
     "souls": Format(group=True),
     "subrank": Format(decimals=1),
@@ -120,6 +140,8 @@ SEMIADDITIVE = frozenset({"first", "last"})
 RANGES = frozenset({"cumulative"})
 
 DIRECTIONS = frozenset({"maximize", "minimize"})
+
+MISSING_POLICIES = frozenset({"null", "zero"})
 
 
 @dataclass(frozen=True)
@@ -202,6 +224,9 @@ class Measure:
     - direction says which way is good, which a gap is meaningless without.
       It describes the measure, never the delta, so turning a sign into good
       or bad news is left to whatever prints it
+    - missing says what an absent group contributes in compare. Counts and
+      sums use "zero"; rates, means, medians, extrema, and windowed values
+      keep the safe "null" default
     """
 
     expr: pl.Expr | Callable[[Mapping[str, pl.Expr]], pl.Expr]
@@ -212,6 +237,7 @@ class Measure:
     format: Format | None = None
     window: Window | None = None
     direction: str = ""
+    missing: Literal["null", "zero"] = "null"
 
     def __post_init__(self) -> None:
         """Reject a unit or a direction outside the known vocabulary."""
@@ -223,6 +249,11 @@ class Measure:
         if self.direction and self.direction not in DIRECTIONS:
             known = ", ".join(sorted(DIRECTIONS))
             msg = f"unknown direction {self.direction!r}; available: {known}"
+            raise ValueError(msg)
+
+        if self.missing not in MISSING_POLICIES:
+            known = ", ".join(sorted(MISSING_POLICIES))
+            msg = f"unknown missing policy {self.missing!r}; available: {known}"
             raise ValueError(msg)
 
     @property
@@ -370,6 +401,21 @@ def check_windows(measures: Mapping[str, Measure], owner: str) -> None:
         msg = f"{owner}: measures declare {len(windows)} different semiadditive windows, pick one"
         raise ValueError(msg)
 
+    window = next(iter(windows))
+    different = sorted(
+        name
+        for name, measure in measures.items()
+        if measure.window is not None and measure.window != window
+    )
+
+    if different:
+        msg = (
+            f"{owner}: measures {different} declare a different window while others are "
+            "semiadditive. The collapse applies to the whole query, so every measure has "
+            "to declare the same window."
+        )
+        raise ValueError(msg)
+
     plain = sorted(name for name, measure in measures.items() if measure.window is None)
 
     if plain:
@@ -487,15 +533,31 @@ class MetricView:
         return self.name or "view"
 
     def dimension(self, name: str) -> Dimension:
-        """Look up one dimension by its name or a synonym, listing the valid names otherwise."""
+        """Look up one dimension by its name or a synonym.
+
+        - an unknown name raises with the valid ones listed
+        """
         return _field(self.dimensions, name, self.label, "dimension")[1]
 
     def measure(self, name: str) -> Measure:
-        """Look up one measure by its name or a synonym, listing the valid names otherwise."""
+        """Look up one measure by its name or a synonym.
+
+        - an unknown name raises with the valid ones listed
+        """
         return _field(self.measures, name, self.label, "measure")[1]
 
 
-def view_parameters(factory: Callable[..., MetricView]) -> dict[str, inspect.Parameter]:
+class ViewFactory(Protocol):
+    """A named function returning the parameterized half of a metric view."""
+
+    __name__: str
+
+    def __call__(self, *positional: Any, **arguments: Any) -> MetricView:
+        """Bind the parameters and return the source, joins, and filter."""
+        ...
+
+
+def view_parameters(factory: ViewFactory) -> dict[str, inspect.Parameter]:
     """Read a view factory signature as the parameters the view takes.
 
     - parquet_dir is not one of them. Every other argument is a value that
@@ -504,7 +566,7 @@ def view_parameters(factory: Callable[..., MetricView]) -> dict[str, inspect.Par
     - a parameter after a defaulted one must carry a default too, which
       Python enforces for positional parameters but not for keyword-only ones
     """
-    name = getattr(factory, "__name__", str(factory))
+    name = factory.__name__
     parameters: dict[str, inspect.Parameter] = {}
     defaulted = None
 
@@ -576,6 +638,20 @@ class ViewSpec:
             measures=self.measures,
         )
 
+    def dimension(self, name: str) -> Dimension:
+        """Look up one dimension by its name or a synonym.
+
+        - an unknown name raises with the valid ones listed
+        """
+        return _field(self.dimensions, name, self.name, "dimension")[1]
+
+    def measure(self, name: str) -> Measure:
+        """Look up one measure by its name or a synonym.
+
+        - an unknown name raises with the valid ones listed
+        """
+        return _field(self.measures, name, self.name, "measure")[1]
+
     def declared(self) -> MetricView:
         """The declared half alone, for a caller supplying the rows instead of the source.
 
@@ -593,18 +669,20 @@ class ViewSpec:
 
 _VIEWS: dict[str, ViewSpec] = {}
 
+_SPEC_BY_FACTORY: dict[Any, ViewSpec] = {}
+
 
 def view(
     *,
     grain: Sequence[str],
     dimensions: Mapping[str, Dimension],
     measures: Mapping[str, Measure],
-) -> Callable[[Callable[..., MetricView]], Callable[..., MetricView]]:
+) -> Callable[[ViewFactory], Callable[..., MetricView]]:
     """Register a factory that binds a metric view over a source and its joins.
 
     - the factory returns the parameterized half, a MetricView carrying
       source, joins, and filter, and the declared half is added here
-    - marking the factory means summarize can tell a view from any other
+    - registering the wrapper means summarize can tell a view from any other
       callable without calling it to find out
     """
     if not grain:
@@ -615,8 +693,8 @@ def view(
         msg = "a metric view needs at least one measure"
         raise ValueError(msg)
 
-    def decorate(factory: Callable[..., MetricView]) -> Callable[..., MetricView]:
-        name = getattr(factory, "__name__")  # noqa: B009
+    def decorate(factory: ViewFactory) -> Callable[..., MetricView]:
+        name = factory.__name__
 
         if name in _VIEWS:
             msg = f"view {name!r} is already registered"
@@ -640,7 +718,8 @@ def view(
         def build(*positional: Any, **arguments: Any) -> MetricView:
             return spec.build(*positional, **arguments)
 
-        setattr(build, "__view__", spec)  # noqa: B010
+        _SPEC_BY_FACTORY[build] = spec
+
         return build
 
     return decorate
@@ -661,7 +740,7 @@ def view_spec(source: Any) -> ViewSpec | None:
         return _VIEWS.get(source)
 
     if callable(source):
-        return getattr(source, "__view__", None)
+        return _SPEC_BY_FACTORY.get(source)
 
     return None
 
@@ -774,6 +853,9 @@ def describe_views(name: str | None = None) -> str:
         for key, measure in measures.items():
             notes = [*_naming_notes(measure)]
 
+            if measure.missing == "zero":
+                notes.append("[zero if missing]")
+
             if measure.direction:
                 notes.append(f"[{measure.direction}]")
 
@@ -863,6 +945,17 @@ def _referenced(expressions: Sequence[pl.Expr]) -> set[str]:
         names |= set(expression.meta.root_names())
 
     return names
+
+
+def _filtered_dimensions(
+    dimensions: Mapping[str, Dimension], predicates: Sequence[pl.Expr]
+) -> dict[str, Dimension]:
+    """The dimensions a filter names directly, which have to be columns before it runs.
+
+    - only a raw expression lands here. A value filter is built from the
+      expression the dimension declares, so it already reads source columns
+    """
+    return {name: dimensions[name] for name in _referenced(predicates) if name in dimensions}
 
 
 def _callable_frame(metric_view: MetricView, source: Callable[[], pl.LazyFrame]) -> pl.LazyFrame:
@@ -1145,7 +1238,9 @@ def _summarize_view(
     aggregates = _named_aggregates(chosen)
     group, grouped = _named_dimensions(metric_view.dimensions, by, metric_view.label)
     window = collapsing_window(dict(chosen))
-    needed = _referenced([*predicates, *aggregates, *grouped])
+    filtered = _filtered_dimensions(metric_view.dimensions, predicates)
+    needed = _referenced([*predicates, *aggregates, *grouped]) - set(filtered)
+    needed |= _referenced([dimension.expr for dimension in filtered.values()])
 
     if window is not None:
         needed |= {*window.orders, *window.partition}
@@ -1156,11 +1251,14 @@ def _summarize_view(
     else:
         lazy = build_view_frame(metric_view, needed, scan)
 
-    for predicate in predicates:
-        lazy = lazy.filter(predicate)
+    if filtered:
+        lazy = lazy.with_columns(dimension.expr.alias(name) for name, dimension in filtered.items())
 
     if window is not None:
         lazy = _collapse_series(lazy, window)
+
+    for predicate in predicates:
+        lazy = lazy.filter(predicate)
 
     if not group:
         return lazy.select(aggregates)
@@ -1257,7 +1355,7 @@ class Scope:
     lf: pl.LazyFrame | None = field(default=None, repr=False, compare=False)
 
     def __post_init__(self) -> None:
-        """Reject an unnamed scope, a collected row set, or a frame handed in with arguments."""
+        """Reject an unnamed scope, a collected row set, or conflicting frame inputs."""
         if not self.name:
             msg = "a compare scope needs a name, it prefixes every column that side contributes"
             raise ValueError(msg)
@@ -1267,22 +1365,41 @@ class Scope:
 
         _lazy_rows(f"scope {self.name!r}", self.lf)
 
+        if self.parquet_dir is not None:
+            msg = f"scope {self.name!r} supplies lf, so parquet_dir would be ignored"
+            raise ValueError(msg)
+
         if self.arguments:
             names = ", ".join(sorted(self.arguments))
             msg = f"scope {self.name!r} supplies lf, so it cannot also take: {names}"
             raise ValueError(msg)
 
 
-def _compare_fields(
+def view_fields(
     source: str | Callable[..., Any] | MetricView,
 ) -> tuple[str, Mapping[str, Dimension], Mapping[str, Measure]]:
-    """Read the declared half a comparison needs, without binding the parameters of either side."""
+    """Read what a view declares without binding the parameters of either side.
+
+    - a comparison needs it before it builds anything, and so does whatever
+      prints the result, which reads the formats and directions off here
+    """
     if isinstance(source, MetricView):
         return source.label, source.dimensions, source.measures
 
     spec = semantic_spec(source)
 
     return spec.name, spec.dimensions, spec.measures
+
+
+def view_measure(source: str | Callable[..., Any] | MetricView, name: str) -> Measure:
+    """Look up one declared measure of a view by its name or a synonym.
+
+    - what a report reads to print a number the way its measure says to,
+      instead of respelling the scale and the decimals at the call site
+    """
+    owner, _, measures = view_fields(source)
+
+    return _field(measures, name, owner, "measure")[1]
 
 
 def _check_scopes(scopes: Sequence[Scope], owner: str) -> tuple[Scope, Scope]:
@@ -1314,7 +1431,17 @@ def _scope_summary(
     declared: Sequence[str],
 ) -> pl.LazyFrame:
     """Summarize one side and prefix its measure columns with the scope name."""
-    merged = {**(filters or {}), **(scope.filters or {})}
+    owner, dimensions, _ = view_fields(source)
+    merged: dict[str, pl.Expr] = {}
+
+    for narrowed in (filters or {}, scope.filters or {}):
+        for name, value in narrowed.items():
+            dimension_name, dimension = _field(dimensions, name, owner, "dimension")
+            predicate = dimension.filter_expr(value)
+            merged[dimension_name] = (
+                predicate if dimension_name not in merged else merged[dimension_name] & predicate
+            )
+
     result = summarize(
         source,
         by,
@@ -1328,13 +1455,21 @@ def _scope_summary(
     return result.rename({name: f"{scope.name}_{name}" for name in declared})
 
 
-def _signed(column: str, schema: Mapping[str, pl.DataType]) -> pl.Expr:
-    """Read one side of a gap as a signed number that a missing group counts zero for.
+def _signed(
+    column: str,
+    schema: Mapping[str, pl.DataType],
+    *,
+    missing: str,
+) -> pl.Expr:
+    """Read one side of a gap as a signed number, applying its missing-group policy.
 
     - counting measures come back unsigned, and an unsigned subtraction
       wraps instead of going negative, which is the whole point of a gap
     """
-    read = pl.col(column).fill_null(0)
+    read = pl.col(column)
+
+    if missing == "zero":
+        read = read.fill_null(0)
 
     return read.cast(pl.Int64) if schema[column].is_integer() else read
 
@@ -1354,20 +1489,21 @@ def compare(
       from the day by day gaps. So it is an operation on results instead
     - the gap always reads the first scope minus the second, which is the one
       thing five hand rolled compares had each decided separately
-    - every group key either side has survives, and a side missing there
-      contributes nothing, so its own columns stay null while the gap counts
-      it as zero
+    - every group key either side has survives. A "zero" missing policy
+      contributes zero to the gap; the default "null" policy leaves the gap
+      null because an absent group has no rate, mean, median, or extremum
     - direction on a measure says which way is good, and turning that plus
       the sign into good or bad news belongs wherever the gap is printed
     """
-    owner, dimensions, declared_measures = _compare_fields(source)
+    owner, dimensions, declared_measures = view_fields(source)
     left, right = _check_scopes(scopes, owner)
 
     if not measures:
         msg = f"compare({owner}) needs at least one measure"
         raise ValueError(msg)
 
-    names = [declared for declared, _ in _chosen_measures(declared_measures, measures, owner)]
+    chosen = _chosen_measures(declared_measures, measures, owner)
+    names = [declared for declared, _ in chosen]
     group, _ = _named_dimensions(dimensions, by, owner)
     sides = [_scope_summary(source, scope, by, measures, filters, names) for scope in (left, right)]
 
@@ -1379,10 +1515,11 @@ def compare(
 
     schema = joined.collect_schema()
     gaps = [
-        (_signed(f"{left.name}_{name}", schema) - _signed(f"{right.name}_{name}", schema)).alias(
-            f"gap_{name}"
-        )
-        for name in names
+        (
+            _signed(f"{left.name}_{name}", schema, missing=measure.missing)
+            - _signed(f"{right.name}_{name}", schema, missing=measure.missing)
+        ).alias(f"gap_{name}")
+        for name, measure in chosen
     ]
 
     return joined.with_columns(gaps).sort(group) if group else joined.with_columns(gaps)

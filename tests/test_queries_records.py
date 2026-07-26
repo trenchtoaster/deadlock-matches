@@ -14,7 +14,7 @@ def test_daily_record(record_pq):
     assert df.get_column("losses").to_list() == [2, 0]
     assert df.get_column("net").to_list() == [-1, 2]
     assert df.get_column("cum_net").to_list() == [-1, 1]
-    assert df.get_column("win_rate").to_list() == pytest.approx([100 / 3, 100.0])
+    assert df.get_column("win_rate").to_list() == pytest.approx([1 / 3, 1.0])
     assert df.get_column("day").is_sorted()
 
 

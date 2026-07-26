@@ -213,11 +213,13 @@ MOVEMENT_GAME_MEASURES = {
         pl.len(),
         "count",
         comment="Every game of the hero, with or without movement rows.",
+        missing="zero",
     ),
     "tracked_games": Measure(
         pl.col("distance_min").count(),
         "count",
         comment="Games with movement rows; null-metric games stay out of metric means.",
+        missing="zero",
     ),
     **{
         column: Measure(

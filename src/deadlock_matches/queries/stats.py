@@ -284,6 +284,7 @@ def _final(column: str, unit: str, comment: str = "", direction: str = "maximize
         comment=comment,
         window=SNAPSHOT_WINDOW,
         direction=direction,
+        missing="zero",
     )
 
 
@@ -293,6 +294,7 @@ STAT_SNAPSHOT_MEASURES = {
         "count",
         comment="Player-games contributing, one per collapsed series.",
         window=SNAPSHOT_WINDOW,
+        missing="zero",
     ),
     "net_worth": _final(
         "net_worth",
