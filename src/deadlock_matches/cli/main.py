@@ -723,6 +723,13 @@ def schema_report(args: argparse.Namespace) -> None:
         print("--sample must be at least 1")
         return
 
+    if args.table is None:
+        views = len(queries.registered_views())
+        print(
+            f"{views} metric views sit over these tables and are the shortest path to a count, "
+            "rate, or total. deadlock schema --views lists them.\n"
+        )
+
     print(schemas.describe(args.table))
 
     if args.sample is None:

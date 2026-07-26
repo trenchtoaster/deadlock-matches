@@ -28,6 +28,7 @@ from deadlock_matches.cli import items as cli_items
 from deadlock_matches.cli import meta as cli_meta
 from deadlock_matches.cli.main import build_parser, main, parse_accounts, resolve_store
 from deadlock_matches.extract import STEAM64_BASE, pb
+from deadlock_matches.queries import registered_views
 
 
 def display_width(text):
@@ -4053,6 +4054,24 @@ def test_schema_command_prints_dictionary(capsys):
 
     for name in schemas.Damage.spec():
         assert name in out
+
+
+def test_schema_command_points_at_the_views(capsys):
+    main(["schema"])
+
+    out = capsys.readouterr().out
+
+    assert f"{len(registered_views())} metric views" in out
+    assert "deadlock schema --views" in out
+    assert out.index("metric views") < out.index("matches")
+
+
+def test_schema_command_for_one_table_leaves_the_view_pointer_out(capsys):
+    main(["schema", "players"])
+
+    out = capsys.readouterr().out
+
+    assert "metric views" not in out
 
 
 def test_schema_command_prints_sample_rows(capsys, tmp_path):
