@@ -66,7 +66,7 @@ deadlock match
 Match 12345678: Mirage, win, 2026-07-08 07:16, 36:03
 Lobby average: The Hidden King Oracle 1, The Archmother Archon 6
 
-  Team             Hero                    K/D/A        Souls   Damage Obj damage  Healing Prevented Last hits Denies  Statues
+  Team             Hero                    K/D/A        Souls   Damage Obj damage  Healing Prevented Last hits Denies    Buffs
   The Hidden King  Mo & Krill     2 (Key)  10/3/24     57,278   42,261      6,775   33,086       662       248      3       34
   The Hidden King  Wraith                  13/4/14     54,467   34,005     31,478   10,378         0       218      9       28
   The Hidden King  Drifter        1 (MVP)  12/2/26     48,584   44,218     11,763   17,145         0       162      2       41
@@ -119,7 +119,7 @@ Souls by source, 5-minute intervals
   Objectives                 0        0      872        0      819    1,500    1,424        0    4,615    10%
   Catch-Up                   0      142      175        0      307      181       56        0      861     2%
 
-  Total is gross souls earned by source, the in-game souls breakdown. Net worth (47,025) adds starting souls and subtracts souls lost to deaths.
+  Total is gross souls earned by source, the in game souls breakdown. Net worth (47,025) adds starting souls and subtracts souls lost to deaths.
 ```
 
 #### `--damage`: damage by source and by enemy
@@ -549,6 +549,8 @@ deadlock winrate
 - games Valve flagged as not scored are left out of the table and reported under it, match history still shows their result
 
 ```
+Dates below are grouped by America/Chicago day.
+
   Day           Games    W    L   Win rate         Lobby   MVP   Key  Abandons   Net wins   Cumulative net
   2026-04-06        4    3    1      75.0%     Phantom 4     1     0                   +2               +2
   2026-04-07        5    2    3      40.0%     Phantom 5     0     1         1         -1               +1
@@ -755,7 +757,7 @@ deadlock souls --hero Mirage --milestones
   Minutes to reach a net worth, median across games
   You: main, 64 Mirage games
 
-    Souls      You  games
+    Souls   Minute  games
      1600      2.8     64
      3200      5.6     64
      4800      7.7     63
@@ -1006,7 +1008,8 @@ deadlock item "Mercurial Magnum"
 ```
 
 - the shop card for an item, straight from the asset data
-- innate stats first, then each passive or active section with the cooldown and description
+- innate stats first, then each passive or active section with its description, stats, and cooldown
+- a stat that scales prints its scaling beside the base value, and a cooldown prints what Transcendent Cooldown brings it down to
 - adding `--hero` turns it into a full report of the item on that hero, covered with the tracked player commands below
 
 ```
@@ -1016,13 +1019,14 @@ Mercurial Magnum  (spirit tier 4, 6,400 souls)
   max ammo                                 +20%
   spirit power                               +7
 
-Passive  (cooldown 15s)
+Passive
   Your imbued ability charges up over time with bonus spirit damage, bonus fire rate, and reloads bullets on use. Until your next reload, your bullets deal bonus spirit damage based on your Spirit Power.
-  base bullet damage                        25%
-  damage                                     60
+  base bullet damage                       +25%  +0.49 x spirit
+  damage                                     60  +0.16 x spirit
   fire rate                                +22%
   bullets reloaded                         100%
   charge-up time                            14s
+  cooldown                                  15s  (11.25s with Transcendent Cooldown)
 ```
 
 ### Past patches: `--as-of` and `--changes`
@@ -1393,7 +1397,9 @@ deadlock sync
 - report commands also do a quiet sync first, so `deadlock history` after a session usually shows the new games without a separate command
 - the row counts it prints are what the new matches added on that run, not table totals
 - `--source api` pulls your match history from deadlock-api.com and downloads any missing matches into the archive without opening them in game
-- after a game update, sync pulls the new item data once and re-exports the matches that came in with the old data. It reads the installed version from steam.inf, so between patches it never calls the assets API, and offline it just skips
+  - it prints a line per match as it lands and lists the ids the API does not have, so those can be opened in game instead
+  - a short rate limit wait is slept through, a long one defers the rest of the downloads and the next sync picks them up
+- after a game update, sync pulls the new item data once and re-exports the matches that came in with the old data, printing a line for each step. It reads the installed version from steam.inf, so between patches it never calls the assets API, and offline it just skips
 - `--full` rebuilds every table from scratch, needed after a schema change or a backfill
 - `--dry-run` shows what would happen without writing anything
 
@@ -1465,7 +1471,7 @@ To bring the `--as-of` and `--changes` history up to the new patch too:
 deadlock assets --backfill
 ```
 
-It fetches only the patches newer than what shipped and appends them.
+On its own it only says what it would build and where. Re-run it with `--confirm` to do the work, which fetches the patches newer than the last stored era and appends them. `--full` rescans every build instead, for when an old era needs correcting.
 
 ### The agent skill
 

@@ -40,19 +40,31 @@ Questions like these are a few lines of polars each:
 - when do I usually buy an item, and do I win more when I get it early?
 - has my farm at 10 minutes improved recently?
 
-`deadlock_matches.queries` handles common joins and filters, so a query is mostly the aggregation. The helpers are ordinary Python functions, so inspect the module or use editor autocomplete for the current list. Stable starting points include:
+`deadlock_matches.queries` gives you two ways in. Start from a metric view for any count, rate, or total. Drop to a frame when you want the rows themselves.
+
+### Metric views
+
+A metric view declares which dimensions you can group by and which measures you can aggregate, so `queries.summarize()` writes the join and the aggregation for you. `deadlock schema --views` lists every view with its arguments, dimensions, and measures.
+
+- `my_games`: one row per match you played, with the local day for grouping by session.
+- `record_games`: one row per match in the winrate window. Its wins count matches where `my_games` counts account-games.
+- `stat_snapshots`: the `stats` table collapsed to each player-game's last sample before anything is summed. That collapse is what stops cumulative snapshots from being added up by accident. Net worth, damage, accuracy, headshot rate, and the K/D/A counters.
+- `hero_damage_games`, `damage_source_games`, `soul_source_games`, `movement_games`, `combat_games`, `buff_games`, `stack_games`: the views behind the damage, souls, movement, combat, and buff reports.
+- `compare_intervals`, `cumulative_marks`, `milestone_games`: gains per interval, totals at a mark, and the minute a net worth was first reached.
+
+### Frames
 
 - `queries.scan("damage")` to read any table by name.
 - `queries.player_rows()` to read `players` with the current hero display name.
-- `queries.my_games()` for one row per match you played, with the local day for grouping by session. It is a metric view rather than a frame, so pass it to `queries.summarize()` to aggregate or to `queries.view_frame()` for the rows themselves.
-- `queries.final_stats()` for final stats of every player in every match, including accuracy and headshot rate.
-- item, damage, soul, death, movement, and record helpers for the frames behind CLI reports.
+- `queries.view_frame(queries.my_games())` for the rows behind a view instead of an aggregate.
+- `queries.final_stats()` for the last stats snapshot of every player in every match. Opponents included.
+- item and death helpers for the frames behind those CLI reports.
 
 Every query in the module is a lazy polars plan and all collections use the streaming engine. Nothing is read until `.collect()`, the plan prunes the scan down to the columns and rows it actually touches, and memory stays bounded at any archive size. Keep your own queries lazy from `scan()` to `.collect()` and they get the same treatment.
 
-Current asset labels are deliberately not stored in match parquet. Hero, damage-source, imbued-ability, stack, and accolade labels resolve from their stable IDs or engine classes when queried, so an asset refresh fixes old-match displays without a full archive rebuild. Aggregate on the stable key first and attach the label to the reduced frame when writing a new aggregate query.
+Current asset labels are deliberately not stored in match parquet. Hero, damage/healing source, imbued abilities, stack, and accolade labels resolve from their stable IDs or engine classes when queried, so an asset refresh fixes match displays without a full archive rebuild. Aggregate on the stable key first and attach the label to the reduced frame when writing a new aggregate query.
 
-Here is the general shape. `queries.summarize()` groups a metric view by the dimensions it declares and aggregates the measures it declares, so a rate like `win_rate` is total wins over total scored games at whatever grain you ask for, never the mean of per-day rates. Measures come back raw, so a rate is a proportion and scaling it to a percent is yours to do where you print:
+Here is the general shape. A rate like `win_rate` is total wins over total scored games at whatever grain you ask for. It is never the mean of per-day rates. Measures come back raw. A rate is a proportion and scaling it to a percent is yours to do where you print:
 
 ```python
 import datetime as dt
@@ -79,6 +91,6 @@ winrate_by_day = (
 )
 ```
 
-`deadlock schema --views` lists every view with its arguments, dimensions, and measures. `filters` takes a value or a list of values per dimension, and a range is a plain `.filter()` on the result, as above. For rows rather than an aggregate, `queries.view_frame(queries.my_games(accounts=[main]))` builds the frame itself and ordinary polars takes it from there.
+`filters` takes a value or a list of values per dimension, and a range is a `.filter()` on the result. For rows rather than an aggregate, `queries.view_frame(queries.my_games(accounts=[main]))` builds the frame itself.
 
-For more examples, browse `notebooks/getting_started.py` in this repository. The notebook is a source-checkout reference, not something installed by the CLI.
+For more examples, browse `notebooks/getting_started.py` in this repository.

@@ -1,4 +1,8 @@
-"""Reusable polars queries over the exported parquet tables."""
+"""Metric views and polars helpers over the exported parquet tables.
+
+- summarize() over a metric view for any count, rate, or total
+- scan() and the frame helpers for row-level work
+"""
 
 from deadlock_matches.queries.core import (
     MY_GAMES_DIMENSIONS,

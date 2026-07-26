@@ -214,7 +214,7 @@ A few flags repeat across commands:
 - `sync` - pull new matches from the Steam cache into the archive and update the parquet tables
 - `accounts` - Steam accounts on this PC with a paste-ready `[accounts]` block for `config.toml`
 - `config` - where `config.toml` lives and the settings it holds, `--edit` opens it
-- `assets` - refresh the hero, item, and ability values after a patch, `--backfill` extends the `--as-of` history
+- `assets` - refresh the hero, item, and ability values after a patch, `--backfill --confirm` extends the `--as-of` history
 - `skill` - install the bundled Claude Code skill
 - `schema` - column docs for the parquet tables, the data dictionary
 
@@ -222,14 +222,14 @@ A few flags repeat across commands:
 
 Here are some examples of the reports which will print out to your terminal. Please take a look at [docs/commands.md](docs/commands.md) for more detailed views for anything which looks interesting to you.
 
-The full scoreboard for a match, then your own play in 5-minute intervals. As you can see, this also includes metrics like healing prevented and golden statue buffs per player which are not shown in game:
+The full scoreboard for a match, then your own play in 5-minute intervals. As you can see, this also includes metrics like healing prevented and permanent buffs per player which are not shown in game:
 
 
 ```
 Match 12345678: Mirage, win, 2026-07-08 07:16, 36:03
 Lobby average: The Hidden King Ascendant 1, The Archmother Phantom 6
 
-  Team             Hero                    K/D/A        Souls   Damage Obj damage  Healing Prevented Last hits Denies  Statues
+  Team             Hero                    K/D/A        Souls   Damage Obj damage  Healing Prevented Last hits Denies    Buffs
   The Hidden King  Mo & Krill     2 (Key)  10/3/24     57,278   42,261      6,775   33,086       662       248      3       34
   The Hidden King  Wraith                  13/4/14     54,467   34,005     31,478   10,378         0       218      9       28
   The Hidden King  Drifter        1 (MVP)  12/2/26     48,584   44,218     11,763   17,145         0       162      2       41
@@ -335,9 +335,18 @@ Abandons: 3 games — an ally left 1 (0-1), an enemy left 2 (2-0).
   Without them: 50 games, 31-19, 62.0% win rate.
 ```
 
-`deadlock laning` buckets every game by where your lane stood at 9:00, so you can read whether winning the lane wins the game. A second table buckets the same games by the worst teammate death count before the mark.
+`deadlock laning` buckets every game by where your lane stood at 9:00, so you can read whether winning the lane wins the game. Later tables bucket the same games by your deaths before the mark, the worst teammate death count, and the two crossed together:
 
 ```
+Lane result at 9:00: your lane's souls minus the enemy side's, scored games only.
+
+  Lane at 9:00              Games     W     L   Win rate
+  behind 3k+                    3     3     0     100.0%
+  behind 1k-3k                 12     7     5      58.3%
+  even within 1k               22    14     8      63.6%
+  ahead 1k-3k                  12     9     3      75.0%
+  ahead 3k+                     3     1     2      33.3%
+
   Lane result               Games     W     L   Win rate
   lost lane                    31    19    12      61.3%
   won lane                     21    15     6      71.4%
@@ -371,7 +380,7 @@ Each of these has a full example with real output in [docs/commands.md](docs/com
 - `deadlock sync` pulls new matches from the Steam cache into the archive and updates the parquet tables. Report commands do a quiet sync first, so `deadlock history` after a session usually shows the new games on its own. `--source api` downloads your match history from deadlock-api.com instead
 - `deadlock accounts` lists the Steam accounts on this PC that have run Deadlock, with a paste-ready `[accounts]` block for the ones `config.toml` does not name yet
 - `deadlock config` prints where `config.toml` lives and the settings it holds. `--edit` opens it in your editor
-- `deadlock assets` pulls the current hero, item, and ability values after a Deadlock patch, and `deadlock assets --backfill` brings the `--as-of` and `--changes` history up to the new patch
+- `deadlock assets` pulls the current hero, item, and ability values after a Deadlock patch, and `deadlock assets --backfill --confirm` brings the `--as-of` and `--changes` history up to the new patch
 
 ### API cache
 
@@ -412,13 +421,14 @@ deadlock schema players --sample 10
 
 `deadlock schema [table]` prints the data dictionary with the data type and description per column. `--sample` prints local rows, which is useful for checking join keys and real values before writing a query.
 
-The main match tables are `matches`, `players`, `stats`, `soul_sources`, `item_events`, `buffs`, `stacks`, `custom_stats`, `damage`, `damage_sources`, `mid_boss`, `movement`, and `deaths`. For table descriptions and query patterns, see [docs/data.md](docs/data.md).
+The main match tables are `matches`, `players`, `stats`, `soul_sources`, `item_events`, `buffs`, `stacks`, `custom_stats`, `damage`, `damage_sources`, `damage_targets`, `mid_boss`, `movement`, and `deaths`. For table descriptions and query patterns, see [docs/data.md](docs/data.md).
 
 Sizes scale with the archive. Here is the data per 100 matches based on a real archive:
 
 | Table | Rows | Size |
 | --- | --: | --: |
 | `movement` | 2,600,000 | 33 MB |
+| `damage_targets` | 1,500,000 | 3.3 MB |
 | `damage_sources` | 920,000 | 2.5 MB |
 | `custom_stats` | 640,000 | 1.1 MB |
 | `damage` | 230,000 | 1.3 MB |
@@ -435,7 +445,7 @@ Sizes scale with the archive. Here is the data per 100 matches based on a real a
 | `mid_boss` | 160 | <0.1 MB |
 | `matches` | 100 | <0.1 MB |
 
-That is about 40 MB per 100 matches, but the vast majority is from the per-second movement data which is why the default config excludes it. The asset-history tables under `assets/` are a fixed ~0.4 MB and do not grow with the archive.
+That is about 43 MB per 100 matches, but the vast majority is from the per-second movement data which is why the default config excludes it. The asset-history tables under `assets/` are a fixed ~0.4 MB and do not grow with the archive.
 
 ## Writing your own queries
 
@@ -446,7 +456,7 @@ Questions like these are a few lines of polars each:
 - when do I usually buy an item, and do I win more when I get it early?
 - has my farm at 10 minutes improved recently?
 
-The `deadlock_matches.queries` module handles common joins and filters, so a query is mostly the aggregation. Use `deadlock schema [table] --sample` to see the real rows, then see [docs/data.md](docs/data.md) for table descriptions and query patterns.
+The `deadlock_matches.queries` module handles common joins and filters, so a query is mostly the aggregation. Metric views carry that further. They declare the dimensions and measures a report can ask for, so a count or a rate comes out right at whatever grain you group by. `deadlock schema --views` lists them. Use `deadlock schema [table] --sample` to see the real rows, then see [docs/data.md](docs/data.md) for table descriptions and query patterns.
 
 This repository also has optional marimo notebooks under [`notebooks/`](notebooks/) if you are browsing a source checkout. They are examples only and are not installed with the CLI.
 
