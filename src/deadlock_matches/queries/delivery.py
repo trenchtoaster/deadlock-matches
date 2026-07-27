@@ -6,8 +6,8 @@ from pathlib import Path
 
 import polars as pl
 
-from deadlock_matches.queries.core import _local_day, asset_asof, player_rows, scan
-from deadlock_matches.queries.labels import with_damage_source_name
+from deadlock_matches.queries.core import _local_day, asset_asof, scan
+from deadlock_matches.queries.labels import with_damage_source_name, with_hero_name
 
 BULLET_PROC_OVERRIDES = frozenset({"upgrade_siphon_bullets"})
 
@@ -102,19 +102,12 @@ def hero_damage(
 
     stat picks which figure to keep: damage, healing, mitigated, ...
     """
-    dealers = player_rows(parquet_dir).select(
-        "match_id",
-        pl.col("account_id").alias("dealer_account_id"),
-        "hero",
-    )
     rows = scan("damage", parquet_dir).filter(
         pl.col("stat") == stat,
         damage_category() != "total",
         pl.col("target_account_id").is_not_null(),
         pl.col("damage") != 0,
     )
-    detail = with_damage_source_name(with_delivery(rows, parquet_dir)).join(
-        dealers, on=["match_id", "dealer_account_id"], how="left"
-    )
+    detail = with_hero_name(with_damage_source_name(with_delivery(rows, parquet_dir)))
 
-    return _local_day(detail, parquet_dir, tz)
+    return _local_day(detail, tz)

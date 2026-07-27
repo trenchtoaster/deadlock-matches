@@ -168,7 +168,7 @@ def _resolved_hero_name(hero: str) -> str:
 HERO_DAMAGE_DIMENSIONS = {
     "match_id": Dimension(pl.col("match_id")),
     "account_id": Dimension(
-        pl.col("dealer_account_id"),
+        pl.col("account_id"),
         comment="The player who dealt it.",
         synonyms=("dealer_account_id",),
     ),
@@ -268,7 +268,7 @@ def hero_damage_games(
     predicate = pl.lit(value=True)
 
     if accounts is not None:
-        predicate &= pl.col("dealer_account_id").is_in(list(accounts))
+        predicate &= pl.col("account_id").is_in(list(accounts))
 
     if matches is not None:
         predicate &= pl.col("match_id").is_in(list(matches))
@@ -431,7 +431,7 @@ def _damage_sources(
     """
     resolved_accounts = _resolved_accounts(accounts)
     hero_name = _resolved_hero_name(hero)
-    predicate = (pl.col("hero") == hero_name) & pl.col("dealer_account_id").is_in(resolved_accounts)
+    predicate = (pl.col("hero") == hero_name) & pl.col("account_id").is_in(resolved_accounts)
 
     if matches is not None:
         predicate &= pl.col("match_id").is_in(list(matches))
@@ -441,7 +441,7 @@ def _damage_sources(
         .filter(predicate)
         .group_by(
             "match_id",
-            pl.col("dealer_account_id").alias("account_id"),
+            "account_id",
             "source_name",
             "source_class",
             "delivery",
@@ -449,7 +449,7 @@ def _damage_sources(
         .agg(
             pl.col("damage").sum().alias("amount"),
             pl.col("damage")
-            .filter(pl.col("target_account_id") == pl.col("dealer_account_id"))
+            .filter(pl.col("target_account_id") == pl.col("account_id"))
             .sum()
             .alias("self_amount"),
         )

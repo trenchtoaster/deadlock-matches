@@ -679,7 +679,7 @@ def damage_intervals(
 
     rows = scan("damage_sources", parquet_dir).filter(
         pl.col("match_id") == match_id,
-        pl.col("dealer_account_id") == account_id,
+        pl.col("account_id") == account_id,
         pl.col("stat") == stat,
         pl.col("vs_heroes"),
         damage_category() != "total",
@@ -738,8 +738,8 @@ def enemy_damage_intervals(
         scan("matches", parquet_dir).filter(pl.col("match_id") == match_id).select("duration_s")
     )
 
-    mine = "dealer_account_id" if dealt else "target_account_id"
-    other = "target_account_id" if dealt else "dealer_account_id"
+    mine = "account_id" if dealt else "target_account_id"
+    other = "target_account_id" if dealt else "account_id"
     samples = (
         scan("damage_targets", parquet_dir)
         .filter(
@@ -805,8 +805,8 @@ def enemy_damage_totals(
     keys = ["match_id", "account_id"]
     wanted = games.lazy().select(keys).unique()
 
-    mine = "dealer_account_id" if dealt else "target_account_id"
-    other = "target_account_id" if dealt else "dealer_account_id"
+    mine = "account_id" if dealt else "target_account_id"
+    other = "target_account_id" if dealt else "account_id"
 
     totals = (
         scan("damage", parquet_dir)
@@ -915,7 +915,6 @@ def source_intervals(
     bucket = ((pl.col("time_stamp_s") - 1) // interval_s).clip(0).cast(pl.Int64).alias("interval")
     rows = (
         scan("damage_sources", parquet_dir)
-        .rename({"dealer_account_id": "account_id"})
         .join(wanted, on=keys)
         .filter(
             pl.col("stat") == stat,
@@ -987,7 +986,7 @@ def source_totals(
     """
     keys = ["match_id", "account_id"]
     wanted = games.lazy().select(keys).unique()
-    detail = hero_damage(stat, parquet_dir).rename({"dealer_account_id": "account_id"})
+    detail = hero_damage(stat, parquet_dir)
 
     return (
         detail.join(wanted, on=keys)

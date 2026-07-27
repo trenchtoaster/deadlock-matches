@@ -442,7 +442,7 @@ def test_write_player_tables_rebuilds_drifted_tables(tmp_path, monkeypatch):
     out = tmp_path / "pq"
     players.write_player_tables([row], out_dir=out)
 
-    target = next((out / "players").glob("*.parquet"))
+    target = next((out / "players").glob("month=*/*.parquet"))
     pl.read_parquet(target).drop("party").write_parquet(target)
 
     assert export.schema_drift(out) is not None
@@ -471,7 +471,7 @@ def test_write_player_tables_reshapes_a_dropped_column_without_decoding(tmp_path
     out = tmp_path / "pq"
     players.write_player_tables([row], out_dir=out)
 
-    target = next((out / "players").glob("*.parquet"))
+    target = next((out / "players").glob("month=*/*.parquet"))
     pl.read_parquet(target).with_columns(pl.lit("stale").alias("hero")).write_parquet(target)
 
     attempted = []
@@ -506,7 +506,7 @@ def test_write_player_tables_carries_forward_undecodable_matches(tmp_path, monke
     out = tmp_path / "pq"
     players.write_player_tables([row], out_dir=out)
 
-    target = next((out / "players").glob("*.parquet"))
+    target = next((out / "players").glob("month=*/*.parquet"))
     pl.read_parquet(target).drop("party").write_parquet(target)
 
     assert export.schema_drift(out) is not None
@@ -528,7 +528,7 @@ def test_write_player_tables_carries_forward_undecodable_matches(tmp_path, monke
     matches = queries.scan("matches", out).collect()
 
     assert matches.get_column("match_id").to_list() == [900]
-    assert "party" in pl.read_parquet_schema(next((out / "players").glob("*.parquet")))
+    assert "party" in pl.read_parquet_schema(next((out / "players").glob("month=*/*.parquet")))
 
 
 def test_write_player_tables_fills_a_missing_required_table(tmp_path, monkeypatch):

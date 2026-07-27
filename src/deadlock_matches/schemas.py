@@ -47,6 +47,10 @@ STAT_FIELDS = _stat_field_names()
 
 MATCH_ID = Column(pl.Int64, "Valve match id, increasing over time")
 ACCOUNT_ID = Column(pl.Int64, "Steam32 account ID of the player")
+START_TIME = Column(pl.Datetime("us", "UTC"), "When the match started (UTC)")
+HERO_ID = Column(pl.Int64, "Numeric hero id (queries.with_hero_name adds the name)")
+DEALER_ACCOUNT = Column(pl.Int64, "Who dealt it, null for non-player slots")
+DEALER_HERO = Column(pl.Int64, "Numeric hero id of the dealer, null for non-player slots")
 
 ERA_FROM = Column(
     pl.Datetime("us", "UTC"), "Release time of the client build that started this era"
@@ -108,7 +112,7 @@ class Matches(Table):
     """One row per match."""
 
     match_id = MATCH_ID
-    start_time = Column(pl.Datetime("us", "UTC"), "When the match started (UTC)")
+    start_time = START_TIME
     duration_s = Column(pl.Int64, "Match length in seconds")
     winning_team = Column(
         pl.Int64, "0 = The Hidden King (Amber internally), 1 = The Archmother (Sapphire)"
@@ -146,6 +150,7 @@ class Players(Table):
     """One row per player per match with final scoreboard numbers."""
 
     match_id = MATCH_ID
+    start_time = START_TIME
     account_id = ACCOUNT_ID
     hero_id = Column(pl.Int64, "Numeric hero id (queries.player_rows adds the name)")
     team = Column(pl.Int64, "0 = The Hidden King (Amber internally), 1 = The Archmother (Sapphire)")
@@ -184,7 +189,9 @@ class Stats(Table):
     """
 
     match_id = MATCH_ID
+    start_time = START_TIME
     account_id = ACCOUNT_ID
+    hero_id = HERO_ID
     time_stamp_s = Column(
         pl.Int64,
         "Snapshot game time in seconds, the other stats columns are cumulative as of this time",
@@ -210,7 +217,12 @@ class Stats(Table):
         - the declared Columns are used where they exist
         """
         declared = super().spec()
-        cols = {"match_id": MATCH_ID, "account_id": ACCOUNT_ID}
+        cols = {
+            "match_id": MATCH_ID,
+            "start_time": START_TIME,
+            "account_id": ACCOUNT_ID,
+            "hero_id": HERO_ID,
+        }
 
         for field in STAT_FIELDS:
             name = souls(field)
@@ -233,7 +245,9 @@ class SoulSources(Table):
     """Souls per income source per snapshot."""
 
     match_id = MATCH_ID
+    start_time = START_TIME
     account_id = ACCOUNT_ID
+    hero_id = HERO_ID
     time_stamp_s = Column(pl.Int64, "Snapshot time in seconds, souls are cumulative")
     source = Column(pl.Int64, "Income source enum id")
     source_name = Column(
@@ -247,7 +261,9 @@ class ItemEvents(Table):
     """One row per item bought."""
 
     match_id = MATCH_ID
+    start_time = START_TIME
     account_id = ACCOUNT_ID
+    hero_id = HERO_ID
     game_time_s = Column(pl.Int64, "When the item was bought, seconds from match start")
     item_id = Column(pl.Int64, "Numeric item id")
     item = Column(pl.String, "Item display name, null for unknown/removed items")
@@ -270,7 +286,9 @@ class Accolades(Table):
     """End of match stat awards, one row per accolade per player."""
 
     match_id = MATCH_ID
+    start_time = START_TIME
     account_id = ACCOUNT_ID
+    hero_id = HERO_ID
     accolade_id = Column(pl.Int64, "Numeric accolade id (queries.accolade_name maps it)")
     value = Column(pl.Int64, "The player's number for that stat this match")
     threshold = Column(pl.Int64, "Highest star threshold reached, 0-based, -1 = none reached")
@@ -280,7 +298,9 @@ class Buffs(Table):
     """Buffs each player ended the match with, one row per pickup type per player."""
 
     match_id = MATCH_ID
+    start_time = START_TIME
     account_id = ACCOUNT_ID
+    hero_id = HERO_ID
     type = Column(pl.String, "Engine class name of the buff pickup")
     buff = Column(
         pl.String,
@@ -300,7 +320,9 @@ class Stacks(Table):
     """Stack counts from abilities and items that track stacks, one row per counter per player."""
 
     match_id = MATCH_ID
+    start_time = START_TIME
     account_id = ACCOUNT_ID
+    hero_id = HERO_ID
     ability_id = Column(
         pl.Int64,
         "The murmur2 string token of the engine class name (queries.with_stack_labels maps it)",
@@ -312,7 +334,9 @@ class CustomStats(Table):
     """Named stat counters the game tracks but never shows, per snapshot like the stats table."""
 
     match_id = MATCH_ID
+    start_time = START_TIME
     account_id = ACCOUNT_ID
+    hero_id = HERO_ID
     time_stamp_s = Column(pl.Int64, "Snapshot time in seconds, values are cumulative counts")
     group = Column(
         pl.String,
@@ -332,7 +356,9 @@ class Damage(Table):
     """
 
     match_id = MATCH_ID
-    dealer_account_id = Column(pl.Int64, "Who dealt it, null for non-player slots")
+    start_time = START_TIME
+    account_id = DEALER_ACCOUNT
+    hero_id = DEALER_HERO
     target_account_id = Column(
         pl.Int64, "Who received it, null for non-player targets (objectives, creeps)"
     )
@@ -355,7 +381,9 @@ class DamageSources(Table):
     """Cumulative damage per dealer and source over time, summed over targets."""
 
     match_id = MATCH_ID
-    dealer_account_id = Column(pl.Int64, "Who dealt it, null for non-player slots")
+    start_time = START_TIME
+    account_id = DEALER_ACCOUNT
+    hero_id = DEALER_HERO
     source_class = Column(
         pl.String,
         "Engine class_name, stable across patches unlike display names "
@@ -382,7 +410,9 @@ class DamageTargets(Table):
     """Cumulative damage per dealer, source, and hero target over time."""
 
     match_id = MATCH_ID
-    dealer_account_id = Column(pl.Int64, "Who dealt it, null for non-player slots")
+    start_time = START_TIME
+    account_id = DEALER_ACCOUNT
+    hero_id = DEALER_HERO
     target_account_id = Column(pl.Int64, "Who received it, hero targets only")
     source_class = Column(
         pl.String,
@@ -406,6 +436,7 @@ class MidBoss(Table):
     """One row per midboss (Rejuvenator) kill."""
 
     match_id = MATCH_ID
+    start_time = START_TIME
     destroyed_time_s = Column(pl.Int64, "When the midboss died, seconds from match start")
     team_killed = Column(pl.Int64, "Team that landed the killing blow on the midboss")
     team_claimed = Column(
@@ -418,6 +449,7 @@ class Objectives(Table):
     """One row per objective, covering guardians, walkers, base guardians, shrines, and the patron."""
 
     match_id = MATCH_ID
+    start_time = START_TIME
     team = Column(pl.Int64, "Team the objective belonged to")
     objective_id = Column(pl.Int64, "Raw ECitadelTeamObjective id")
     objective = Column(
@@ -435,7 +467,9 @@ class Movement(Table):
     """One row per player per second with position, health, and movement state."""
 
     match_id = MATCH_ID
+    start_time = START_TIME
     account_id = ACCOUNT_ID
+    hero_id = HERO_ID
     game_time_s = Column(pl.Int64, "Seconds from match start, one row per second")
     x = Column(pl.Float64, "Map x position in world units")
     y = Column(pl.Float64, "Map y position in world units")
@@ -454,7 +488,9 @@ class MovementIntervals(Table):
     """One row per player per minute with movement state counts, dashes, and distance."""
 
     match_id = MATCH_ID
+    start_time = START_TIME
     account_id = ACCOUNT_ID
+    hero_id = HERO_ID
     start_s = Column(pl.Int64, "Game time in seconds when the minute starts")
     alive_s = Column(pl.Int64, "Seconds alive inside the minute")
     moving_s = Column(pl.Int64, "Alive seconds with a measured step")
@@ -472,7 +508,9 @@ class Deaths(Table):
     """One row per death, with position, killer, and respawn time."""
 
     match_id = MATCH_ID
+    start_time = START_TIME
     account_id = ACCOUNT_ID
+    hero_id = HERO_ID
     game_time_s = Column(pl.Int64, "When the death happened, seconds from match start")
     time_to_kill_s = Column(
         pl.Float64,
@@ -741,10 +779,10 @@ IDENTITY: dict[str, tuple[str, ...]] = {
     "accolades": ("match_id", "account_id", "accolade_id"),
     "buffs": ("match_id", "account_id", "type"),
     "stacks": ("match_id", "account_id", "ability_id"),
-    "damage": ("match_id", "dealer_account_id", "target_player_slot", "source_class", "stat"),
+    "damage": ("match_id", "account_id", "target_player_slot", "source_class", "stat"),
     "damage_sources": (
         "match_id",
-        "dealer_account_id",
+        "account_id",
         "source_class",
         "stat",
         "vs_heroes",
@@ -752,7 +790,7 @@ IDENTITY: dict[str, tuple[str, ...]] = {
     ),
     "damage_targets": (
         "match_id",
-        "dealer_account_id",
+        "account_id",
         "target_account_id",
         "source_class",
         "stat",

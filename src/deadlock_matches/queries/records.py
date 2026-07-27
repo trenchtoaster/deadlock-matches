@@ -385,7 +385,7 @@ def abandon_record(
     damage_grew = (
         scan("damage_sources", parquet_dir)
         .filter(pl.col("match_id").is_in(match_ids.implode()))
-        .group_by("match_id", pl.col("dealer_account_id").alias("account_id"), "time_stamp_s")
+        .group_by("match_id", "account_id", "time_stamp_s")
         .agg(pl.col("damage").sum())
         .join(leaver_rows.lazy(), on=["match_id", "account_id"])
         .filter(pl.col("time_stamp_s") > pl.col("abandon_time_s"))

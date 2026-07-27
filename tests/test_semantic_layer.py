@@ -53,6 +53,7 @@ def _write(parquet_dir):
     players = [
         {
             "match_id": match_id,
+            "start_time": START + dt.timedelta(hours=match_id),
             "account_id": account_id,
             "hero_id": heroes.hero_id_by_name(hero),
             "team": 0 if won else 1,

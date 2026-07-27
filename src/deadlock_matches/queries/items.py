@@ -29,13 +29,10 @@ if TYPE_CHECKING:
 def item_events_priced(parquet_dir: str | Path | None = None) -> pl.LazyFrame:
     """Reprice item_events against the item era live at each match start.
 
-    - joins item_events to matches for start_time, then as-of onto item_history
+    - as-of onto item_history using the start_time carried on item_events
     - cost, slot, and tier come from item_history, not the baked snapshot
     """
-    matches = scan("matches", parquet_dir).select("match_id", "start_time")
-    left = (
-        scan("item_events", parquet_dir).drop("cost", "slot", "tier").join(matches, on="match_id")
-    )
+    left = scan("item_events", parquet_dir).drop("cost", "slot", "tier")
 
     return asset_asof(left, "item_history", by="item_id", parquet_dir=parquet_dir)
 
@@ -284,7 +281,7 @@ def item_value(
             pl.col("target_account_id").is_not_null(),
             damage_category() != "total",
         )
-        .group_by("match_id", pl.col("dealer_account_id").alias("account_id"))
+        .group_by("match_id", "account_id")
         .agg(pl.col("damage").sum())
     )
 
@@ -371,11 +368,11 @@ def item_games(
             pl.col("target_account_id").is_not_null(),
         )
         .join(
-            keys.rename({"account_id": "dealer_account_id"}),
-            on=["match_id", "dealer_account_id"],
+            keys,
+            on=["match_id", "account_id"],
             how="semi",
         )
-        .group_by("match_id", "dealer_account_id")
+        .group_by("match_id", "account_id")
         .agg(pl.col("damage").sum())
     )
     ordered_buys = (
@@ -444,7 +441,7 @@ def item_games(
         .join(
             dealt,
             left_on=["match_id", "account_id"],
-            right_on=["match_id", "dealer_account_id"],
+            right_on=["match_id", "account_id"],
             how="left",
         )
         .join(_dealt_owning(windows, parquet_dir), on=["match_id", "account_id"], how="left")

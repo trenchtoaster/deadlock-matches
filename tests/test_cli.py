@@ -4202,6 +4202,7 @@ def test_schema_command_prints_sample_rows(capsys, tmp_path):
         [
             {
                 "match_id": i,
+                "start_time": dt.datetime(2026, 6, 1, tzinfo=dt.UTC),
                 "account_id": 42,
                 "hero_id": 52,
                 "team": 1,
@@ -4231,7 +4232,7 @@ def test_schema_command_prints_sample_rows(capsys, tmp_path):
     assert "Sample rows from" in out
     assert "hero_id" in out
     assert "Mirage" not in out
-    assert "shape: (5, 17)" in out
+    assert "shape: (5, 18)" in out
 
 
 def test_schema_command_samples_asset_table(capsys, tmp_path):
@@ -4338,7 +4339,7 @@ def test_new_matches_trigger_parquet_rebuild(tmp_path, capsys):
     assert "Building the tables from the archive" in out
     assert (pq / "matches").is_dir()
     assert (pq / "damage").is_dir()
-    assert next((pq / "matches").glob("*.parquet"), None) is not None
+    assert next((pq / "matches").glob("month=*/*.parquet"), None) is not None
 
 
 def test_no_new_matches_skips_rebuild(tmp_path, capsys):

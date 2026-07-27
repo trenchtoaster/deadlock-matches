@@ -40,7 +40,7 @@ if TYPE_CHECKING:
 
 def _final_custom_values(frame: pl.LazyFrame) -> pl.LazyFrame:
     """Keep the last snapshot value of every custom stat."""
-    return frame.group_by("match_id", "account_id", "group", "stat").agg(
+    return frame.group_by("match_id", "start_time", "account_id", "hero_id", "group", "stat").agg(
         pl.col("value").sort_by("time_stamp_s").last()
     )
 
@@ -111,7 +111,7 @@ def custom_stats(
         how="left",
     )
 
-    return _local_day(frame, parquet_dir, tz)
+    return _local_day(frame, tz)
 
 
 def aim_rates(
@@ -204,14 +204,10 @@ def melee_by_player(match_id: int, parquet_dir: str | Path | None = None) -> pl.
             pl.col("target_account_id").is_not_null(),
             _basic_melee(),
         )
-        .select("dealer_account_id", "target_account_id", "damage")
+        .select("account_id", "target_account_id", "damage")
     )
 
-    dealt = (
-        melee.group_by("dealer_account_id")
-        .agg(pl.col("damage").sum().alias("melee_dealt"))
-        .rename({"dealer_account_id": "account_id"})
-    )
+    dealt = melee.group_by("account_id").agg(pl.col("damage").sum().alias("melee_dealt"))
 
     taken = (
         melee.group_by("target_account_id")
@@ -249,7 +245,7 @@ def melee_taken_by_attacker(
     attackers = (
         player_rows(parquet_dir)
         .filter(pl.col("match_id") == match_id)
-        .select(pl.col("account_id").alias("dealer_account_id"), pl.col("hero").alias("attacker"))
+        .select("account_id", pl.col("hero").alias("attacker"))
     )
 
     return (
@@ -261,9 +257,9 @@ def melee_taken_by_attacker(
             damage_category() != "total",
             _basic_melee(),
         )
-        .group_by("dealer_account_id")
+        .group_by("account_id")
         .agg(pl.col("damage").sum().alias("melee"))
-        .join(attackers, on="dealer_account_id", how="left")
+        .join(attackers, on="account_id", how="left")
         .select("attacker", "melee")
         .sort("melee", descending=True)
     )
@@ -465,7 +461,7 @@ def final_stats(parquet_dir: str | Path | None = None, tz: str | None = None) ->
         )
     )
 
-    return _local_day(finals, parquet_dir, tz)
+    return _local_day(finals, tz)
 
 
 def team_damage_ranks(parquet_dir: str | Path | None = None) -> pl.LazyFrame:

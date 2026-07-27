@@ -245,7 +245,7 @@ def melee_pq(tmp_path):
     damage = pl.DataFrame(
         {
             "match_id": [700, 700, 700, 700, 700, 700, 700, 701],
-            "dealer_account_id": [42, 99, 99, 99, 99, 99, 99, 42],
+            "account_id": [42, 99, 99, 99, 99, 99, 99, 42],
             "target_account_id": [99, 42, 42, None, 42, 42, 42, 99],
             "source_class": [
                 "ability_melee_mirage",

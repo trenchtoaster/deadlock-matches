@@ -6,7 +6,7 @@ import polars as pl
 import pytest
 from google.protobuf import json_format
 
-from deadlock_matches import export, extract, queries
+from deadlock_matches import export, extract, queries, schemas
 from deadlock_matches.assets import items
 from deadlock_matches.extract import pb
 
@@ -252,7 +252,7 @@ def test_damage_targets_keeps_per_enemy_samples():
 
     assert dt_rows.get_column("time_stamp_s").to_list() == [600, 1200]
     assert dt_rows.get_column("damage").to_list() == [100, 809]
-    assert dt_rows.get_column("dealer_account_id").to_list() == [42, 42]
+    assert dt_rows.get_column("account_id").to_list() == [42, 42]
     assert dt_rows.get_column("target_account_id").to_list() == [43, 43]
     assert dt_rows.get_column("damage")[-1] == tables["damage"].get_column("damage")[0]
 
@@ -555,7 +555,7 @@ def test_buffs_keep_permanent_and_bridge_pickups():
 def test_damage_maps_slots_to_accounts():
     dmg = export.build_tables([build_match()])["damage"]
 
-    assert dmg.get_column("dealer_account_id")[0] == 42
+    assert dmg.get_column("account_id")[0] == 42
     assert dmg.get_column("target_account_id")[0] == 43
     assert dmg.get_column("damage")[0] == 809
     assert dmg.get_column("stat")[0] == "damage"
@@ -686,7 +686,7 @@ def test_export_all_writes_parquet(tmp_path):
     assert result.counts["movement"] == 3
     assert result.decoded == 1
     assert (out / "movement").is_dir()
-    assert next((out / "movement").glob("*.parquet"), None) is not None
+    assert next((out / "movement").glob("month=*/*.parquet"), None) is not None
 
     df = queries.player_rows(out).collect()
 
@@ -750,7 +750,7 @@ def test_export_new_filters_new_matches_by_account(tmp_path):
 
 def _drop_column(out, table, column):
     """Rewrite one month file without a column, like a table written by older code."""
-    target = next((out / table).glob("*.parquet"))
+    target = next((out / table).glob("month=*/*.parquet"))
     pl.read_parquet(target).drop(column).write_parquet(target)
 
     return target
@@ -758,7 +758,7 @@ def _drop_column(out, table, column):
 
 def _add_column(out, table, column):
     """Rewrite one month file with an extra column, like a table written by older code."""
-    target = next((out / table).glob("*.parquet"))
+    target = next((out / table).glob("month=*/*.parquet"))
     pl.read_parquet(target).with_columns(pl.lit("stale").alias(column)).write_parquet(target)
 
     return target
@@ -786,8 +786,9 @@ def test_schema_drift_reports_a_changed_month(tmp_path):
     export.export_all(arc, out)
 
     target = _drop_column(out, "objectives", "player_spirit_damage")
+    month = target.parent.name.removeprefix("month=")
 
-    assert export.schema_drift(out) == f"objectives {target.stem} columns differ from schemas.py"
+    assert export.schema_drift(out) == f"objectives {month} columns differ from schemas.py"
 
 
 def test_schema_drift_reports_a_missing_table(tmp_path):
@@ -821,7 +822,7 @@ def test_export_new_rebuilds_drifted_tables(tmp_path):
     assert result.rebuilt.startswith("objectives")
     assert export.exported_match_ids(out) == {7, 8}
 
-    for month_file in (out / "objectives").glob("*.parquet"):
+    for month_file in (out / "objectives").glob("month=*/*.parquet"):
         assert "player_spirit_damage" in pl.read_parquet_schema(month_file)
 
 
@@ -1244,9 +1245,9 @@ def test_export_partitions_by_month(tmp_path):
 
     assert result.counts["matches"] == 2
 
-    written = {p.name for p in (out / "matches").glob("*.parquet")}
+    written = {p.name for p in (out / "matches").glob("month=*")}
 
-    assert written == {"2026-06.parquet", "2026-07.parquet"}
+    assert written == {"month=2026-06", "month=2026-07"}
 
     matches = queries.scan("matches", out).collect()
 
@@ -1296,14 +1297,14 @@ def test_incremental_leaves_untouched_month_alone(tmp_path):
     _archive_match(arc, 10, dt.datetime(2026, 6, 5, tzinfo=dt.UTC))
     export.export_all(arc, out)
 
-    june = out / "matches" / "2026-06.parquet"
+    june = out / "matches" / "month=2026-06" / "data.parquet"
     before = june.stat().st_mtime_ns
 
     _archive_match(arc, 11, dt.datetime(2026, 7, 5, tzinfo=dt.UTC))
     export.export_new(arc, out)
 
     assert june.stat().st_mtime_ns == before
-    assert (out / "matches" / "2026-07.parquet").exists()
+    assert (out / "matches" / "month=2026-07" / "data.parquet").exists()
 
 
 def test_incremental_is_idempotent(tmp_path):
@@ -1332,13 +1333,39 @@ def test_incremental_is_idempotent(tmp_path):
     assert matches.get_column("match_id").n_unique() == matches.height
 
 
+def test_flush_cap_splits_a_month_without_changing_its_content(tmp_path, monkeypatch):
+    infos = [build_match(match_id=10 + n) for n in range(5)]
+    whole = tmp_path / "whole"
+    split = tmp_path / "split"
+
+    export.export_infos(iter(infos), whole, exclude=("movement",))
+
+    monkeypatch.setattr(export, "FLUSH_MATCHES", 2)
+    export.export_infos(iter(infos), split, exclude=("movement",))
+
+    for name in sorted(schemas.PARTITIONED):
+        if name == "movement":
+            continue
+
+        files = sorted(p.relative_to(split) for p in split.glob(f"{name}/month=*/*.parquet"))
+
+        assert files == sorted(
+            p.relative_to(whole) for p in whole.glob(f"{name}/month=*/*.parquet")
+        )
+
+        left = pl.read_parquet(whole / name / "**/*.parquet").sort("match_id")
+        right = pl.read_parquet(split / name / "**/*.parquet").sort("match_id")
+
+        assert right.equals(left)
+
+
 def test_write_partitioned_replaces_rather_than_duplicating(tmp_path):
     df = export.build_tables([build_match(match_id=5)])["matches"]
 
     export.write_partitioned("matches", df, "2026-06", tmp_path)
     export.write_partitioned("matches", df, "2026-06", tmp_path)
 
-    got = pl.read_parquet(tmp_path / "matches" / "2026-06.parquet")
+    got = pl.read_parquet(tmp_path / "matches" / "month=2026-06" / "data.parquet")
 
     assert got.height == 1
     assert got.get_column("match_id").to_list() == [5]
@@ -1349,7 +1376,7 @@ def test_write_partitioned_rejects_schema_drift(tmp_path):
 
     export.write_partitioned("matches", df, "2026-06", tmp_path)
 
-    target = tmp_path / "matches" / "2026-06.parquet"
+    target = tmp_path / "matches" / "month=2026-06" / "data.parquet"
     before = target.read_bytes()
 
     with pytest.raises((pl.exceptions.ShapeError, pl.exceptions.SchemaError, ValueError)):
@@ -1363,7 +1390,7 @@ def test_write_partitioned_rejects_an_old_schema_month_file(tmp_path):
 
     export.write_partitioned("matches", df, "2026-06", tmp_path)
 
-    target = tmp_path / "matches" / "2026-06.parquet"
+    target = tmp_path / "matches" / "month=2026-06" / "data.parquet"
     pl.read_parquet(target).drop("duration_s").write_parquet(target)
     before = target.read_bytes()
 

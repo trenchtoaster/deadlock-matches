@@ -159,7 +159,9 @@ def _to_length(values: Any, n: int) -> list:
     return out
 
 
-def _movement_frame(info: MatchInfo, account_id: int, path: Any) -> pl.DataFrame:
+def _movement_frame(
+    info: MatchInfo, start_time: dt.datetime, player: Any, path: Any
+) -> pl.DataFrame:
     """Build one movement row per second for one player, converting the stored path to world units."""
     mp = info.match_paths
     sx = (path.x_max - path.x_min) / mp.x_resolution if mp.x_resolution else 0.0
@@ -182,7 +184,9 @@ def _movement_frame(info: MatchInfo, account_id: int, path: Any) -> pl.DataFrame
         },
     ).select(
         match_id=pl.lit(info.match_id),
-        account_id=pl.lit(account_id),
+        start_time=pl.lit(start_time),
+        account_id=pl.lit(player.account_id),
+        hero_id=pl.lit(player.hero_id),
         game_time_s=(pl.int_range(pl.len()) * interval).round(0).cast(pl.Int64),
         x=path.x_min + pl.col("x_pos") * sx,
         y=path.y_min + pl.col("y_pos") * sy,
@@ -225,7 +229,13 @@ def _movement_intervals_frame(frame: pl.DataFrame) -> pl.DataFrame:
             .then(pl.col("step"))
             .alias("step")
         )
-        .group_by("match_id", "account_id", (pl.col("game_time_s") // 60 * 60).alias("start_s"))
+        .group_by(
+            "match_id",
+            "start_time",
+            "account_id",
+            "hero_id",
+            (pl.col("game_time_s") // 60 * 60).alias("start_s"),
+        )
         .agg(
             pl.len().alias("alive_s"),
             pl.col("step").is_not_null().sum().alias("moving_s"),
@@ -305,11 +315,14 @@ def build_tables(
         )
 
         slot_to_account = {p.player_slot: p.account_id for p in info.players}
+        hero_by_slot = {p.player_slot: p.hero_id for p in info.players}
+        hero_by_account = {p.account_id: p.hero_id for p in info.players}
         path_by_slot = {p.player_slot: p for p in info.match_paths.paths}
 
         mid_boss.extend(
             {
                 "match_id": info.match_id,
+                "start_time": start_time,
                 "destroyed_time_s": m.destroyed_time_s,
                 "team_killed": m.team_killed,
                 "team_claimed": m.team_claimed,
@@ -320,6 +333,7 @@ def build_tables(
         objectives.extend(
             {
                 "match_id": info.match_id,
+                "start_time": start_time,
                 "team": o.team,
                 "objective_id": o.team_objective_id,
                 "objective": OBJECTIVE_NAMES.get(o.team_objective_id),
@@ -337,6 +351,7 @@ def build_tables(
             players.append(
                 {
                     "match_id": info.match_id,
+                    "start_time": start_time,
                     "account_id": p.account_id,
                     "hero_id": p.hero_id,
                     "team": p.team,
@@ -360,14 +375,18 @@ def build_tables(
                 stats.append(
                     {
                         "match_id": info.match_id,
+                        "start_time": start_time,
                         "account_id": p.account_id,
+                        "hero_id": p.hero_id,
                         **{schemas.souls(f): getattr(s, f) for f in schemas.STAT_FIELDS},
                     }
                 )
                 sources.extend(
                     {
                         "match_id": info.match_id,
+                        "start_time": start_time,
                         "account_id": p.account_id,
+                        "hero_id": p.hero_id,
                         "time_stamp_s": s.time_stamp_s,
                         "source": g.source,
                         "source_name": SOURCE_NAMES.get(g.source, str(g.source)),
@@ -382,7 +401,7 @@ def build_tables(
             want_intervals = "movement_intervals" not in exclude
 
             if track is not None and (want_track or want_intervals):
-                frame = _movement_frame(info, p.account_id, track)
+                frame = _movement_frame(info, start_time, p, track)
 
                 if want_track:
                     tracks.append(frame)
@@ -393,7 +412,9 @@ def build_tables(
             deaths.extend(
                 {
                     "match_id": info.match_id,
+                    "start_time": start_time,
                     "account_id": p.account_id,
+                    "hero_id": p.hero_id,
                     "game_time_s": d.game_time_s,
                     "time_to_kill_s": d.time_to_kill_s,
                     "death_duration_s": d.death_duration_s,
@@ -414,7 +435,9 @@ def build_tables(
                 item_events.append(
                     {
                         "match_id": info.match_id,
+                        "start_time": start_time,
                         "account_id": p.account_id,
+                        "hero_id": p.hero_id,
                         "game_time_s": it.game_time_s,
                         "item_id": it.item_id,
                         "item": item.name if item else None,
@@ -430,7 +453,9 @@ def build_tables(
             accolade_rows.extend(
                 {
                     "match_id": info.match_id,
+                    "start_time": start_time,
                     "account_id": p.account_id,
+                    "hero_id": p.hero_id,
                     "accolade_id": a.accolade_id,
                     "value": a.accolade_stat_value,
                     "threshold": a.accolade_threshold_achieved,
@@ -443,7 +468,9 @@ def build_tables(
                 buff_rows.append(
                     {
                         "match_id": info.match_id,
+                        "start_time": start_time,
                         "account_id": p.account_id,
+                        "hero_id": p.hero_id,
                         "type": b.type,
                         "buff": buff,
                         "level": level,
@@ -455,7 +482,9 @@ def build_tables(
             stack_rows.extend(
                 {
                     "match_id": info.match_id,
+                    "start_time": start_time,
                     "account_id": p.account_id,
+                    "hero_id": p.hero_id,
                     "ability_id": st.ability_id,
                     "value": st.ability_value,
                 }
@@ -465,7 +494,9 @@ def build_tables(
             custom_rows.extend(
                 {
                     "match_id": info.match_id,
+                    "start_time": start_time,
                     "account_id": account_id,
+                    "hero_id": hero_by_account.get(account_id),
                     "time_stamp_s": time_stamp_s,
                     "group": group,
                     "stat": stat,
@@ -490,7 +521,9 @@ def build_tables(
                     damage.append(
                         {
                             "match_id": info.match_id,
-                            "dealer_account_id": slot_to_account.get(d.dealer_player_slot),
+                            "start_time": start_time,
+                            "account_id": slot_to_account.get(d.dealer_player_slot),
+                            "hero_id": hero_by_slot.get(d.dealer_player_slot),
                             "target_account_id": slot_to_account.get(t.target_player_slot),
                             "target_player_slot": t.target_player_slot,
                             "source_class": details.source_name[i],
@@ -523,7 +556,9 @@ def build_tables(
             damage_sources.extend(
                 {
                     "match_id": info.match_id,
-                    "dealer_account_id": slot_to_account.get(slot),
+                    "start_time": start_time,
+                    "account_id": slot_to_account.get(slot),
+                    "hero_id": hero_by_slot.get(slot),
                     "source_class": source,
                     "stat": STAT_NAMES.get(details.stat_type[i], str(details.stat_type[i])),
                     "vs_heroes": vs_heroes,
@@ -539,7 +574,9 @@ def build_tables(
             damage_targets.extend(
                 {
                     "match_id": info.match_id,
-                    "dealer_account_id": slot_to_account.get(slot),
+                    "start_time": start_time,
+                    "account_id": slot_to_account.get(slot),
+                    "hero_id": hero_by_slot.get(slot),
                     "target_account_id": slot_to_account.get(target_slot),
                     "source_class": source,
                     "stat": STAT_NAMES.get(details.stat_type[i], str(details.stat_type[i])),
@@ -678,6 +715,8 @@ def schema_drift(out_dir: Path, exclude: Collection[str] = ()) -> str | None:
 
     - read schemas from parquet footers
     - a missing table directory counts as a mismatch
+    - a month file sitting flat in the table directory is the pre-hive layout
+      and counts as a mismatch too
     """
     if not (out_dir / "matches").is_dir():
         return None
@@ -691,11 +730,16 @@ def schema_drift(out_dir: Path, exclude: Collection[str] = ()) -> str | None:
         if not directory.is_dir():
             return f"the {name} table is missing"
 
+        if next(directory.glob("*.parquet"), None) is not None:
+            return f"the {name} table is on the flat month layout"
+
         expected = set(schemas.TABLES[name])
 
-        for month_file in sorted(directory.glob("*.parquet")):
+        for month_file in sorted(directory.glob("month=*/*.parquet")):
+            month = month_file.parent.name.removeprefix("month=")
+
             if set(pl.read_parquet_schema(month_file)) != expected:
-                return f"{name} {month_file.stem} columns differ from schemas.py"
+                return f"{name} {month} columns differ from schemas.py"
 
     return None
 
@@ -705,6 +749,7 @@ def drop_only_drift(out_dir: Path, exclude: Collection[str] = ()) -> bool:
 
     - every table has to be on disk already, a missing one needs a real decode
     - every column the schema still asks for has to be in the footer, a new one needs a decode too
+    - the pre-hive flat month layout needs a full rebuild, not a reshape
     """
     for name in sorted(schemas.PARTITIONED):
         if name in exclude:
@@ -715,9 +760,12 @@ def drop_only_drift(out_dir: Path, exclude: Collection[str] = ()) -> bool:
         if not directory.is_dir():
             return False
 
+        if next(directory.glob("*.parquet"), None) is not None:
+            return False
+
         expected = set(schemas.TABLES[name])
 
-        for month_file in sorted(directory.glob("*.parquet")):
+        for month_file in sorted(directory.glob("month=*/*.parquet")):
             if not expected <= set(pl.read_parquet_schema(month_file)):
                 return False
 
@@ -743,7 +791,7 @@ def reshape_partitions(out_dir: Path, exclude: Collection[str] = ()) -> int:
 
         expected = set(schemas.TABLES[name])
 
-        for month_file in sorted(directory.glob("*.parquet")):
+        for month_file in sorted(directory.glob("month=*/*.parquet")):
             if set(pl.read_parquet_schema(month_file)) == expected:
                 continue
 
@@ -769,38 +817,38 @@ def _new_archive_paths(archive_dir: Path, exported: set[int]) -> list[Path]:
 
 
 def write_partitioned(name: str, df: pl.DataFrame, month: str, out_dir: Path) -> int:
-    """Merge one month of rows into out_dir/<name>/<month>.parquet and return the rows merged in.
+    """Merge one month of rows into out_dir/<name>/month=<month>/data.parquet and return the rows merged in.
 
-    - reads the existing month file, drops the match_ids in the batch, concats the new rows
+    - scans the existing month file, drops the match_ids in the batch, streams the concat to disk
     - a schema drift in the batch or the existing file raises before anything is touched
     - writes a temp file and renames it, so a crash mid-write leaves the old file intact
     - match_id is the identity, so re-running the same batch leaves the content unchanged
     """
-    directory = out_dir / name
+    directory = out_dir / name / f"month={month}"
     directory.mkdir(parents=True, exist_ok=True)
 
-    target = directory / f"{month}.parquet"
+    target = directory / "data.parquet"
     expected = set(schemas.TABLES[name])
     drifted = f"{name} {month} columns drifted from schemas.py, run a full rebuild"
 
     if set(df.columns) != expected:
         raise ValueError(drifted)
 
-    if target.exists():
-        existing = pl.read_parquet(target)
+    tmp = directory / "data.parquet.tmp"
 
-        if set(existing.columns) != expected:
+    if target.exists():
+        existing = pl.scan_parquet(target)
+
+        if set(existing.collect_schema().names()) != expected:
             raise ValueError(drifted)
 
         batch_ids = df.get_column("match_id").unique().to_list()
         preserved = existing.filter(~pl.col("match_id").is_in(batch_ids))
-        merged = pl.concat([preserved, df], how="vertical")
+        pl.concat([preserved, df.lazy()], how="vertical").sink_parquet(tmp)
 
     else:
-        merged = df
+        df.write_parquet(tmp)
 
-    tmp = directory / f"{month}.parquet.tmp"
-    merged.write_parquet(tmp)
     Path(tmp).replace(target)
 
     return len(df)
@@ -819,15 +867,20 @@ def _flush_month(
         counts[name] = counts.get(name, 0) + written
 
 
+FLUSH_MATCHES = 50
+
+
 def export_infos(
     infos: Iterable[MatchInfo],
     out_dir: Path,
     exclude: Collection[str],
 ) -> dict[str, int]:
-    """Build and write tables one match-start month at a time so memory stays bounded to one month.
+    """Build and write tables in bounded batches so memory never scales with the archive.
 
     - infos must arrive so a month is contiguous and ascending match_id order does that
-    - each month flushes to its partitions before the next month is decoded
+    - a batch flushes when the month changes or it reaches FLUSH_MATCHES matches,
+      whichever comes first; merging by match_id makes the split flushes land in
+      the same month file
     """
     counts: dict[str, int] = {}
     current_month: str | None = None
@@ -836,7 +889,7 @@ def export_infos(
     for info in infos:
         month = _match_month(info)
 
-        if current_month is not None and month != current_month:
+        if current_month is not None and (month != current_month or len(batch) >= FLUSH_MATCHES):
             _flush_month(batch, current_month, out_dir, exclude, counts)
             batch = []
 
@@ -872,11 +925,12 @@ def _carry_forward(name: str, out_dir: Path, staging: Path, decoded: Collection[
 
     keep = list(decoded)
 
-    for month_file in sorted(old.glob("*.parquet")):
+    for month_file in sorted(old.glob("month=*/*.parquet")):
+        month = month_file.parent.name.removeprefix("month=")
         rows = pl.read_parquet(month_file).filter(~pl.col("match_id").is_in(keep))
 
         if not rows.is_empty():
-            write_partitioned(name, _reshape_to_schema(name, rows), month_file.stem, staging)
+            write_partitioned(name, _reshape_to_schema(name, rows), month, staging)
 
 
 def _swap_into_place(staged: Path, target: Path) -> None:
@@ -930,7 +984,9 @@ def _fill_missing_tables(out_dir: Path, exclude: Collection[str]) -> None:
     if not matches_dir.is_dir():
         return
 
-    months = sorted(f.stem for f in matches_dir.glob("*.parquet"))
+    months = sorted(
+        d.name.removeprefix("month=") for d in matches_dir.glob("month=*") if d.is_dir()
+    )
 
     if not months:
         return

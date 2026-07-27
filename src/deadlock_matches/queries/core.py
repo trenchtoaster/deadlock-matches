@@ -129,7 +129,7 @@ def scan(table: str, parquet_dir: str | Path | None = None) -> pl.LazyFrame:
         directory = schemas.partition_dir(table, parquet_dir)
 
         if directory.is_dir():
-            return pl.scan_parquet(str(directory / "*.parquet"))
+            return pl.scan_parquet(str(directory / "**/*.parquet"), hive_partitioning=True)
 
     path = schemas.table_path(table, parquet_dir)
 
@@ -155,7 +155,7 @@ def table_exists(table: str, parquet_dir: str | Path | None = None) -> bool:
     if schemas.is_partitioned(table):
         directory = schemas.partition_dir(table, parquet_dir)
 
-        if directory.is_dir() and next(directory.glob("*.parquet"), None) is not None:
+        if directory.is_dir() and next(directory.glob("month=*/*.parquet"), None) is not None:
             return True
 
     if schemas.table_path(table, parquet_dir).exists():
@@ -400,15 +400,13 @@ def my_games(
     return MetricView(source=_played_matches(accounts, tz, match_mode, game_mode))
 
 
-def _local_day(frame: pl.LazyFrame, parquet_dir: str | Path | None, tz: str | None) -> pl.LazyFrame:
-    """Join match start_time and add start_local/day columns in the given zone."""
+def _local_day(frame: pl.LazyFrame, tz: str | None) -> pl.LazyFrame:
+    """Add start_local/day columns in the given zone from the start_time column."""
     tz = config.config_timezone() if tz is None else tz
 
-    return (
-        frame.join(scan("matches", parquet_dir).select("match_id", "start_time"), on="match_id")
-        .with_columns(pl.col("start_time").dt.convert_time_zone(tz).alias("start_local"))
-        .with_columns(pl.col("start_local").dt.date().alias("day"))
-    )
+    return frame.with_columns(
+        pl.col("start_time").dt.convert_time_zone(tz).alias("start_local")
+    ).with_columns(pl.col("start_local").dt.date().alias("day"))
 
 
 def _resolved_accounts(accounts: Sequence[int] | None) -> list[int]:
