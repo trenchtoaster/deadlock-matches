@@ -29,7 +29,9 @@ Use `deadlock schema [table]` when you want the exact columns, data types, and d
 
 The tables do not cover everything Valve stores yet. The full structure is `CMsgMatchMetaDataContents` in [`protos/citadel_gcmessages_common.proto`](../protos/citadel_gcmessages_common.proto). This is a work in progress, and new columns and tables get added as more of that data turns out to be interesting to query.
 
-`deadlock download --hero` builds the same tables for matches from other players in the `parquet-players/` directory: the players tracked under `[players.<Hero>]` in config, plus any account or match id you pass to `--account` / `--match`. The layout is identical, so query patterns work on their games too. An extra `downloads` table records which player each match came from, their rank at the time, and when it was retrieved. A match pulled by id has no player, so those columns are null.
+`deadlock download --hero` builds the same tables for matches from other players in the `parquet-players/` directory: the players tracked under `[players.<Hero>]` in config, plus any account or match id you pass to `--account` / `--match`. Normal matchmaking is downloaded by default; `--street-brawl` and `--private-lobby` explicitly fetch those modes. The layout is identical, so query patterns work on their games too. An extra `downloads` table records which player each match came from, their rank at the time, and when it was retrieved. A match pulled by id has no player, so those columns are null.
+
+The archive, player tables, and downloads ledger retain every fetched mode. Query views and comparison-pool readers apply `match_mode == Matchmaking` and `game_mode == Normal` by default at read time, so old Street Brawl or scrim rows remain inspectable without contaminating normal-matchmaking statistics.
 
 ## Query Patterns
 
@@ -46,9 +48,9 @@ Questions like these are a few lines of polars each:
 
 A metric view declares which dimensions you can group by and which measures you can aggregate, so `queries.summarize()` writes the join and the aggregation for you. `deadlock schema --views` lists every view with its arguments, dimensions, and measures.
 
-- `my_games`: one row per match you played, with the local day for grouping by session.
+- `my_games`: one row per normal-matchmaking match you played by default, with the local day for grouping by session. Pass mode arguments or use `queries.mode_context` for Street Brawl/Private Lobby.
 - `record_games`: one row per match in the winrate window. Its wins count matches where `my_games` counts account-games.
-- `stat_snapshots`: the `stats` table collapsed to each player-game's last sample before anything is summed. That collapse is what stops cumulative snapshots from being added up by accident. Net worth, damage, accuracy, headshot rate, and the K/D/A counters.
+- `stat_snapshots`: the selected-mode `stats` table collapsed to each player-game's last sample before anything is summed. Normal matchmaking is the default when it selects games itself; an explicit `games=` frame is trusted as-is. That collapse is what stops cumulative snapshots from being added up by accident. Net worth, damage, accuracy, headshot rate, and the K/D/A counters.
 - `hero_damage_games`, `damage_source_games`, `soul_source_games`, `movement_games`, `combat_games`, `buff_games`, `stack_games`: the views behind the damage, souls, movement, combat, and buff reports.
 - `compare_intervals`, `cumulative_marks`, `milestone_games`: gains per interval, totals at a mark, and the minute a net worth was first reached.
 
