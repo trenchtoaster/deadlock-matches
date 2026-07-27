@@ -192,13 +192,13 @@ def builds_report(args: argparse.Namespace, config: str | Path | None = None) ->
     members = players.pool_members(args.hero, config_path=config)
 
     if not members:
-        print(no_pool_hint(args.hero, tracked_in_config=False))
+        print(no_pool_hint(args.hero, tracked_in_config=False, mode=args.mode))
         return
 
     builds = players.pool_builds(args.hero, config_path=config)
 
     if not builds:
-        print(no_pool_hint(args.hero, tracked_in_config=True))
+        print(no_pool_hint(args.hero, tracked_in_config=True, mode=args.mode))
         return
 
     by_account: dict[int, list[dict]] = {}

@@ -34,7 +34,7 @@ def souls(field_name: str) -> str:
 
 
 def _stat_field_names() -> tuple[str, ...]:
-    """Scalar PlayerStats field names, read off the protobuf descriptor."""
+    """Read the scalar PlayerStats field names off the protobuf descriptor."""
     desc: Any = extract.pb.CMsgMatchMetaDataContents.Players.DESCRIPTOR
     stats_desc = desc.fields_by_name["stats"].message_type
 
@@ -93,11 +93,14 @@ WEAPON_FIELD_DESCRIPTIONS = {
 
 
 class Table:
-    """Base for table models, where spec() collects the Column attributes in order."""
+    """Base for table models.
+
+    - spec() collects the Column attributes in declaration order
+    """
 
     @classmethod
     def spec(cls) -> dict[str, Column]:
-        """Collect the table columns as {name: Column}, in declaration order."""
+        """Collect the table columns as {name: Column} in declaration order."""
         return {name: v for name, v in vars(cls).items() if isinstance(v, Column)}
 
 
@@ -110,8 +113,17 @@ class Matches(Table):
     winning_team = Column(
         pl.Int64, "0 = The Hidden King (Amber internally), 1 = The Archmother (Sapphire)"
     )
-    match_mode = Column(pl.Int64, "1 = ranked")
-    game_mode = Column(pl.Int64, "Protobuf ECitadelGameMode value (1 = normal)")
+    match_mode = Column(
+        pl.Int64,
+        "Protobuf ECitadelMatchMode value, 1 = matchmaking (Deadlock has one "
+        "queue, there is no ranked/unranked split), 2 = private lobby such as a "
+        "scrim, 4 = the retired ranked queue",
+    )
+    game_mode = Column(
+        pl.Int64,
+        "Protobuf ECitadelGameMode value, 1 = normal, 4 = Street Brawl, which "
+        "is a different map and ruleset that still carries match_mode 1",
+    )
     average_badge_team0 = Column(
         pl.Int64,
         "Average skill rating of team 0 as a badge level, tier * 10 + level "
@@ -163,10 +175,12 @@ class Players(Table):
 
 
 class Stats(Table):
-    """Cumulative snapshots every 3 minutes through 15:00 and every 5 after, with columns from the protobuf descriptor.
+    """Cumulative snapshots every 3 minutes through 15:00 and every 5 after.
 
-    Declare a Column attribute here to describe a field. Anything not declared
-    gets a generic description. spec() fills in the full protobuf field list.
+    - the columns come from the protobuf descriptor
+    - declare a Column attribute here to describe a field
+    - anything not declared gets a generic description
+    - spec() fills in the full protobuf field list
     """
 
     match_id = MATCH_ID
@@ -191,7 +205,10 @@ class Stats(Table):
 
     @classmethod
     def spec(cls) -> dict[str, Column]:
-        """Builds the full column list from the protobuf descriptor, using the declared Columns where they exist."""
+        """Build the full column list from the protobuf descriptor.
+
+        - the declared Columns are used where they exist
+        """
         declared = super().spec()
         cols = {"match_id": MATCH_ID, "account_id": ACCOUNT_ID}
 
@@ -309,7 +326,10 @@ class CustomStats(Table):
 
 
 class Damage(Table):
-    """Final damage matrix numbers for each dealer, source, and target, the totals table with no time axis so summing by source is safe."""
+    """Final damage matrix numbers for each dealer, source, and target.
+
+    - the totals table has no time axis, so summing by source is safe
+    """
 
     match_id = MATCH_ID
     dealer_account_id = Column(pl.Int64, "Who dealt it, null for non-player slots")
@@ -470,10 +490,11 @@ class Deaths(Table):
 
 
 class Downloads(Table):
-    """One row per (downloaded match, tracked player), showing why each match is in the players tables.
+    """One row per (downloaded match, tracked player).
 
-    This table only exists in the players parquet directory. The eight match tables there share
-    the schemas above.
+    - shows why each match is in the players tables
+    - this table only exists in the players parquet directory
+    - the eight match tables there share the schemas above
     """
 
     match_id = MATCH_ID
@@ -756,10 +777,12 @@ def partition_dir(table: str, parquet_dir: str | Path) -> Path:
 
 
 def table_path(table: str, parquet_dir: str | Path) -> Path:
-    """Path to a single-file table parquet (asset tables live under the assets subfolder).
+    """Build the path to a single-file table parquet.
 
-    Partitioned tables live in a directory instead. Callers that need to read them
-    go through queries.scan, which tolerates both layouts.
+    - asset tables live under the assets subfolder
+    - partitioned tables live in a directory instead
+    - callers that need to read those go through queries.scan, which
+      tolerates both layouts
     """
     parquet_dir = Path(parquet_dir)
 
@@ -770,7 +793,10 @@ def table_path(table: str, parquet_dir: str | Path) -> Path:
 
 
 def conform(name: str, rows: list[dict] | pl.DataFrame) -> pl.DataFrame:
-    """Build one table from rows or a prebuilt frame, enforcing the declared columns and dtypes."""
+    """Build one table from rows or a prebuilt frame.
+
+    - the declared columns and dtypes are enforced
+    """
     spec = TABLES[name]
     got = set(rows.columns) if isinstance(rows, pl.DataFrame) else set(rows[0]) if rows else None
 
@@ -789,7 +815,10 @@ def conform(name: str, rows: list[dict] | pl.DataFrame) -> pl.DataFrame:
 
 
 def describe(table: str | None = None) -> str:
-    """Data dictionary as text, one table or all of them when table is None."""
+    """Render the data dictionary as text.
+
+    - covers one table, or all of them when table is None
+    """
     if table is not None and table not in TABLES:
         known = ", ".join(TABLES)
         msg = f"Unknown table {table!r}, tables: {known}"

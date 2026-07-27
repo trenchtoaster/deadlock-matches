@@ -5,15 +5,22 @@ from __future__ import annotations
 import contextlib
 import contextvars
 import datetime as dt
+import functools
+import operator
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Literal
 
 import polars as pl
 
-from deadlock_matches import config, export, schemas
+from deadlock_matches import config, export, extract, schemas
 from deadlock_matches.assets import heroes
 from deadlock_matches.assets import skill_rating as sr
-from deadlock_matches.queries.labels import hero_name, with_hero_name
+from deadlock_matches.queries.labels import (
+    game_mode_name,
+    hero_name,
+    match_mode_name,
+    with_hero_name,
+)
 from deadlock_matches.queries.semantic import (
     Dimension,
     Join,
@@ -32,6 +39,44 @@ _ERA_SENTINEL = dt.datetime(1970, 1, 1, tzinfo=dt.UTC)
 _AMBIENT_PARQUET_DIR: contextvars.ContextVar[str | Path | None] = contextvars.ContextVar(
     "deadlock_parquet_dir", default=None
 )
+
+INHERIT: Literal["inherit"] = "inherit"
+
+type ModeArg = int | Literal["inherit"] | None
+
+_AMBIENT_MODES: contextvars.ContextVar[tuple[int | None, int | None]] = contextvars.ContextVar(
+    "deadlock_modes", default=(extract.MATCH_MODE_MATCHMAKING, extract.GAME_MODE_NORMAL)
+)
+
+
+@contextlib.contextmanager
+def mode_context(
+    match_mode: int | None = extract.MATCH_MODE_MATCHMAKING,
+    game_mode: int | None = extract.GAME_MODE_NORMAL,
+) -> Iterator[None]:
+    """Make one pair of match and game modes the default for every view inside the block.
+
+    - a report picks its games this way instead of every helper growing two
+      more arguments
+    - the standing default is ordinary matchmaking games
+    - None on either argument lifts that half of the filter
+    """
+    token = _AMBIENT_MODES.set((match_mode, game_mode))
+
+    try:
+        yield
+    finally:
+        _AMBIENT_MODES.reset(token)
+
+
+def _resolved_modes(match_mode: ModeArg, game_mode: ModeArg) -> tuple[int | None, int | None]:
+    """Fall back to the ambient modes for whichever argument was left to inherit."""
+    ambient_match, ambient_game = _AMBIENT_MODES.get()
+
+    return (
+        ambient_match if match_mode == INHERIT else match_mode,
+        ambient_game if game_mode == INHERIT else game_mode,
+    )
 
 
 @contextlib.contextmanager
@@ -67,10 +112,11 @@ def _resolved_parquet_dir(parquet_dir: str | Path | None) -> str | Path:
 def scan(table: str, parquet_dir: str | Path | None = None) -> pl.LazyFrame:
     """Lazily scan one exported table by name (one of schemas.TABLES).
 
-    parquet_dir defaults to whatever parquet_dir_context set, then to the
-    standard export directory, here and in every query below. An asset table
-    missing from parquet_dir is read from the standard export directory
-    instead, so secondary stores like parquet-players share one copy.
+    - parquet_dir defaults to whatever parquet_dir_context set, then to the
+      standard export directory, here and in every query below
+    - an asset table missing from parquet_dir is read from the standard
+      export directory instead, so secondary stores like parquet-players
+      share one copy
     """
     if table not in schemas.TABLES:
         known = ", ".join(schemas.TABLES)
@@ -94,9 +140,10 @@ def scan(table: str, parquet_dir: str | Path | None = None) -> pl.LazyFrame:
 
 
 def table_exists(table: str, parquet_dir: str | Path | None = None) -> bool:
-    """Whether a table is on disk, as a month-partitioned directory or a single parquet file.
+    """Check whether a table is on disk.
 
-    Asset tables fall back to the standard export directory like scan.
+    - counts a month-partitioned directory or a single parquet file
+    - asset tables fall back to the standard export directory like scan
     """
     if table not in schemas.TABLES:
         known = ", ".join(schemas.TABLES)
@@ -172,7 +219,10 @@ def asset_asof(
 
 
 def hero_filter(name: str) -> pl.Expr:
-    """Filter to one hero by name, raising on a typo instead of returning nothing."""
+    """Filter to one hero by name.
+
+    - a typo raises instead of quietly returning nothing
+    """
     hero_id = heroes.hero_id_by_name(name)
 
     if hero_id is None:
@@ -187,7 +237,16 @@ SCORED = ~pl.col("matches.not_scored").fill_null(value=False)
 MY_GAMES_DIMENSIONS = {
     "account": Dimension(pl.col("account_id")),
     "hero": Dimension(hero_name(), resolve=hero_filter),
-    "match_mode": Dimension(pl.col("matches.match_mode"), comment="1 is ranked."),
+    "match_mode": Dimension(
+        match_mode_name("matches.match_mode"),
+        comment="Matchmaking is the only queue, Private Lobby is a scrim. "
+        "Views keep Matchmaking alone unless match_mode= says otherwise.",
+    ),
+    "game_mode": Dimension(
+        game_mode_name("matches.game_mode"),
+        comment="Normal or Street Brawl, which is a different map and ruleset "
+        "carrying the same match mode. Views keep Normal alone.",
+    ),
     "assigned_lane": Dimension(
         pl.col("assigned_lane"),
         comment="Raw engine id, use lane for the readable color.",
@@ -254,19 +313,59 @@ MY_GAMES_MEASURES = {
 }
 
 
-def _played_matches(accounts: Sequence[int] | None, tz: str | None) -> MetricView:
-    """Player rows joined to their match, carrying the local start time.
+def mode_filter(
+    match_mode: ModeArg = INHERIT,
+    game_mode: ModeArg = INHERIT,
+    *,
+    prefix: str = "matches.",
+) -> pl.Expr | None:
+    """Build the mode filter every report over your own games starts from.
+
+    - both arguments inherit from mode_context, which stands at ordinary
+      matchmaking games
+    - Street Brawl runs a different map and ruleset while still carrying
+      match_mode 1, so game_mode has to be pinned separately
+    - None on either side lifts that half of the filter
+    - prefix names the joined match-column namespace; use an empty prefix
+      after joining a raw matches frame
+    """
+    match_mode, game_mode = _resolved_modes(match_mode, game_mode)
+    clauses = []
+
+    if match_mode is not None:
+        clauses.append(pl.col(f"{prefix}match_mode") == match_mode)
+
+    if game_mode is not None:
+        clauses.append(pl.col(f"{prefix}game_mode") == game_mode)
+
+    if not clauses:
+        return None
+
+    return functools.reduce(operator.and_, clauses)
+
+
+def _played_matches(
+    accounts: Sequence[int] | None,
+    tz: str | None,
+    match_mode: ModeArg = INHERIT,
+    game_mode: ModeArg = INHERIT,
+) -> MetricView:
+    """Join player rows to their match and carry the local start time.
 
     - the timezone lands inside an expression, so the local start has to be
       built where the parameter is known, and everything derived from it
       then reads one column
+    - match_mode and game_mode inherit from mode_context, which stands at
+      ordinary matchmaking games
     """
     zone = config.config_timezone() if tz is None else tz
+    modes = mode_filter(match_mode, game_mode)
+    accounts_filter = pl.col("account_id").is_in(_resolved_accounts(accounts))
 
     return MetricView(
         source="players",
         joins=(Join("matches", using="match_id"),),
-        filter=pl.col("account_id").is_in(_resolved_accounts(accounts)),
+        filter=accounts_filter if modes is None else accounts_filter & modes,
         dimensions={
             "start_local": Dimension(
                 pl.col("matches.start_time").dt.convert_time_zone(zone),
@@ -284,14 +383,21 @@ def _played_matches(accounts: Sequence[int] | None, tz: str | None) -> MetricVie
 def my_games(
     accounts: Sequence[int] | None = None,
     tz: str | None = None,
+    match_mode: ModeArg = INHERIT,
+    game_mode: ModeArg = INHERIT,
 ) -> MetricView:
     """One row per match the player appeared in, joined to match details.
 
     - grouping by day or week uses the local date, not the UTC date
     - accounts (Steam32 account IDs) and tz default to config.toml and
       the detected zone
+    - only ordinary matchmaking games count by default, so Street Brawl and
+      private lobbies stay out of every rate built on this view
+    - match_mode and game_mode inherit from mode_context unless passed
+    - game_mode=extract.GAME_MODE_STREET_BRAWL gives the brawl games alone
+    - None on either argument lifts that half of the filter
     """
-    return MetricView(source=_played_matches(accounts, tz))
+    return MetricView(source=_played_matches(accounts, tz, match_mode, game_mode))
 
 
 def _local_day(frame: pl.LazyFrame, parquet_dir: str | Path | None, tz: str | None) -> pl.LazyFrame:

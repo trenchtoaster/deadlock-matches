@@ -11,7 +11,16 @@ import polars.selectors as cs
 
 from deadlock_matches import config
 from deadlock_matches.assets import heroes
-from deadlock_matches.queries.core import _local_day, my_games, player_rows, scan, table_exists
+from deadlock_matches.queries.core import (
+    INHERIT,
+    ModeArg,
+    _local_day,
+    mode_filter,
+    my_games,
+    player_rows,
+    scan,
+    table_exists,
+)
 from deadlock_matches.queries.delivery import damage_category
 from deadlock_matches.queries.labels import hero_name
 from deadlock_matches.queries.semantic import (
@@ -70,8 +79,9 @@ def custom_stats(
     parquet_dir: str | Path | None = None,
     tz: str | None = None,
 ) -> pl.LazyFrame:
-    """Read the stat counters the game tracks but never shows, with hero/won and local day joined on.
+    """Read the stat counters the game tracks but never shows.
 
+    - hero, won, and the local day are joined on
     - snapshot rows like the stats table, final=True (the default) keeps one
       row per stat with the last snapshot value
     - stat and group filter by name, accounts and matches narrow the rows
@@ -112,8 +122,9 @@ def aim_rates(
     parquet_dir: str | Path | None = None,
     tz: str | None = None,
 ) -> pl.DataFrame:
-    """Rank each game of a hero by aim against heroes, as percentiles across the archive.
+    """Rank each game of a hero by aim against heroes.
 
+    - the scores are percentiles across the archive
     - hit_percentile and headshot_percentile rank within the hero, 99 = top 1 percent
     - percentiles rank the whole archive before the accounts filter applies
     - min_shots drops low-volume games
@@ -301,9 +312,24 @@ STAT_SNAPSHOT_MEASURES = {
         "souls",
         "Net worth at the last snapshot. It is a balance, so a death loss makes it fall.",
     ),
-    "kills": _final("kills", "count"),
-    "deaths": _final("deaths", "count", direction="minimize"),
-    "assists": _final("assists", "count"),
+    "kills": _final(
+        "kills",
+        "count",
+        "Live counter, so a kill a Rejuvenator revive later refunded stays counted here. "
+        "Count the deaths table by killer for the settled number.",
+    ),
+    "deaths": _final(
+        "deaths",
+        "count",
+        "Live counter, so a death a Rejuvenator revive later refunded stays counted here. "
+        "The deaths table is the settled number.",
+        direction="minimize",
+    ),
+    "assists": _final(
+        "assists",
+        "count",
+        "Live counter with the same Rejuvenator refund drift as kills and deaths, in fewer games.",
+    ),
     "denies": _final("denies", "count"),
     "player_damage": _final("player_damage", "count", "Damage to heroes."),
     "boss_damage": _final("boss_damage", "count"),
@@ -337,7 +363,10 @@ STAT_SNAPSHOT_MEASURES = {
 
 
 def _snapshot_rows(games: pl.DataFrame | pl.LazyFrame | None) -> pl.LazyFrame:
-    """Snapshot rows, cut to the given player-games when one is passed."""
+    """Read the snapshot rows.
+
+    - cut to the given player-games when a frame is passed
+    """
     rows = scan("stats")
 
     if games is None:
@@ -352,9 +381,16 @@ def _snapshot_series(
     games: pl.DataFrame | pl.LazyFrame | None,
     accounts: Sequence[int] | None,
     tz: str | None,
+    match_mode: ModeArg,
+    game_mode: ModeArg,
 ) -> MetricView:
-    """Snapshot rows joined to their player and match, carrying the local start time."""
+    """Join snapshot rows to their player and match and carry the local start time."""
     zone = config.config_timezone() if tz is None else tz
+    filters = None if games is not None else mode_filter(match_mode, game_mode)
+
+    if accounts is not None:
+        account_filter = pl.col("account_id").is_in(list(accounts))
+        filters = account_filter if filters is None else account_filter & filters
 
     return MetricView(
         source=lambda: _snapshot_rows(games),
@@ -362,7 +398,7 @@ def _snapshot_series(
             Join("players", using=("match_id", "account_id")),
             Join("matches", using="match_id"),
         ),
-        filter=None if accounts is None else pl.col("account_id").is_in(list(accounts)),
+        filter=filters,
         dimensions={
             "start_local": Dimension(
                 pl.col("matches.start_time").dt.convert_time_zone(zone),
@@ -381,26 +417,34 @@ def stat_snapshots(
     games: pl.DataFrame | pl.LazyFrame | None = None,
     accounts: Sequence[int] | None = None,
     tz: str | None = None,
+    match_mode: ModeArg = INHERIT,
+    game_mode: ModeArg = INHERIT,
 ) -> MetricView:
-    """One row per stats snapshot, with every measure reading the last sample of its series.
+    """One row per stats snapshot.
 
+    - every measure reads the last sample of its series
     - the snapshot columns are running values, so summing them across samples
-      multiplies by the sample count. The semiadditive window collapses each
-      player-game to its final sample first, which is what a final total means
+      multiplies by the sample count
+    - the semiadditive window collapses each player-game to its final sample
+      first, which is what a final total means
     - net worth, max health, and the two power columns can fall, so the last
       sample and the biggest sample are not the same number
-    - games cuts the rows to a frame of match_id/account_id pairs
+    - games cuts the rows to an explicit frame of match_id/account_id pairs
+      and is trusted as-is instead of applying another mode filter
+    - ordinary matchmaking is the default; the two mode arguments inherit
+      from mode_context
     """
-    return MetricView(source=_snapshot_series(games, accounts, tz))
+    return MetricView(source=_snapshot_series(games, accounts, tz, match_mode, game_mode))
 
 
 def final_stats(parquet_dir: str | Path | None = None, tz: str | None = None) -> pl.LazyFrame:
-    """Final snapshot values for each player in each match, with hero/won, local day, and gun rates.
+    """Take the final snapshot values for each player in each match.
 
-    Snapshot columns are read at their last sample, not their biggest. Most
-    of them only climb, but net worth, max health, and the power columns fall
-    on a death loss or a sold item. accuracy and headshot_rate are null when
-    nothing was fired.
+    - hero, won, the local day, and the gun rates are joined on
+    - snapshot columns are read at their last sample, not their biggest
+    - most of them only climb, but net worth, max health, and the power
+      columns fall on a death loss or a sold item
+    - accuracy and headshot_rate are null when nothing was fired
     """
     shots = pl.col("shots_hit") + pl.col("shots_missed")
     bullets = pl.col("hero_bullets_hit") + pl.col("hero_bullets_hit_crit")
@@ -425,8 +469,9 @@ def final_stats(parquet_dir: str | Path | None = None, tz: str | None = None) ->
 
 
 def team_damage_ranks(parquet_dir: str | Path | None = None) -> pl.LazyFrame:
-    """Rank players by hero damage within their team, one row per match player.
+    """Rank players by hero damage within their team.
 
+    - one row per match player
     - player_damage is the final snapshot value
     - rank 1 is the team damage chart top, flagged by top_team_damage
     """
@@ -450,7 +495,7 @@ def my_deaths(
     accounts: Sequence[int] | None = None,
     tz: str | None = None,
 ) -> pl.LazyFrame:
-    """Deaths for the player with hero, won, duration, and local day joined in."""
+    """Read the player deaths with hero, won, duration, and local day joined in."""
     games = view_frame(my_games(accounts, tz), parquet_dir=parquet_dir).select(
         "match_id",
         "account_id",
@@ -470,8 +515,9 @@ def death_context(
     accounts: Sequence[int] | None = None,
     tz: str | None = None,
 ) -> pl.LazyFrame:
-    """my_deaths plus counts of nearby allies and enemies, with solo and outnumbered flags.
+    """Add counts of nearby allies and enemies to my_deaths.
 
+    - solo and outnumbered flags come along
     - needs the movement table for player positions (excluded by default)
     """
     if not table_exists("movement", parquet_dir):
@@ -530,10 +576,12 @@ def hero_games(
     parquet_dir: str | Path | None = None,
     accounts: Sequence[int] | None = None,
     since: dt.date | None = None,
+    match_mode: ModeArg = INHERIT,
+    game_mode: ModeArg = INHERIT,
 ) -> pl.LazyFrame:
-    """List your ranked games on one hero as match and account pairs.
+    """List your games on one hero as match and account pairs.
 
-    - only ranked games count, matching the downloaded pool
+    - only ordinary matchmaking games count, matching the downloaded pool
     - since keeps games from that local day onward
     """
     hero_id = heroes.hero_id_by_name(hero)
@@ -542,9 +590,10 @@ def hero_games(
         msg = f"Unknown hero {hero!r}"
         raise ValueError(msg)
 
-    games = view_frame(my_games(accounts), parquet_dir=parquet_dir).filter(
-        pl.col("hero_id") == hero_id, pl.col("match_mode") == 1
-    )
+    games = view_frame(
+        my_games(accounts, match_mode=match_mode, game_mode=game_mode),
+        parquet_dir=parquet_dir,
+    ).filter(pl.col("hero_id") == hero_id)
 
     if since is not None:
         games = games.filter(pl.col("day") >= since)

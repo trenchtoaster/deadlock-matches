@@ -200,6 +200,10 @@ def match_history(args: argparse.Namespace, config: str | Path | None = None) ->
         .with_columns(pl.col("start_time").dt.convert_time_zone(tz).alias("start_local"))
         .with_columns(pl.col("start_local").dt.date().alias("day"))
     )
+    modes = queries.mode_filter(prefix="")
+
+    if modes is not None:
+        matches_lf = matches_lf.filter(modes)
 
     if since is not None:
         matches_lf = matches_lf.filter(pl.col("day") >= since)
@@ -569,18 +573,30 @@ def rebuild_history(args: argparse.Namespace) -> None:
     print(f"\n{tail}")
 
 
-def no_pool_hint(hero: str, *, tracked_in_config: bool) -> str:
+def no_pool_hint(
+    hero: str,
+    *,
+    tracked_in_config: bool,
+    mode: tuple[int, int] | None = None,
+) -> str:
     """Pick the hint that matches how far the tracking setup got for a hero."""
+    mode_flag = ""
+
+    if mode == (extract.MATCH_MODE_MATCHMAKING, extract.GAME_MODE_STREET_BRAWL):
+        mode_flag = " --street-brawl"
+    elif mode == (extract.MATCH_MODE_PRIVATE_LOBBY, extract.GAME_MODE_NORMAL):
+        mode_flag = " --private-lobby"
+
     if tracked_in_config:
         return (
             f"No downloaded games from the tracked {hero} players yet: "
-            f'run `deadlock download --hero "{hero}"`'
+            f'run `deadlock download --hero "{hero}"{mode_flag}`'
         )
 
     return (
         f"No players tracked for {hero} in config.toml: "
-        f'`deadlock leaderboard --hero "{hero}"` prints paste-ready lines, '
-        f'then run `deadlock download --hero "{hero}"`'
+        f'`deadlock leaderboard --hero "{hero}"{mode_flag}` prints paste-ready lines, '
+        f'then run `deadlock download --hero "{hero}"{mode_flag}`'
     )
 
 
@@ -665,7 +681,15 @@ def _download_players(
 
         print(f"  {t['name']:<18} {where}")
 
-    rows = players.download_matches(tracked, hero_id, n=args.games, archive_dir=args.archive)
+    match_mode, game_mode = args.mode
+    rows = players.download_matches(
+        tracked,
+        hero_id,
+        n=args.games,
+        archive_dir=args.archive,
+        match_mode=match_mode,
+        game_mode=game_mode,
+    )
     unique = len({r["match_id"] for r in rows})
     print(f"\nRetrieved {unique} unique matches across {len(rows)} player games")
 
@@ -703,7 +727,14 @@ def leaderboard_report(args: argparse.Namespace, config: str | Path | None = Non
         print(f"  {name} {m['account_id']:<12} {where}")
 
         if args.matches:
-            for row in players.recent_hero_matches(m["account_id"], hero_id, n=args.matches):
+            match_mode, game_mode = args.mode
+            for row in players.recent_hero_matches(
+                m["account_id"],
+                hero_id,
+                n=args.matches,
+                match_mode=match_mode,
+                game_mode=game_mode,
+            ):
                 when = dt.datetime.fromtimestamp(row["start_time"], dt.UTC).strftime("%Y-%m-%d")
                 result = "win " if row["match_result"] == row["player_team"] else "loss"
                 kda = f"{row['player_kills']}/{row['player_deaths']}/{row['player_assists']}"

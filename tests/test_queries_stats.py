@@ -4,7 +4,7 @@ import polars as pl
 import pytest
 from builders import LOCAL_DAY, START, add_custom_stats, build_match, build_movement_match
 
-from deadlock_matches import export, queries
+from deadlock_matches import export, extract, queries
 from deadlock_matches.extract import pb
 
 
@@ -375,3 +375,153 @@ def test_stat_snapshots_grain_is_unique(pq):
     rows = queries.view_frame(queries.stat_snapshots(), parquet_dir=pq).collect()
 
     queries.validate_grain(queries.stat_snapshots, rows)
+
+
+def _mode_pq(tmp_path, modes):
+    """Export one match per (match_id, match_mode, game_mode) triple."""
+    infos = []
+
+    for match_id, match_mode, game_mode in modes:
+        info = build_movement_match(match_id=match_id)
+        info.match_mode = match_mode
+        info.game_mode = game_mode
+        infos.append(info)
+
+    out = tmp_path / "pq"
+    out.mkdir()
+
+    for name, df in export.build_tables(infos).items():
+        df.write_parquet(out / f"{name}.parquet")
+
+    return out
+
+
+@pytest.fixture
+def mode_pq(tmp_path):
+    return _mode_pq(
+        tmp_path,
+        [
+            (100, pb.k_ECitadelMatchMode_Unranked, pb.k_ECitadelGameMode_Normal),
+            (101, pb.k_ECitadelMatchMode_Unranked, pb.k_ECitadelGameMode_StreetBrawl),
+            (102, pb.k_ECitadelMatchMode_PrivateLobby, pb.k_ECitadelGameMode_Normal),
+        ],
+    )
+
+
+def test_my_games_keeps_only_matchmaking_normal_games(mode_pq):
+    games = queries.view_frame(
+        queries.my_games(accounts=[42], tz="America/Chicago"), parquet_dir=mode_pq
+    ).collect()
+
+    assert games.get_column("match_id").to_list() == [100]
+
+
+def test_my_games_street_brawl_replaces_normal_games(mode_pq):
+    games = queries.view_frame(
+        queries.my_games(
+            accounts=[42],
+            tz="America/Chicago",
+            game_mode=extract.GAME_MODE_STREET_BRAWL,
+        ),
+        parquet_dir=mode_pq,
+    ).collect()
+
+    assert games.get_column("match_id").to_list() == [101]
+
+
+def test_my_games_none_lifts_both_halves(mode_pq):
+    games = queries.view_frame(
+        queries.my_games(accounts=[42], tz="America/Chicago", match_mode=None, game_mode=None),
+        parquet_dir=mode_pq,
+    ).collect()
+
+    assert sorted(games.get_column("match_id").to_list()) == [100, 101, 102]
+
+
+def test_mode_context_sets_the_default_for_every_view(mode_pq):
+    with queries.mode_context(game_mode=extract.GAME_MODE_STREET_BRAWL):
+        games = queries.view_frame(
+            queries.my_games(accounts=[42], tz="America/Chicago"), parquet_dir=mode_pq
+        ).collect()
+
+    assert games.get_column("match_id").to_list() == [101]
+
+
+def test_mode_context_restores_the_previous_default(mode_pq):
+    with queries.mode_context(game_mode=extract.GAME_MODE_STREET_BRAWL):
+        pass
+
+    games = queries.view_frame(
+        queries.my_games(accounts=[42], tz="America/Chicago"), parquet_dir=mode_pq
+    ).collect()
+
+    assert games.get_column("match_id").to_list() == [100]
+
+
+def test_hero_games_drops_street_brawl(mode_pq):
+    games = queries.hero_games("Mirage", mode_pq, accounts=[42]).collect()
+
+    assert games.get_column("match_id").to_list() == [100]
+
+
+def test_record_games_drops_street_brawl(mode_pq):
+    record = queries.summarize(
+        queries.record_games,
+        measures=["games"],
+        accounts=[42],
+        tz="America/Chicago",
+        parquet_dir=mode_pq,
+    ).collect()
+
+    assert record.get_column("games").to_list() == [1]
+
+
+def test_stat_snapshots_honors_mode_context(mode_pq):
+    normal = queries.summarize(
+        queries.stat_snapshots,
+        measures=["games"],
+        accounts=[42],
+        tz="America/Chicago",
+        parquet_dir=mode_pq,
+    ).collect()
+    with queries.mode_context(game_mode=extract.GAME_MODE_STREET_BRAWL):
+        brawl = queries.summarize(
+            queries.stat_snapshots,
+            measures=["games"],
+            accounts=[42],
+            tz="America/Chicago",
+            parquet_dir=mode_pq,
+        ).collect()
+
+    assert normal.get_column("games").to_list() == [1]
+    assert brawl.get_column("games").to_list() == [1]
+
+
+def test_mode_dimensions_read_as_names(mode_pq):
+    modes = queries.summarize(
+        queries.my_games,
+        by=["match_mode", "game_mode"],
+        measures=["games"],
+        accounts=[42],
+        tz="America/Chicago",
+        match_mode=None,
+        game_mode=None,
+        parquet_dir=mode_pq,
+    ).collect()
+    pairs = sorted(
+        zip(
+            modes.get_column("match_mode").to_list(),
+            modes.get_column("game_mode").to_list(),
+            strict=True,
+        )
+    )
+
+    assert pairs == [
+        ("Matchmaking", "Normal"),
+        ("Matchmaking", "Street Brawl"),
+        ("Private Lobby", "Normal"),
+    ]
+
+
+def test_mode_filter_is_none_when_both_halves_are_lifted():
+    assert queries.mode_filter(match_mode=None, game_mode=None) is None

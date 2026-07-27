@@ -22,9 +22,41 @@ if TYPE_CHECKING:
 
 MatchInfo = pb.CMsgMatchMetaDataContents.MatchInfo
 
+MATCH_MODE_MATCHMAKING = pb.k_ECitadelMatchMode_Unranked
+MATCH_MODE_PRIVATE_LOBBY = pb.k_ECitadelMatchMode_PrivateLobby
+GAME_MODE_NORMAL = pb.k_ECitadelGameMode_Normal
+GAME_MODE_STREET_BRAWL = pb.k_ECitadelGameMode_StreetBrawl
+
+
+def _mode_labels(enum: str, prefix: str, overrides: dict[int, str]) -> dict[int, str]:
+    """Map every value of a compiled protobuf enum to a readable name.
+
+    - the prefix is stripped and the remaining camel case is split into words
+    - overrides replace the generated name where the protobuf wording misleads
+    """
+    values = pb.DESCRIPTOR.enum_types_by_name[enum].values
+
+    labels = {
+        v.number: re.sub(r"(?<=[a-z0-9])(?=[A-Z])", " ", v.name.removeprefix(prefix))
+        for v in values
+    }
+
+    return labels | overrides
+
+
+MATCH_MODES = _mode_labels(
+    "ECitadelMatchMode",
+    "k_ECitadelMatchMode_",
+    {pb.k_ECitadelMatchMode_Unranked: "Matchmaking"},
+)
+GAME_MODES = _mode_labels("ECitadelGameMode", "k_ECitadelGameMode_", {})
+
 
 def _linux_candidates() -> tuple[Path, ...]:
-    """Steam httpcache locations on Linux, the native installs then flatpak."""
+    """List the Steam httpcache locations to try on Linux.
+
+    - the native installs come first, then flatpak
+    """
     return (
         Path.home() / ".steam/steam/appcache/httpcache",
         Path.home() / ".local/share/Steam/appcache/httpcache",
@@ -33,7 +65,10 @@ def _linux_candidates() -> tuple[Path, ...]:
 
 
 def _windows_candidates() -> tuple[Path, ...]:
-    """Steam httpcache locations on Windows, the registry install path then the default."""
+    """List the Steam httpcache locations to try on Windows.
+
+    - the registry install path comes first, then the default location
+    """
     found = []
 
     if sys.platform == "win32":
@@ -55,7 +90,10 @@ CACHE_CANDIDATES = _windows_candidates() if sys.platform == "win32" else _linux_
 
 
 def default_cache(candidates: Sequence[Path] = CACHE_CANDIDATES) -> Path:
-    """First Steam httpcache directory that exists, trying candidates in preference order."""
+    """Find the first Steam httpcache directory that exists.
+
+    - candidates are tried in preference order
+    """
     for p in candidates:
         if p.is_dir():
             return p
@@ -84,7 +122,10 @@ class SteamAccount:
 
 
 def _login_users(steam_root: Path) -> dict[int, dict[str, str]]:
-    """Parse config/loginusers.vdf into {steam32: fields}, {} when Steam kept no logins."""
+    """Parse config/loginusers.vdf into {steam32: fields}.
+
+    - comes back empty when Steam kept no logins
+    """
     vdf = steam_root / "config/loginusers.vdf"
 
     if not vdf.is_file():
@@ -99,8 +140,9 @@ def _login_users(steam_root: Path) -> dict[int, dict[str, str]]:
 
 
 def installed_client_version(cache_dir: str | Path = DEFAULT_CACHE) -> int | None:
-    """Read the installed Deadlock client build from steam.inf, None without an install.
+    """Read the installed Deadlock client build from steam.inf.
 
+    - comes back None without an install
     - the Steam root sits two levels above the httpcache
     - checks the root plus every library folder listed in libraryfolders.vdf
     - ClientVersion uses the same numbering as the asset history client_version
@@ -130,8 +172,9 @@ def installed_client_version(cache_dir: str | Path = DEFAULT_CACHE) -> int | Non
 
 
 def steam_accounts(cache_dir: str | Path = DEFAULT_CACHE) -> list[SteamAccount]:
-    """List the Steam accounts on this PC that have run Deadlock, newest login first.
+    """List the Steam accounts on this PC that have run Deadlock.
 
+    - the newest login comes first
     - folder names under userdata/ are the Steam32 account IDs
     - a 1422450 folder inside means Deadlock ran on that account
     - login and persona names come from loginusers.vdf while Steam remembers the login
@@ -382,9 +425,11 @@ def _read_varint(data: bytes, i: int) -> tuple[int, int]:
 def player_party(player: Any) -> int | None:
     """Read the party id from field 16 (currently removed).
 
-    Valve dropped the field mid-March 2026, so it survives only as an
-    unknown field on older archived matches. 0 = queued solo, players
-    sharing a nonzero id queued together, None = the field is gone.
+    - Valve dropped the field mid-March 2026, so it survives only as an
+      unknown field on older archived matches
+    - 0 means the player queued solo
+    - players sharing a nonzero id queued together
+    - None means the field is gone
     """
     data = player.SerializeToString()
     i = 0
@@ -445,8 +490,8 @@ def custom_stats(info: MatchInfo) -> dict[int, list[tuple[int, str | None, str, 
 def from_api_json(match_info: dict[str, Any]) -> MatchInfo:
     """Parse the API match_info json into the same MatchInfo the cache files yield.
 
-    Verified identical, field for field, to what the cache files yield. Wire
-    fields our .proto does not define yet are dropped, which the cache path
-    cannot read either.
+    - verified field for field against the cache files
+    - wire fields the bundled .proto does not define yet are dropped, which
+      the cache path cannot read either
     """
     return json_format.ParseDict(match_info, MatchInfo(), ignore_unknown_fields=True)

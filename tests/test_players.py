@@ -74,13 +74,20 @@ def test_item_frequency_excludes_sold_by_default():
     assert full == {"Monster Rounds", "Ricochet"}
 
 
-def _match_json(match_id=900, account_id=11, hero_id=52):
+def _match_json(
+    match_id=900,
+    account_id=11,
+    hero_id=52,
+    match_mode=pb.k_ECitadelMatchMode_Unranked,
+    game_mode=pb.k_ECitadelGameMode_Normal,
+):
     info = pb.CMsgMatchMetaDataContents().match_info
     info.match_id = match_id
     info.start_time = 1783000000
     info.duration_s = 1800
     info.winning_team = pb.k_ECitadelLobbyTeam_Team1
-    info.match_mode = pb.k_ECitadelMatchMode_Ranked
+    info.match_mode = match_mode
+    info.game_mode = game_mode
 
     p = info.players.add()
     p.account_id = account_id
@@ -96,8 +103,14 @@ def _match_json(match_id=900, account_id=11, hero_id=52):
     return json_format.MessageToDict(info, preserving_proto_field_name=True)
 
 
-def _history_row(match_id, hero_id=52, mode=1, start=1):
-    return {"match_id": match_id, "hero_id": hero_id, "match_mode": mode, "start_time": start}
+def _history_row(match_id, hero_id=52, mode=1, start=1, game_mode=1):
+    return {
+        "match_id": match_id,
+        "hero_id": hero_id,
+        "match_mode": mode,
+        "game_mode": game_mode,
+        "start_time": start,
+    }
 
 
 def _store_bin(archive_dir, match_id, info_json):
@@ -203,6 +216,37 @@ def test_recent_hero_matches(monkeypatch):
     got = players.recent_hero_matches(11, 52, n=2)
 
     assert [m["match_id"] for m in got] == [4, 5]
+
+
+def test_recent_hero_matches_skips_street_brawl(monkeypatch):
+    rows = [
+        _history_row(1, start=9, game_mode=4),
+        _history_row(2, start=8),
+        _history_row(3, start=7, game_mode=4),
+    ]
+    monkeypatch.setattr(players, "match_history", lambda aid: rows)
+
+    got = players.recent_hero_matches(11, 52, n=5)
+
+    assert [m["match_id"] for m in got] == [2]
+
+
+def test_recent_hero_matches_can_select_private_lobbies(monkeypatch):
+    rows = [
+        _history_row(1, start=9, mode=pb.k_ECitadelMatchMode_PrivateLobby),
+        _history_row(2, start=8),
+    ]
+    monkeypatch.setattr(players, "match_history", lambda aid: rows)
+
+    got = players.recent_hero_matches(
+        11,
+        52,
+        n=5,
+        match_mode=pb.k_ECitadelMatchMode_PrivateLobby,
+        game_mode=pb.k_ECitadelGameMode_Normal,
+    )
+
+    assert [m["match_id"] for m in got] == [1]
 
 
 def test_download_matches(tmp_path, monkeypatch):
@@ -634,6 +678,47 @@ def test_pool_games_filters_to_config_accounts_per_hero(tracked_pq, tmp_path):
     assert mirage.get_column("match_id").to_list() == [900]
     assert mirage.get_column("account_id").to_list() == [11]
     assert infernus.get_column("match_id").to_list() == [901]
+
+
+def test_pool_games_filters_existing_off_mode_ledger_rows(tmp_path, monkeypatch):
+    infos = {
+        900: _match_json(900),
+        901: _match_json(901, game_mode=pb.k_ECitadelGameMode_StreetBrawl),
+        902: _match_json(902, match_mode=pb.k_ECitadelMatchMode_PrivateLobby),
+    }
+    monkeypatch.setattr(
+        players,
+        "match_info",
+        lambda mid, archive_dir: extract.from_api_json(infos[mid]),
+    )
+    downloaded_at = dt.datetime(2026, 7, 1, tzinfo=dt.UTC)
+    rows = [
+        {
+            "match_id": match_id,
+            "account_id": 11,
+            "player": "someone",
+            "hero_id": 52,
+            "rank": 1,
+            "region": "NAmerica",
+            "downloaded_at": downloaded_at,
+        }
+        for match_id in infos
+    ]
+    out = tmp_path / "pq"
+    players.write_player_tables(rows, out_dir=out)
+    cfg = tmp_path / "config.toml"
+    cfg.write_text("[players.Mirage]\nsomeone = 11\n")
+
+    normal = players.pool_games("Mirage", parquet_dir=out, config_path=cfg).collect()
+    with queries.mode_context(game_mode=extract.GAME_MODE_STREET_BRAWL):
+        brawl = players.pool_games("Mirage", parquet_dir=out, config_path=cfg).collect()
+    with queries.mode_context(match_mode=extract.MATCH_MODE_PRIVATE_LOBBY):
+        private = players.pool_games("Mirage", parquet_dir=out, config_path=cfg).collect()
+
+    assert normal.get_column("match_id").to_list() == [900]
+    assert brawl.get_column("match_id").to_list() == [901]
+    assert private.get_column("match_id").to_list() == [902]
+    assert players.pool_members("Mirage", parquet_dir=out, config_path=cfg)[0]["games"] == 1
 
 
 def test_pool_games_ignores_untracked_ledger_rows(tracked_pq, tmp_path):

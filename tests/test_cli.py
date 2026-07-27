@@ -62,6 +62,8 @@ def write_cache_entry(
     not_scored=False,
     badges=None,
     paths=False,
+    game_mode=None,
+    match_mode=None,
 ):
     contents = pb.CMsgMatchMetaDataContents()
     info = contents.match_info
@@ -70,7 +72,8 @@ def write_cache_entry(
     info.duration_s = 1800
     info.winning_team = pb.k_ECitadelLobbyTeam_Team1 if won else pb.k_ECitadelLobbyTeam_Team0
     info.not_scored = not_scored
-    info.match_mode = pb.k_ECitadelMatchMode_Unranked
+    info.match_mode = pb.k_ECitadelMatchMode_Unranked if match_mode is None else match_mode
+    info.game_mode = pb.k_ECitadelGameMode_Normal if game_mode is None else game_mode
 
     if badges is not None:
         info.average_badge_team0, info.average_badge_team1 = badges
@@ -573,9 +576,10 @@ def test_download_command_defaults_to_the_watchlist(tmp_path, monkeypatch, capsy
 
     seen = {}
 
-    def fake_download(tracked, hero_id, n, archive_dir):
+    def fake_download(tracked, hero_id, n, archive_dir, **modes):
         seen["tracked"] = tracked
         seen["n"] = n
+        seen["modes"] = modes
 
         return []
 
@@ -590,6 +594,7 @@ def test_download_command_defaults_to_the_watchlist(tmp_path, monkeypatch, capsy
     assert seen["tracked"][1]["rank"] == 1
     assert seen["tracked"][1]["name"] == "ladderer"
     assert seen["n"] == 3
+    assert seen["modes"] == {"match_mode": 1, "game_mode": 1}
 
     out = capsys.readouterr().out
 
@@ -609,7 +614,7 @@ def test_download_command_account_fills_names_from_the_ladder(tmp_path, monkeypa
     )
     seen = {}
 
-    def fake_download(tracked, hero_id, n, archive_dir):
+    def fake_download(tracked, hero_id, n, archive_dir, **modes):
         seen["tracked"] = tracked
 
         return []
@@ -918,7 +923,7 @@ def test_download_command_by_account_skips_leaderboard(tmp_path, monkeypatch, ca
 
     seen = {}
 
-    def fake_download(tracked, hero_id, n, archive_dir):
+    def fake_download(tracked, hero_id, n, archive_dir, **modes):
         seen["tracked"] = tracked
 
         return []
@@ -958,7 +963,7 @@ def test_leaderboard_command_lists_players_and_match_ids(tmp_path, monkeypatch, 
     monkeypatch.setattr(
         players,
         "recent_hero_matches",
-        lambda account_id, hero_id, n: [
+        lambda account_id, hero_id, n, **modes: [
             {
                 "match_id": 5000 + account_id,
                 "start_time": 1783000000,
@@ -1081,6 +1086,43 @@ def test_compare_reports_are_subcommands(tmp_path):
         parser.parse_args(["compare", "--hero", "Mirage"])
 
 
+def test_mode_flags_default_and_select_alternatives(tmp_path):
+    parser = build_parser(tmp_path / "config.toml")
+
+    normal = parser.parse_args(["download", "--hero", "Mirage"])
+    brawl = parser.parse_args(["download", "--hero", "Mirage", "--street-brawl"])
+    private = parser.parse_args(["download", "--hero", "Mirage", "--private-lobby"])
+
+    assert normal.mode == (extract.MATCH_MODE_MATCHMAKING, extract.GAME_MODE_NORMAL)
+    assert brawl.mode == (extract.MATCH_MODE_MATCHMAKING, extract.GAME_MODE_STREET_BRAWL)
+    assert private.mode == (extract.MATCH_MODE_PRIVATE_LOBBY, extract.GAME_MODE_NORMAL)
+
+    with pytest.raises(SystemExit):
+        parser.parse_args(["download", "--hero", "Mirage", "--street-brawl", "--private-lobby"])
+
+
+@pytest.mark.parametrize(
+    ("mode", "flag"),
+    [
+        (
+            (extract.MATCH_MODE_MATCHMAKING, extract.GAME_MODE_STREET_BRAWL),
+            "--street-brawl",
+        ),
+        (
+            (extract.MATCH_MODE_PRIVATE_LOBBY, extract.GAME_MODE_NORMAL),
+            "--private-lobby",
+        ),
+    ],
+)
+def test_no_pool_hint_keeps_selected_mode_in_download_command(mode, flag):
+    tracked_hint = data.no_pool_hint("Mirage", tracked_in_config=True, mode=mode)
+    setup_hint = data.no_pool_hint("Mirage", tracked_in_config=False, mode=mode)
+
+    assert f'deadlock download --hero "Mirage" {flag}' in tracked_hint
+    assert f'deadlock leaderboard --hero "Mirage" {flag}' in setup_hint
+    assert f'deadlock download --hero "Mirage" {flag}' in setup_hint
+
+
 def test_compare_without_account_prints_hint(capsys, tmp_path):
     run_main(tmp_path, "compare", "souls", "--hero", "Haze", accounts=None)
 
@@ -1097,6 +1139,7 @@ def _pool_game(match_id, paths=False):
     info.duration_s = 1800
     info.winning_team = pb.k_ECitadelLobbyTeam_Team1
     info.match_mode = pb.k_ECitadelMatchMode_Unranked
+    info.game_mode = pb.k_ECitadelGameMode_Normal
 
     tp = info.players.add()
     tp.account_id = 11
@@ -1137,6 +1180,7 @@ def _pool_game_for_account(
     info.duration_s = 1800
     info.winning_team = pb.k_ECitadelLobbyTeam_Team1
     info.match_mode = pb.k_ECitadelMatchMode_Unranked
+    info.game_mode = pb.k_ECitadelGameMode_Normal
 
     player = info.players.add()
     player.account_id = account
@@ -1802,6 +1846,27 @@ def test_history_account_filter(capsys, tmp_path):
     run_main(tmp_path, "history", "--account", "99")
 
     assert "No match metadata found" in capsys.readouterr().out
+
+
+def test_history_defaults_to_matchmaking_and_can_select_private(capsys, tmp_path):
+    cache = tmp_path / "cache"
+    cache.mkdir()
+    write_cache_entry(cache, match_id=100)
+    write_cache_entry(
+        cache,
+        match_id=101,
+        match_mode=pb.k_ECitadelMatchMode_PrivateLobby,
+    )
+
+    run_main(tmp_path, "history")
+    normal = capsys.readouterr().out
+    run_main(tmp_path, "history", "--private-lobby")
+    private = capsys.readouterr().out
+
+    assert any(line.rstrip().endswith("100") for line in normal.splitlines())
+    assert not any(line.rstrip().endswith("101") for line in normal.splitlines())
+    assert any(line.rstrip().endswith("101") for line in private.splitlines())
+    assert not any(line.rstrip().endswith("100") for line in private.splitlines())
 
 
 def test_history_lists_one_line_per_game(capsys, tmp_path):
@@ -3328,6 +3393,63 @@ def test_winrate_prints_daily_table(capsys, tmp_path):
     assert "grouped by America/Chicago day" in out
     assert "Cumulative net" in out
     assert "Overall: 3 games, 2-1, 66.7% win rate, +1 net wins, 0 MVP, 0 Key Player." in out
+
+
+def test_winrate_leaves_street_brawl_out_by_default(capsys, tmp_path):
+    cache = tmp_path / "cache"
+    cache.mkdir()
+    write_cache_entry(cache, match_id=100)
+    write_cache_entry(cache, match_id=101, won=False, game_mode=pb.k_ECitadelGameMode_StreetBrawl)
+
+    run_main(tmp_path, "winrate", "--account", "42")
+
+    out = capsys.readouterr().out
+
+    assert "Overall: 1 games, 1-0, 100.0% win rate" in out
+
+
+def test_winrate_street_brawl_flag_swaps_the_games_in(capsys, tmp_path, monkeypatch):
+    cache = tmp_path / "cache"
+    cache.mkdir()
+    write_cache_entry(cache, match_id=100)
+    write_cache_entry(cache, match_id=101, won=False, game_mode=pb.k_ECitadelGameMode_StreetBrawl)
+    monkeypatch.setattr(
+        performance.meta,
+        "get_hero_stats",
+        lambda **kwargs: pytest.fail("public normal-mode baseline must stay out of Street Brawl"),
+    )
+
+    run_main(
+        tmp_path,
+        "winrate",
+        "--account",
+        "42",
+        "--hero",
+        "Mirage",
+        "--street-brawl",
+    )
+
+    out = capsys.readouterr().out
+
+    assert "Overall: 1 games, 0-1, 0.0% win rate" in out
+
+
+def test_winrate_private_lobby_flag_swaps_the_games_in(capsys, tmp_path):
+    cache = tmp_path / "cache"
+    cache.mkdir()
+    write_cache_entry(cache, match_id=100)
+    write_cache_entry(
+        cache,
+        match_id=101,
+        won=False,
+        match_mode=pb.k_ECitadelMatchMode_PrivateLobby,
+    )
+
+    run_main(tmp_path, "winrate", "--account", "42", "--private-lobby")
+
+    out = capsys.readouterr().out
+
+    assert "Overall: 1 games, 0-1, 0.0% win rate" in out
 
 
 def test_winrate_abandon_footer(capsys, tmp_path):

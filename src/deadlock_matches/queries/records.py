@@ -10,6 +10,8 @@ import polars as pl
 
 from deadlock_matches import config
 from deadlock_matches.queries.core import (
+    INHERIT,
+    ModeArg,
     hero_filter,
     my_games,
     player_rows,
@@ -44,14 +46,15 @@ def daily_record(
     by: str = "day",
     games: pl.DataFrame | pl.LazyFrame | None = None,
 ) -> pl.DataFrame:
-    """Per local day W/L record with net wins and a running total.
+    """Build the per local day W/L record with net wins and a running total.
 
-    days keeps only the last N days of games, None keeps everything. since
-    keeps only days on or after that date (YYYY-MM-DD or YYYYMMDD, like 2026-07-01). hero filters to
-    one hero. by rolls the days into week or month buckets, where a
-    week starts on Monday. games takes a precomputed record_games frame
-    instead of scanning again.
-
+    - days keeps only the last N days of games, None keeps everything
+    - since keeps only days on or after that date (YYYY-MM-DD or YYYYMMDD,
+      like 2026-07-01)
+    - hero filters to one hero
+    - by rolls the days into week or month buckets, where a week starts on
+      Monday
+    - games takes a precomputed record_games frame instead of scanning again
     - unscored matches stay out of every count, unscored_record has those
     - abandons counts the games where anyone abandoned
     - win_rate is a proportion, not a percent, like the measure it comes from
@@ -150,17 +153,26 @@ def daily_record(
 
 
 def _scored(games: pl.DataFrame) -> pl.DataFrame:
-    """Keep only the matches Valve scored, the winrate table leaves the rest out."""
+    """Keep only the matches Valve scored.
+
+    - the winrate table leaves the rest out
+    """
     return games.filter(_SCORED)
 
 
 def _subrank(column: str) -> pl.Expr:
-    """Badge level column as a linear subrank count, skill_rating.subrank_index as an expression."""
+    """Turn a badge level column into a linear subrank count.
+
+    - the expression form of skill_rating.subrank_index
+    """
     return (pl.col(column) // 10) * 6 + pl.col(column) % 10
 
 
 def badge_from_subrank(subrank: pl.Expr) -> pl.Expr:
-    """Round a mean subrank back to a badge level, skill_rating.badge_from_subrank as an expression."""
+    """Round a mean subrank back to a badge level.
+
+    - the expression form of skill_rating.badge_from_subrank
+    """
     index = subrank.round(0).cast(pl.Int64)
     tier = (index - 1) // 6
 
@@ -270,14 +282,20 @@ def record_games(
     days: int | None = None,
     since: str | dt.date | None = None,
     hero: str | None = None,
+    match_mode: ModeArg = INHERIT,
+    game_mode: ModeArg = INHERIT,
 ) -> MetricView:
     """One row per match in the winrate window.
 
-    days keeps only the last N days that had games, None keeps everything.
-    The result feeds daily_record, abandon_record, and unscored_record
-    through their games parameter.
+    - days keeps only the last N days that had games, None keeps everything
+    - the result feeds daily_record, abandon_record, and unscored_record
+      through their games parameter
+    - match_mode and game_mode carry the my_games behaviour, so only ordinary
+      matchmaking games count unless mode_context says otherwise
     """
-    return MetricView(source=lambda: _record_game_rows(accounts, tz, days, since, hero))
+    return MetricView(
+        source=lambda: _record_game_rows(accounts, tz, days, since, hero, match_mode, game_mode)
+    )
 
 
 def _record_game_rows(
@@ -286,9 +304,14 @@ def _record_game_rows(
     days: int | None,
     since: str | dt.date | None,
     hero: str | None,
+    match_mode: ModeArg = INHERIT,
+    game_mode: ModeArg = INHERIT,
 ) -> pl.LazyFrame:
-    """Take the one row per match the winrate window keeps, already deduplicated."""
-    lf = view_frame(my_games(accounts, tz))
+    """Take the one row per match the winrate window keeps.
+
+    - the result is already deduplicated
+    """
+    lf = view_frame(my_games(accounts, tz, match_mode, game_mode))
 
     if hero is not None:
         lf = lf.filter(hero_filter(hero))
@@ -329,9 +352,9 @@ def abandon_record(
     - you/ally/enemy flag who left: you = one of your accounts, ally = a
       teammate, enemy = someone on the other team
     - returned = the leaver dealt growing damage between samples after the
-      abandon time, the only evidence that needs a player at the controls.
-      Buys auto-fire from the queued build while the player is gone, deaths
-      happen to an idle hero, so neither counts
+      abandon time, the only evidence that needs a player at the controls
+    - buys auto-fire from the queued build while the player is gone and
+      deaths happen to an idle hero, so neither counts
     """
     accounts = config.config_accounts() if accounts is None else list(accounts)
 
@@ -407,11 +430,12 @@ def unscored_record(
     hero: str | None = None,
     games: pl.DataFrame | pl.LazyFrame | None = None,
 ) -> pl.DataFrame:
-    """Take one row per unscored match the winrate table left out, same window filters.
+    """Take one row per unscored match the winrate table left out.
 
-    Match history still shows the result, the flag most likely means no
-    rating change. games takes a precomputed record_games frame instead of
-    scanning again.
+    - the same window filters as daily_record apply
+    - match history still shows the result, so the flag most likely means
+      no rating change
+    - games takes a precomputed record_games frame instead of scanning again
     """
     if games is None:
         games = view_frame(record_games(accounts, tz, days, since, hero), parquet_dir=parquet_dir)

@@ -46,6 +46,7 @@ def build_match(match_id=100, account_id=42, level=None, max_health=None):
     info.duration_s = 1800
     info.winning_team = pb.k_ECitadelLobbyTeam_Team1
     info.match_mode = pb.k_ECitadelMatchMode_Unranked
+    info.game_mode = pb.k_ECitadelGameMode_Normal
 
     a = info.players.add()
     a.account_id = account_id

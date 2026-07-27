@@ -491,7 +491,7 @@ def compare_report(args: argparse.Namespace, config: str | Path | None = None) -
     pool_window = f" since {args.pool_since}" if args.pool_since else ""
 
     if mine.is_empty():
-        print(f"No ranked games for accounts {ids} on {args.hero}{window}")
+        print(f"No {_selected_mode_label(args)} games for accounts {ids} on {args.hero}{window}")
         return
 
     hero = heroes.hero_name(hero_id)
@@ -509,7 +509,7 @@ def compare_report(args: argparse.Namespace, config: str | Path | None = None) -
             ids = format_accounts(args.against, config)
             print(f"No tracked {args.hero} players match --against {ids}")
         else:
-            print(no_pool_hint(args.hero, tracked_in_config=False))
+            print(no_pool_hint(args.hero, tracked_in_config=False, mode=args.mode))
         return
 
     pool_lf = players.pool_games(args.hero, config_path=config).filter(
@@ -525,7 +525,7 @@ def compare_report(args: argparse.Namespace, config: str | Path | None = None) -
         if pool_since:
             print(f"No tracked {args.hero} games since {args.pool_since}")
         else:
-            print(no_pool_hint(args.hero, tracked_in_config=True))
+            print(no_pool_hint(args.hero, tracked_in_config=True, mode=args.mode))
         return
 
     counts = {
@@ -2682,7 +2682,7 @@ def winrate_report(args: argparse.Namespace, config: str | Path | None = None) -
         print("No games found for the configured accounts")
         _unscored_line(games)
 
-        if args.hero is not None:
+        if args.hero is not None and _normal_matchmaking(args):
             _hero_baseline_line(args.hero, args.min_rating, args.since)
 
         return
@@ -2746,8 +2746,34 @@ def winrate_report(args: argparse.Namespace, config: str | Path | None = None) -
 
     _unscored_line(games)
 
-    if args.hero is not None:
+    if args.hero is not None and _normal_matchmaking(args):
         _hero_baseline_line(args.hero, args.min_rating, args.since)
+
+
+def _normal_matchmaking(args: argparse.Namespace) -> bool:
+    """Whether a report is reading the mode covered by public hero analytics."""
+    return getattr(
+        args,
+        "mode",
+        (extract.MATCH_MODE_MATCHMAKING, extract.GAME_MODE_NORMAL),
+    ) == (extract.MATCH_MODE_MATCHMAKING, extract.GAME_MODE_NORMAL)
+
+
+def _selected_mode_label(args: argparse.Namespace) -> str:
+    """Human-readable label for the CLI's selected match/game mode pair."""
+    match_mode, game_mode = getattr(
+        args,
+        "mode",
+        (extract.MATCH_MODE_MATCHMAKING, extract.GAME_MODE_NORMAL),
+    )
+
+    if game_mode == extract.GAME_MODE_STREET_BRAWL:
+        return "Street Brawl"
+
+    if match_mode == extract.MATCH_MODE_PRIVATE_LOBBY:
+        return "Private Lobby"
+
+    return "matchmaking"
 
 
 def _abandon_lines(abandons: pl.DataFrame, games: int, wins: int) -> None:

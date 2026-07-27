@@ -44,11 +44,14 @@ def top_players(
     *,
     unambiguous: bool = True,
 ) -> list[dict[str, Any]]:
-    """Top players of a hero from the per-hero leaderboards, best hero rank first.
+    """List the top players of a hero from the per-hero leaderboards.
 
-    Pools the regional hero boards, so the same rank appears once per region.
-    unambiguous keeps only entries that resolve to a single account ID, since
-    players with lots of smurfs expose many candidate IDs with no way to pick one.
+    - the best hero rank comes first
+    - the regional hero boards are pooled, so the same rank appears once
+      per region
+    - unambiguous keeps only entries that resolve to a single account ID,
+      because a player with lots of smurfs exposes many candidate IDs with
+      no way to pick one
     """
     out = []
     for region in regions:
@@ -101,7 +104,7 @@ def ladder_positions(hero_id: int, regions: Sequence[str] = REGIONS) -> dict[int
 
 
 def match_history(account_id: int) -> list[dict[str, Any]]:
-    """List the recent matches for a player, by account ID."""
+    """List the recent matches for a player by account ID."""
     d = api.get_json(f"v1/players/{account_id}/match-history", max_age=api.DAY)
 
     return d.get("matches", d) if isinstance(d, dict) else d
@@ -123,7 +126,10 @@ def _body_path(match_id: int, archive_dir: str | Path) -> Path | None:
 
 
 def match_info(match_id: int, archive_dir: str | Path = extract.ARCHIVE_DIR) -> MatchInfo | None:
-    """Load the MatchInfo for a match, either archived or downloaded on demand."""
+    """Load the MatchInfo for a match.
+
+    - reads the archived body, or downloads it on demand
+    """
     path = _body_path(match_id, archive_dir)
 
     if path is None:
@@ -148,12 +154,26 @@ def salts(match_id: int) -> dict[str, Any] | None:
         return None
 
 
-def recent_hero_matches(account_id: int, hero_id: int, n: int = 10) -> list[dict[str, Any]]:
-    """List the N most recent ranked match-history rows for a player on a hero."""
+def recent_hero_matches(
+    account_id: int,
+    hero_id: int,
+    n: int = 10,
+    *,
+    match_mode: int | None = extract.MATCH_MODE_MATCHMAKING,
+    game_mode: int | None = extract.GAME_MODE_NORMAL,
+) -> list[dict[str, Any]]:
+    """List the N most recent selected-mode match-history rows for a player on a hero.
+
+    - normal matchmaking is the default
+    - pass the Street Brawl or Private Lobby enum pair to fetch those instead
+    - None on either mode lifts that half of the filter
+    """
     ms = [
         m
         for m in match_history(account_id)
-        if m.get("hero_id") == hero_id and m.get("match_mode") == 1
+        if m.get("hero_id") == hero_id
+        and (match_mode is None or m.get("match_mode") == match_mode)
+        and (game_mode is None or m.get("game_mode") == game_mode)
     ]
     ms.sort(key=lambda m: -m["start_time"])
 
@@ -161,11 +181,11 @@ def recent_hero_matches(account_id: int, hero_id: int, n: int = 10) -> list[dict
 
 
 def item_frequency(builds: list[dict[str, Any]], *, include_sold: bool = False) -> dict[str, Any]:
-    """Item frequency, median buy time, and slot/tier across a set of builds.
+    """Count item frequency, median buy time, and slot/tier across a set of builds.
 
-    Sold items (transient lane flex) are excluded by default so the result
-    reflects the kept build. include_sold counts them too, for the full
-    purchase order.
+    - sold items (transient lane flex) are excluded by default, so the
+      result reflects the kept build
+    - include_sold counts them too and gives the full purchase order
     """
     n = len(builds)
     freq: Counter[str] = Counter()
@@ -203,11 +223,14 @@ def tracked_player_games(
     parquet_dir: str | Path | None = None,
     tz: str | None = None,
 ) -> pl.LazyFrame:
-    """Look up rows for the tracked players themselves in the downloaded tables, one row per match and player.
+    """Look up rows for the tracked players themselves in the downloaded tables.
 
+    - one row per match and player
     - names match the downloads table case-insensitively, None keeps every tracked player
     - joins players and matches, so hero, won, team and the local day come along
     - since keeps matches from that local day onward
+    - intentionally exposes every stored mode; pool_games is the filtered
+      comparison reader
     """
     parquet_dir = PARQUET_DIR if parquet_dir is None else Path(parquet_dir)
     tz = config.config_timezone() if tz is None else tz
@@ -245,7 +268,7 @@ def pool_members(
 
     - the pool is the [players.<hero>] table in config.toml, matched to the
       downloads ledger by account id
-    - games counts downloaded matches on the hero, 0 before any download
+    - games counts selected-mode matches on the hero, 0 before any download
     - rank is the best ladder rank seen at download time
     """
     watchlist = config.config_players(hero, config_path)
@@ -253,17 +276,12 @@ def pool_members(
     if not watchlist:
         return []
 
-    hero_id = heroes.hero_id_by_name(hero)
     parquet_dir = PARQUET_DIR if parquet_dir is None else Path(parquet_dir)
     stats: dict[int, dict[str, Any]] = {}
 
     if queries.table_exists("downloads", parquet_dir):
         ledger = (
-            queries.scan("downloads", parquet_dir)
-            .filter(
-                pl.col("hero_id") == hero_id,
-                pl.col("account_id").is_in(list(watchlist.values())),
-            )
+            pool_games(hero, parquet_dir, config_path)
             .group_by("account_id")
             .agg(
                 pl.col("match_id").n_unique().alias("games"),
@@ -293,6 +311,9 @@ def pool_games(
 ) -> pl.LazyFrame:
     """List the pool of a hero as one downloads ledger row per downloaded game.
 
+    - normal matchmaking is the ambient default; mode_context selects
+      Street Brawl or Private Lobby instead
+    - the mode check happens at read time, so old off-mode ledger rows stay out
     - keeps match_id, account_id, rank, and downloaded_at
     - comes back empty when nothing is tracked or downloaded yet
     """
@@ -310,15 +331,24 @@ def pool_games(
         )
 
     hero_id = heroes.hero_id_by_name(hero)
-
-    return (
+    modes = queries.mode_filter(prefix="")
+    games = (
         queries.scan("downloads", parquet_dir)
         .filter(
             pl.col("hero_id") == hero_id,
             pl.col("account_id").is_in(list(watchlist.values())),
         )
-        .select("match_id", "account_id", "rank", "downloaded_at")
-        .unique(subset=["match_id", "account_id"])
+        .join(
+            queries.scan("matches", parquet_dir).select("match_id", "match_mode", "game_mode"),
+            on="match_id",
+        )
+    )
+
+    if modes is not None:
+        games = games.filter(modes)
+
+    return games.select("match_id", "account_id", "rank", "downloaded_at").unique(
+        subset=["match_id", "account_id"]
     )
 
 
@@ -329,7 +359,8 @@ def pool_builds(
 ) -> list[dict[str, Any]]:
     """Collect one build dict per downloaded pool game from the item_events table.
 
-    - reads item_events, so it works offline from past downloads
+    - reads item_events for the selected pool mode, so it works offline from
+      past downloads
     - each build carries the config player label, the win, and the buy
       sequence in build_order shape
     """
@@ -385,9 +416,14 @@ def download_matches(
     hero_id: int,
     n: int = 10,
     archive_dir: str | Path = extract.ARCHIVE_DIR,
+    *,
+    match_mode: int | None = extract.MATCH_MODE_MATCHMAKING,
+    game_mode: int | None = extract.GAME_MODE_NORMAL,
 ) -> list[dict[str, Any]]:
-    """Download recent ranked games from tracked players, one row per (match, player).
+    """Download recent selected-mode games from tracked players.
 
+    - one row per (match, player)
+    - normal matchmaking is the default
     - tracked rows need account_id and name, leaderboard entries also carry rank/region
     - bodies land in the archive as raw .bin files, a shared match downloads once
     - downloaded_at is the mtime of the body file, which re-runs never touch
@@ -396,7 +432,13 @@ def download_matches(
     wanted = [
         (t, m["match_id"])
         for t in tracked
-        for m in recent_hero_matches(t["account_id"], hero_id, n)
+        for m in recent_hero_matches(
+            t["account_id"],
+            hero_id,
+            n,
+            match_mode=match_mode,
+            game_mode=game_mode,
+        )
     ]
     download_metadata(list(dict.fromkeys(mid for _, mid in wanted)), archive_dir)
 
@@ -429,10 +471,11 @@ def matches_by_id(
 ) -> list[dict[str, Any]]:
     """Download rows for specific match IDs straight into the archive.
 
-    account_id/hero_id/rank/region come back null since no tracked player brought
-    the match in. The body carries all 12 players, so every one lands in the tables
-    and match --hero picks any of them. Unreachable and rate-limit-deferred ids
-    are skipped.
+    - account_id, hero_id, rank, and region come back null because no
+      tracked player brought the match in
+    - the body carries all 12 players, so every one lands in the tables and
+      match --hero picks any of them
+    - unreachable and rate-limit-deferred ids are skipped
     """
     download_metadata(list(dict.fromkeys(match_ids)), archive_dir)
 
@@ -502,7 +545,7 @@ RATE_WAIT_CAP = 60.0
 
 
 def _wait_out_rate_limit(match_id: int, fetch: Callable[..., Any], *args: Any) -> Any:
-    """Run a fetch for a match, sleeping through short rate-limit waits.
+    """Run a fetch for a match and sleep through short rate-limit waits.
 
     - a wait above RATE_WAIT_CAP propagates so the caller can defer the rest
     - sleeps twice at most before the final attempt

@@ -32,6 +32,9 @@ ACCOUNT_HELP = (
     "your account IDs or names from config.toml, defaults to all accounts there. "
     "A tracked player name from [players.<hero>] reads their downloaded games instead"
 )
+NORMAL_MODE = (extract.MATCH_MODE_MATCHMAKING, extract.GAME_MODE_NORMAL)
+STREET_BRAWL_MODE = (extract.MATCH_MODE_MATCHMAKING, extract.GAME_MODE_STREET_BRAWL)
+PRIVATE_LOBBY_MODE = (extract.MATCH_MODE_PRIVATE_LOBBY, extract.GAME_MODE_NORMAL)
 
 COMMAND_HELP = {
     "sync": "pull your matches into the parquet tables from the archive or the API",
@@ -162,6 +165,26 @@ def build_parser(config: str | Path | None = None) -> argparse.ArgumentParser:
     def command(name: str) -> argparse.ArgumentParser:
         return sub.add_parser(name, description=COMMAND_HELP[name])
 
+    def mode_flags(parser: argparse.ArgumentParser) -> None:
+        """Add the explicit alternatives to the normal-matchmaking default."""
+        modes = parser.add_mutually_exclusive_group()
+        modes.add_argument(
+            "--street-brawl",
+            dest="mode",
+            action="store_const",
+            const=STREET_BRAWL_MODE,
+            help="read or download Street Brawl instead of normal matchmaking",
+        )
+        modes.add_argument(
+            "--private-lobby",
+            dest="mode",
+            action="store_const",
+            const=PRIVATE_LOBBY_MODE,
+            help="read or download Private Lobby games such as scrims and FACEIT "
+            "instead of normal matchmaking",
+        )
+        parser.set_defaults(mode=NORMAL_MODE)
+
     d = command("history")
     d.add_argument(
         "--days", type=int, default=None, help="your last N days of games instead of the last 10"
@@ -179,6 +202,7 @@ def build_parser(config: str | Path | None = None) -> argparse.ArgumentParser:
         default=None,
         help="only matches on or after this date (YYYY-MM-DD), like 2026-07-01",
     )
+    mode_flags(d)
 
     it = command("item")
     it.add_argument("item", help='item display name, like "Escalating Exposure"')
@@ -221,6 +245,7 @@ def build_parser(config: str | Path | None = None) -> argparse.ArgumentParser:
         default=30,
         help="hide items bought in fewer than this percent of builds",
     )
+    mode_flags(b)
 
     c = command("compare")
     compare_sub = c.add_subparsers(dest="stat", metavar="report", required=True)
@@ -250,6 +275,7 @@ def build_parser(config: str | Path | None = None) -> argparse.ArgumentParser:
             default=None,
             help="only tracked comparison games on or after this date (YYYY-MM-DD)",
         )
+        mode_flags(report)
         report.set_defaults(interval=5, milestones=False, step=1600)
         return report
 
@@ -298,6 +324,7 @@ def build_parser(config: str | Path | None = None) -> argparse.ArgumentParser:
         default=0,
         help="step back from your latest match, 0 is latest, 1 is the one before",
     )
+    mode_flags(mt)
     view = mt.add_mutually_exclusive_group()
     view.add_argument(
         "--souls",
@@ -421,8 +448,11 @@ def build_parser(config: str | Path | None = None) -> argparse.ArgumentParser:
         "needs --hero. Their games archive for `deadlock match` but only players in "
         "config.toml join the comparisons",
     )
-    f.add_argument("--games", type=int, default=5, help="recent ranked games per player")
+    f.add_argument(
+        "--games", type=int, default=5, help="recent games in the selected mode per player"
+    )
     f.add_argument("--out", default=str(players.PARQUET_DIR), help="players parquet directory")
+    mode_flags(f)
 
     sy = command("sync")
     sy.add_argument(
@@ -459,8 +489,9 @@ def build_parser(config: str | Path | None = None) -> argparse.ArgumentParser:
         type=int,
         default=None,
         metavar="N",
-        help="also list the recent ranked match IDs per player (default 5)",
+        help="also list recent match IDs in the selected mode per player (default 5)",
     )
+    mode_flags(mn)
 
     de = command("deaths")
     de.add_argument(
@@ -482,6 +513,7 @@ def build_parser(config: str | Path | None = None) -> argparse.ArgumentParser:
         default=2000,
         help="units counted as nearby for the ally/enemy context",
     )
+    mode_flags(de)
 
     dy = command("winrate")
     dy.add_argument(
@@ -509,6 +541,7 @@ def build_parser(config: str | Path | None = None) -> argparse.ArgumentParser:
         help="with --hero, the public win rate line only counts lobbies at this average "
         "skill rating or higher, 'all' disables",
     )
+    mode_flags(dy)
 
     ln = command("laning")
     ln.add_argument(
@@ -530,6 +563,7 @@ def build_parser(config: str | Path | None = None) -> argparse.ArgumentParser:
         default=9,
         help="laning window in minutes, default 9 like match --laning",
     )
+    mode_flags(ln)
 
     for name in ("damage", "healing", "souls", "combat", "movement"):
         dg = command(name)
@@ -552,6 +586,7 @@ def build_parser(config: str | Path | None = None) -> argparse.ArgumentParser:
             default=10,
             help="per game lines to print, default the last 10 (the tables above always count every game in the window)",
         )
+        mode_flags(dg)
 
         if name == "souls":
             dg.add_argument(
@@ -843,6 +878,14 @@ def main(argv: Sequence[str] | None = None, config: str | Path | None = None) ->
     if needs_account:
         resolve_store(args, config)
 
+    match_mode, game_mode = getattr(args, "mode", NORMAL_MODE)
+
+    with queries.mode_context(match_mode=match_mode, game_mode=game_mode):
+        _dispatch(args, config)
+
+
+def _dispatch(args: argparse.Namespace, config: str | Path | None) -> None:
+    """Run the report the parsed command asks for."""
     if args.cmd == "schema":
         try:
             schema_report(args)
