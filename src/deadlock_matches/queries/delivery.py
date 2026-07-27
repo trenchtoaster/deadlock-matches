@@ -12,15 +12,17 @@ from deadlock_matches.queries.labels import with_damage_source_name
 BULLET_PROC_OVERRIDES = frozenset({"upgrade_siphon_bullets"})
 
 
-_TOTAL_PATTERN = r"^[A-Z][A-Za-z]*$"
+TOTAL_ROWS = frozenset({"Bullet", "Ability", "Melee", "Misc"})
 
 
 def damage_category() -> pl.Expr:
     """Bucket source_class as gun, item, ability, or a match screen total.
 
     - citadel_weapon* rows are the gun itself, upgrade_* rows are shop items
-    - a bare capitalized word (Bullet, Ability) is a summary row that just
-      adds up the matching detail rows, so never sum totals with details
+    - TOTAL_ROWS names summary rows that just add up the matching detail
+      rows, so never sum totals with details
+    - UnknownAbility is a real detail row despite the summary-looking name,
+      it holds ability damage the game never resolved to a source class
     - everything else is a hero kit ability class name
     """
     return (
@@ -28,7 +30,7 @@ def damage_category() -> pl.Expr:
         .then(pl.lit("gun"))
         .when(pl.col("source_class").str.starts_with("upgrade_"))
         .then(pl.lit("item"))
-        .when(pl.col("source_class").str.contains(_TOTAL_PATTERN))
+        .when(pl.col("source_class").is_in(TOTAL_ROWS))
         .then(pl.lit("total"))
         .otherwise(pl.lit("ability"))
     )

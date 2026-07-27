@@ -13,6 +13,7 @@ def test_damage_categories():
                 "Bullet",
                 "Ability",
                 "Melee",
+                "Misc",
                 "UnknownAbility",
                 "citadel_weapon_mirage_set",
                 "upgrade_escalating_exposure",
@@ -23,7 +24,17 @@ def test_damage_categories():
     )
     got = frame.select(queries.damage_category()).collect().to_series().to_list()
 
-    assert got == ["total", "total", "total", "total", "gun", "item", "ability", "ability"]
+    assert got == [
+        "total",
+        "total",
+        "total",
+        "total",
+        "ability",
+        "gun",
+        "item",
+        "ability",
+        "ability",
+    ]
 
 
 def test_damage_delivery(tmp_path):
@@ -40,6 +51,7 @@ def test_damage_delivery(tmp_path):
     expected = {
         "Bullet": None,
         "Ability": None,
+        "UnknownAbility": "ability",
         "citadel_weapon_mirage_set": "gun",
         "citadel_weapon_mirage_set_crit": "gun",
         "upgrade_crackshot": "gun_proc",

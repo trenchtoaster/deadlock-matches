@@ -9,11 +9,30 @@ from __future__ import annotations
 
 import polars as pl
 
+from deadlock_matches import extract
 from deadlock_matches.assets import abilities, accolades, heroes, items
 
 
+def match_mode_name(column: str = "match_mode") -> pl.Expr:
+    """Turn a match mode number into its readable name.
+
+    - the names come from the compiled protobuf enum
+    - value 1 reads as Matchmaking because Deadlock has one queue, and the
+      protobuf calls it Unranked only as a holdover
+    """
+    return pl.col(column).replace_strict(extract.MATCH_MODES, default=None, return_dtype=pl.String)
+
+
+def game_mode_name(column: str = "game_mode") -> pl.Expr:
+    """Turn a game mode number into its readable name such as Street Brawl."""
+    return pl.col(column).replace_strict(extract.GAME_MODES, default=None, return_dtype=pl.String)
+
+
 def hero_name(column: str = "hero_id") -> pl.Expr:
-    """Resolve a hero id to its current display name, with id<N> for unknown ids."""
+    """Resolve a hero id to its current display name.
+
+    - an unknown id reads as id<N> rather than going null
+    """
     mapping = {hero_id: hero.name for hero_id, hero in heroes.hero_map().items()}
     hero_id = pl.col(column)
 
@@ -34,6 +53,8 @@ def damage_source_name(column: str = "source_class") -> pl.Expr:
     """Resolve an engine damage class to its current display label.
 
     - unknown engine classes stay readable as their raw class name
+    - UnknownAbility reads as Unknown ability, the game emits it for ability
+      damage it never resolved to a source class
     - a crit class takes the ``(crit)`` suffix only when its base class has a
       display name of its own, so the ~200 assets whose name is just their class
       name keep the raw ``<class>_crit`` form that abilities.label produced
@@ -52,6 +73,8 @@ def damage_source_name(column: str = "source_class") -> pl.Expr:
         for class_name, name in mapping.items()
         if name != class_name
     }
+
+    mapping["UnknownAbility"] = "Unknown ability"
 
     source_class = pl.col(column)
 
@@ -94,7 +117,10 @@ def stack_name(column: str = "ability_id") -> pl.Expr:
 
 
 def _stack_labels() -> tuple[dict[int, str], dict[int, str]]:
-    """Build stack id lookups, keeping the item-before-ability rule the export used."""
+    """Build the stack id lookups for engine classes and display names.
+
+    - an item wins over an ability sharing the id, matching what the export did
+    """
     classes = {ability.id: ability.class_name for ability in abilities.ability_map().values()}
     names = {ability.id: ability.name for ability in abilities.ability_map().values()}
 

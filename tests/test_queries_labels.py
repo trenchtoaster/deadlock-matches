@@ -27,6 +27,21 @@ def test_hero_name_follows_current_assets_without_changing_source(monkeypatch):
     assert new.get_column("hero").to_list() == ["New Name", "id999"]
 
 
+def test_damage_source_name_labels_unknown_ability(monkeypatch):
+    monkeypatch.setattr(abilities, "ability_map", lambda path=None: {})
+    monkeypatch.setattr(items, "item_map", lambda path=None: {})
+
+    resolved = (
+        pl.LazyFrame({"source_class": ["UnknownAbility"]})
+        .select(queries.damage_source_name().alias("source_name"))
+        .collect()
+        .get_column("source_name")
+        .to_list()
+    )
+
+    assert resolved == ["Unknown ability"]
+
+
 def test_damage_source_name_matches_the_label_helper_on_crit_classes(monkeypatch):
     named = SimpleNamespace(id=7, class_name="citadel_weapon_named", name="Promises Kept")
     unnamed = SimpleNamespace(
