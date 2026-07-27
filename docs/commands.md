@@ -12,7 +12,7 @@ The sections below group the commands by what they read. **Match analysis** read
 
 Jump to:
 
-- [Match history](#match-history), [one match](#one-match), [win rate](#win-rate-by-day)
+- [Match history](#match-history), [one match](#one-match), [win rate](#win-rate-by-day-or-mode)
 - [Historical performance](#does-winning-the-lane-win-the-game): laning, deaths, damage, healing, souls, combat, movement
 - [Compare against other players](#compare-against-your-tracked-players)
 - [Items](#item-card), [abilities](#ability-card), [heroes](#hero-card)
@@ -538,7 +538,7 @@ Kills per enemy, 5-minute intervals
   35:39   Ivy                23.6s        6m      78s
 ```
 
-### Win rate by day
+### Win rate by day or mode
 
 ```
 deadlock winrate
@@ -546,6 +546,9 @@ deadlock winrate
 
 - wins and losses per day, with your MVP and Key Player awards
 - `--by week` or `--by month` rolls the table into weekly or monthly rows, weeks start on Monday
+- `--by mode` replaces the date table with one total row per stored game mode. It deliberately
+  reads every mode, while `--account`, `--hero`, `--days`, and `--since` still narrow the games.
+  Do not combine it with `--street-brawl` or `--private-lobby`
 - `--hero Mirage` filters to one hero and, for normal matchmaking, also adds the public win rate from `deadlock-api.com` under the table, scoped by `--min-rating` (Eternus+ by default). Street Brawl and Private Lobby omit that line because the public analytics endpoint has no matching mode filter
 - Lobby is the average lobby skill rating of the day, averaged in subrank steps
 - games where someone abandoned stay in the table (they are still wins and losses), a footer separates them: who left with each record, how many leavers reconnected and finished, and your record without them
@@ -567,6 +570,21 @@ Abandons: 2 games — an ally left 1 (0-1), an enemy left 1 (1-0).
   Without them: 20 games, 11-9, 55.0% win rate.
 
 Not scored: 1 game left out of the table (safe to leave), 0-1 in match history.
+```
+
+To audit the modes without mixing them into one rate:
+
+```
+deadlock winrate --by mode --account main --hero Mirage
+```
+
+Synthetic example:
+
+```
+  Mode            Games     W     L   Win rate
+  Matchmaking       128    72    56      56.3%
+  Street Brawl       18    11     7      61.1%
+  Private Lobby       9     6     3      66.7%
 ```
 
 ### Does winning the lane win the game

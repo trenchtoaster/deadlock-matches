@@ -530,9 +530,9 @@ def build_parser(config: str | Path | None = None) -> argparse.ArgumentParser:
     )
     dy.add_argument(
         "--by",
-        choices=("day", "week", "month"),
+        choices=("day", "week", "month", "mode"),
         default="day",
-        help="group the table by day, week, or month",
+        help="group by day, week, month, or show one total row per game mode",
     )
     dy.add_argument("--hero", default=None, help="hero display name, like Mirage")
     dy.add_argument(

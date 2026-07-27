@@ -185,7 +185,7 @@ A few flags repeat across commands:
 
 - `history` - one line per game with the match ID
 - `match` - the final scoreboard plus a per-5-minute breakdown of your play. Flags swap the interval table for another view of the same game: `--souls`, `--damage`, `--healing`, `--teams`, `--laning`, `--abilities`, `--items`, `--accolades`, `--buffs`, `--stacks`, `--combat`, `--melee`, `--movement`, `--deaths`, `--kills`
-- `winrate` - wins and losses per day, with MVP and Key Player awards and, for normal matchmaking, a hero's public win rate
+- `winrate` - wins and losses per day or per stored mode, with MVP and Key Player awards and, for normal matchmaking, a hero's public win rate
 - `laning` - every game bucketed by where your lane stood at 9:00, so you can read whether winning lane wins the game
 - `deaths` - deaths bucketed by game time, who kills you, and with movement exported whether you were alone
 - `damage` - your damage sources summed across every game of a hero, then the gun/ability/item split game by game
@@ -322,7 +322,7 @@ Lobby average: The Hidden King Ascendant 1, The Archmother Phantom 6
    35:00  your team delivers the Soul Urn (Venator, +2,128 souls)
 ```
 
-`deadlock winrate` prints your wins and losses per day, with MVP and Key Player awards and the average lobby skill rating. `--by week` or `--by month` rolls the days up:
+`deadlock winrate` prints your wins and losses per day, with MVP and Key Player awards and the average lobby skill rating. `--by week` or `--by month` rolls the days up. `--by mode` instead prints one total Games/W/L/Win rate row for every stored mode; `--account`, `--hero`, `--days`, and `--since` still filter that table.
 
 ```
   Week          Games    W    L   Win rate         Lobby   MVP   Key  Abandons   Net wins   Cumulative net

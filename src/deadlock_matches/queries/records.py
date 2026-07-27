@@ -186,6 +186,8 @@ def badge_from_subrank(subrank: pl.Expr) -> pl.Expr:
 
 
 RECORD_GAMES_DIMENSIONS = {
+    "match_mode": Dimension(pl.col("match_mode")),
+    "game_mode": Dimension(pl.col("game_mode")),
     "day": Dimension(pl.col("day"), comment="Local date, not the UTC date."),
     "week": Dimension(
         pl.col("day").dt.truncate("1w"),
@@ -292,6 +294,8 @@ def record_games(
       through their games parameter
     - match_mode and game_mode carry the my_games behaviour, so only ordinary
       matchmaking games count unless mode_context says otherwise
+    - the readable match_mode and game_mode dimensions allow an all-mode
+      win-rate summary when both filters are lifted
     """
     return MetricView(
         source=lambda: _record_game_rows(accounts, tz, days, since, hero, match_mode, game_mode)
@@ -327,6 +331,8 @@ def _record_game_rows(
         "match_id",
         "team",
         "day",
+        "match_mode",
+        "game_mode",
         "won",
         "mvp_rank",
         pl.col("matches.not_scored").alias("not_scored"),

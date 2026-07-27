@@ -64,6 +64,7 @@ def write_cache_entry(
     paths=False,
     game_mode=None,
     match_mode=None,
+    hero_id=52,
 ):
     contents = pb.CMsgMatchMetaDataContents()
     info = contents.match_info
@@ -80,7 +81,7 @@ def write_cache_entry(
 
     p = info.players.add()
     p.account_id = account
-    p.hero_id = 52
+    p.hero_id = hero_id
     p.team = pb.k_ECitadelLobbyTeam_Team1
 
     if abandon_s is not None:
@@ -3450,6 +3451,55 @@ def test_winrate_private_lobby_flag_swaps_the_games_in(capsys, tmp_path):
     out = capsys.readouterr().out
 
     assert "Overall: 1 games, 0-1, 0.0% win rate" in out
+
+
+def test_winrate_by_mode_honors_account_and_hero(capsys, tmp_path, monkeypatch):
+    cache = tmp_path / "cache"
+    cache.mkdir()
+    private = pb.k_ECitadelMatchMode_PrivateLobby
+    brawl = pb.k_ECitadelGameMode_StreetBrawl
+    haze = heroes.hero_id_by_name("Haze")
+
+    write_cache_entry(cache, match_id=100)
+    write_cache_entry(cache, match_id=101, won=False)
+    write_cache_entry(cache, match_id=102, game_mode=brawl)
+    write_cache_entry(cache, match_id=103, game_mode=brawl)
+    write_cache_entry(cache, match_id=104, won=False, game_mode=brawl)
+    write_cache_entry(cache, match_id=105, match_mode=private)
+    write_cache_entry(cache, match_id=106, match_mode=private)
+    write_cache_entry(cache, match_id=107, won=False, match_mode=private)
+    write_cache_entry(cache, match_id=108, won=False, account=43, game_mode=brawl)
+    write_cache_entry(cache, match_id=109, won=False, match_mode=private, hero_id=haze)
+    monkeypatch.setattr(
+        performance.meta,
+        "get_hero_stats",
+        lambda **kwargs: pytest.fail("an all-mode table has no matching public baseline"),
+    )
+
+    run_main(
+        tmp_path,
+        "winrate",
+        "--by",
+        "mode",
+        "--account",
+        "42",
+        "--hero",
+        "Mirage",
+        accounts="you = 42\nalt = 43",
+    )
+
+    out = capsys.readouterr().out
+
+    assert re.search(r"Matchmaking\s+2\s+1\s+1\s+50\.0%", out)
+    assert re.search(r"Street Brawl\s+3\s+2\s+1\s+66\.7%", out)
+    assert re.search(r"Private Lobby\s+3\s+2\s+1\s+66\.7%", out)
+    assert "Overall:" not in out
+
+
+def test_winrate_by_mode_rejects_a_mode_selection(capsys, tmp_path):
+    run_main(tmp_path, "winrate", "--by", "mode", "--account", "42", "--street-brawl")
+
+    assert "--by mode already includes every mode" in capsys.readouterr().out
 
 
 def test_winrate_abandon_footer(capsys, tmp_path):

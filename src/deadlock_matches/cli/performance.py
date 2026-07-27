@@ -2660,8 +2660,13 @@ def _source_intervals(
 
 
 def winrate_report(args: argparse.Namespace, config: str | Path | None = None) -> None:
-    """W/L table per day, week, or month with net wins and a running total."""
+    """Print W/L by mode or over time with net wins and a running total."""
     tz = config_timezone(config)
+
+    if args.by == "mode":
+        _winrate_mode_report(args, tz)
+        return
+
     try:
         games = queries.view_frame(
             queries.record_games(
@@ -2748,6 +2753,78 @@ def winrate_report(args: argparse.Namespace, config: str | Path | None = None) -
 
     if args.hero is not None and _normal_matchmaking(args):
         _hero_baseline_line(args.hero, args.min_rating, args.since)
+
+
+def _winrate_mode_report(args: argparse.Namespace, tz: str) -> None:
+    """Print scored-game totals for every stored match/game mode pair."""
+    if not _normal_matchmaking(args):
+        print("--by mode already includes every mode; remove the mode-selection flag")
+        return
+
+    try:
+        games = queries.view_frame(
+            queries.record_games(
+                accounts=args.account,
+                tz=tz,
+                days=args.days,
+                since=args.since,
+                hero=args.hero,
+                match_mode=None,
+                game_mode=None,
+            ),
+            parquet_dir=args.parquet,
+        ).collect()
+        modes = queries.summarize(
+            queries.record_games,
+            by=("match_mode", "game_mode"),
+            measures=("games", "wins", "losses", "win_rate"),
+            filters={"scored": True},
+            lf=games.lazy(),
+        ).collect()
+    except ValueError as e:
+        print(e)
+        return
+
+    if modes.is_empty():
+        print("No games found for the configured accounts")
+        _unscored_line(games)
+        return
+
+    rows = [
+        {
+            **row,
+            "mode": _mode_pair_label(row["match_mode"], row["game_mode"]),
+        }
+        for row in modes.iter_rows(named=True)
+    ]
+    order = {"Matchmaking": 0, "Street Brawl": 1, "Private Lobby": 2}
+    rows.sort(key=lambda row: (order.get(row["mode"], 3), row["mode"]))
+    width = max(12, *(len(row["mode"]) for row in rows))
+
+    print(f"  {'Mode':<{width}}{'Games':>8}{'W':>6}{'L':>6}{'Win rate':>11}")
+
+    for row in rows:
+        rate = None if row["win_rate"] is None else float(row["win_rate"])
+        print(
+            f"  {row['mode']:<{width}}{row['games']:>8}{row['wins']:>6}{row['losses']:>6}"
+            f"{WIN_RATE.render(rate, render.BLANK):>11}"
+        )
+
+    _unscored_line(games)
+
+
+def _mode_pair_label(match_mode: str | None, game_mode: str | None) -> str:
+    """Collapse the two wire mode names into the label people use."""
+    match_label = match_mode or "Unknown match mode"
+    game_label = game_mode or "Unknown game mode"
+
+    if game_label == "Normal":
+        return match_label
+
+    if match_label == "Matchmaking":
+        return game_label
+
+    return f"{match_label} / {game_label}"
 
 
 def _normal_matchmaking(args: argparse.Namespace) -> bool:
