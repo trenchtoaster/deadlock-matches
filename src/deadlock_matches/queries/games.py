@@ -18,10 +18,13 @@ from deadlock_matches.queries.core import (
 from deadlock_matches.queries.delivery import hero_damage, with_delivery
 from deadlock_matches.queries.items import _item_windows, item_events_effective
 from deadlock_matches.queries.labels import (
+    buff_family,
+    buff_level,
     hero_name,
     stack_class_name,
     stack_name,
     with_damage_source_name,
+    with_soul_source_name,
 )
 from deadlock_matches.queries.semantic import (
     Dimension,
@@ -98,8 +101,8 @@ BUFF_GAME_DIMENSIONS = {
     "hero": Dimension(hero_name("players.hero_id")),
     "team": Dimension(pl.col("players.team")),
     "type": Dimension(pl.col("type"), comment="Pickup class name, one per family and level."),
-    "buff": Dimension(pl.col("buff"), comment="Buff family such as ammo, cd, spirit, or wp."),
-    "level": Dimension(pl.col("level")),
+    "buff": Dimension(buff_family(), comment="Buff family such as ammo, cd, spirit, or wp."),
+    "level": Dimension(buff_level()),
 }
 
 BUFF_GAME_MEASURES = {
@@ -981,7 +984,7 @@ def _soul_sources(
         hero_games = hero_games.filter(pl.col("match_id").is_in(list(matches)))
 
     return (
-        scan("soul_sources")
+        with_soul_source_name(scan("soul_sources"))
         .join(hero_games, on=["match_id", "account_id"])
         .group_by(
             "match_id",

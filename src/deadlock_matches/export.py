@@ -11,7 +11,6 @@ import json
 import re
 import shutil
 from dataclasses import dataclass, field
-from enum import IntEnum
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
@@ -22,7 +21,7 @@ from deadlock_matches import (
     paths,
     schemas,
 )
-from deadlock_matches.assets import history, items, statues, store, unnest
+from deadlock_matches.assets import history, items, store, unnest
 
 if TYPE_CHECKING:
     from collections.abc import Collection, Iterable, Iterator
@@ -64,59 +63,6 @@ def item_horizon() -> str | None:
         return None
 
     return eras[-1][0]
-
-
-class GoldSource(IntEnum):
-    """Income source IDs in snapshot gold_sources rows (protobuf EGoldSource)."""
-
-    PLAYERS = 1
-    LANE_CREEPS = 2
-    NEUTRALS = 3
-    BOSSES = 4
-    TREASURE = 5
-    ASSISTS = 6
-    DENIES = 7
-    TEAM_BONUS = 8
-    ABILITY_ASSASSINATE = 9
-    ITEM_TROPHY_COLLECTOR = 10
-    ITEM_CULTIST_SACRIFICE = 11
-    BREAKABLE = 12
-    ITEM_GOOSE_EGG = 13
-
-
-SOURCE_NAMES = {
-    GoldSource.PLAYERS: "players",
-    GoldSource.LANE_CREEPS: "troopers",
-    GoldSource.NEUTRALS: "jungle",
-    GoldSource.BOSSES: "bosses",
-    GoldSource.TREASURE: "treasure",
-    GoldSource.ASSISTS: "assists",
-    GoldSource.DENIES: "denies",
-    GoldSource.TEAM_BONUS: "team_bonus",
-    GoldSource.ABILITY_ASSASSINATE: "assassinate",
-    GoldSource.ITEM_TROPHY_COLLECTOR: "trophy_collector",
-    GoldSource.ITEM_CULTIST_SACRIFICE: "cultist_sacrifice",
-    GoldSource.BREAKABLE: "breakables",
-    GoldSource.ITEM_GOOSE_EGG: "goose_egg",
-}
-
-LANE_NAMES = {1: "yellow", 4: "blue", 6: "green"}
-
-OBJECTIVE_LANES = {1: "yellow", 3: "blue", 4: "green"}
-
-OBJECTIVE_NAMES = {
-    0: "Weakened Patron",
-    9: "Patron",
-    10: "Shrine",
-    11: "Shrine",
-}
-OBJECTIVE_NAMES.update(dict.fromkeys((1, 2, 3, 4), "Guardian"))
-OBJECTIVE_NAMES.update({i + 4: "Walker" for i in (1, 2, 3, 4)})
-OBJECTIVE_NAMES.update({i + 11: "Base Guardians" for i in (1, 2, 3, 4)})
-
-OBJECTIVE_LANE_IDS = {i: i for i in (1, 2, 3, 4)}
-OBJECTIVE_LANE_IDS.update({i + 4: i for i in (1, 2, 3, 4)})
-OBJECTIVE_LANE_IDS.update({i + 11: i for i in (1, 2, 3, 4)})
 
 
 def _stat_type_names() -> dict[int, str]:
@@ -336,8 +282,6 @@ def build_tables(
                 "start_time": start_time,
                 "team": o.team,
                 "objective_id": o.team_objective_id,
-                "objective": OBJECTIVE_NAMES.get(o.team_objective_id),
-                "lane": OBJECTIVE_LANES.get(OBJECTIVE_LANE_IDS.get(o.team_objective_id, 0)),
                 "destroyed_time_s": o.destroyed_time_s or None,
                 "first_damage_time_s": o.first_damage_time_s or None,
                 "player_damage": o.player_damage,
@@ -357,7 +301,6 @@ def build_tables(
                     "team": p.team,
                     "player_slot": p.player_slot,
                     "assigned_lane": p.assigned_lane,
-                    "lane": LANE_NAMES.get(p.assigned_lane),
                     "won": p.team == info.winning_team,
                     "kills": p.kills,
                     "deaths": p.deaths,
@@ -389,7 +332,6 @@ def build_tables(
                         "hero_id": p.hero_id,
                         "time_stamp_s": s.time_stamp_s,
                         "source": g.source,
-                        "source_name": SOURCE_NAMES.get(g.source, str(g.source)),
                         "souls": g.gold,
                         "souls_orbs": g.gold_orbs,
                     }
@@ -463,21 +405,18 @@ def build_tables(
                 for a in p.accolades
             )
 
-            for b in p.power_up_buffs:
-                buff, level = statues.parse_pickup(b.type)
-                buff_rows.append(
-                    {
-                        "match_id": info.match_id,
-                        "start_time": start_time,
-                        "account_id": p.account_id,
-                        "hero_id": p.hero_id,
-                        "type": b.type,
-                        "buff": buff,
-                        "level": level,
-                        "count": b.value,
-                        "permanent": b.is_permanent,
-                    }
-                )
+            buff_rows.extend(
+                {
+                    "match_id": info.match_id,
+                    "start_time": start_time,
+                    "account_id": p.account_id,
+                    "hero_id": p.hero_id,
+                    "type": b.type,
+                    "count": b.value,
+                    "permanent": b.is_permanent,
+                }
+                for b in p.power_up_buffs
+            )
 
             stack_rows.extend(
                 {

@@ -3,7 +3,8 @@ from types import SimpleNamespace
 import polars as pl
 
 from deadlock_matches import queries
-from deadlock_matches.assets import abilities, accolades, heroes, items
+from deadlock_matches.assets import abilities, accolades, heroes, items, statues
+from deadlock_matches.extract import pb
 
 
 def test_hero_name_follows_current_assets_without_changing_source(monkeypatch):
@@ -180,3 +181,107 @@ def test_id_labels_follow_current_assets(monkeypatch):
     assert stacks.get_column("name").to_list() == ["Ability Name", "Item Name", None]
     assert imbued.get_column("name").to_list() == ["Ability Name", None]
     assert accolade.get_column("name").to_list() == ["headshot_damage", None]
+
+
+def test_soul_source_name_covers_every_protobuf_value():
+    descriptor = pb.CMsgMatchMetaDataContents.DESCRIPTOR
+
+    assert descriptor is not None
+
+    enum = descriptor.enum_types_by_name["EGoldSource"]
+    ids = [v.number for v in enum.values]
+
+    resolved = (
+        pl.LazyFrame({"source": [*ids, 999]})
+        .select(queries.soul_source_name().alias("source_name"))
+        .collect()
+        .get_column("source_name")
+        .to_list()
+    )
+
+    assert resolved[:-1] == [queries.labels.SOUL_SOURCE_NAMES[i] for i in ids]
+    assert resolved[-1] == "999"
+
+
+def test_lane_name_resolves_engine_ids():
+    resolved = (
+        pl.LazyFrame({"assigned_lane": [1, 4, 6, 2, None]})
+        .select(queries.lane_name().alias("lane"))
+        .collect()
+        .get_column("lane")
+        .to_list()
+    )
+
+    assert resolved == ["yellow", "blue", "green", None, None]
+
+
+def test_objective_labels_align_with_the_protobuf_enum():
+    enum = pb.DESCRIPTOR.pool.FindEnumTypeByName("ECitadelTeamObjective")
+    by_id = {v.number: v.name for v in enum.values}
+
+    for objective_id, name in queries.labels.OBJECTIVE_NAMES.items():
+        wire = by_id[objective_id]
+
+        if name == "Guardian":
+            assert "Tier1" in wire
+        elif name == "Walker":
+            assert "Tier2" in wire
+        elif name == "Base Guardians":
+            assert "BarrackBoss" in wire
+        elif name == "Shrine":
+            assert "ShieldGenerator" in wire
+        elif name == "Patron":
+            assert wire.endswith("Titan")
+        else:
+            assert name == "Weakened Patron"
+            assert wire.endswith("Core")
+
+    lanes = queries.labels.OBJECTIVE_LANE_IDS
+
+    for objective_id, lane in lanes.items():
+        assert by_id[objective_id].endswith(f"Lane{lane}")
+
+    assert set(queries.labels.OBJECTIVE_NAMES) == set(by_id)
+
+
+def test_objective_labels_resolve_names_and_lanes():
+    frame = pl.LazyFrame({"objective_id": [1, 5, 9, 0, 10, 13, 2, 99]})
+    labeled = queries.with_objective_labels(frame).collect()
+
+    assert labeled.get_column("objective").to_list() == [
+        "Guardian",
+        "Walker",
+        "Patron",
+        "Weakened Patron",
+        "Shrine",
+        "Base Guardians",
+        "Guardian",
+        None,
+    ]
+    assert labeled.get_column("lane").to_list() == [
+        "yellow",
+        "yellow",
+        None,
+        None,
+        None,
+        None,
+        None,
+        None,
+    ]
+
+
+def test_buff_labels_mirror_parse_pickup():
+    types = [
+        "hp_permanent_pickup",
+        "hp_permanent_pickup_lv2",
+        "spirit_permanent_pickup_lv3",
+        "gun_powerup_pickup",
+        "something_else",
+    ]
+    labeled = queries.with_buff_labels(pl.LazyFrame({"type": types})).collect()
+    expected = [statues.parse_pickup(t) for t in types]
+
+    assert labeled.get_column("buff").to_list() == [b for b, _ in expected]
+    assert labeled.get_column("level").to_list() == [lv for _, lv in expected]
+    assert labeled.get_column("buff").to_list() == ["hp", "hp", "spirit", "gun", None]
+    assert labeled.get_column("level").to_list() == [1, 2, 3, None, None]

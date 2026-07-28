@@ -878,7 +878,7 @@ def _guardian_falls(
 ) -> list[tuple[int, str]]:
     """List the guardian falls of one lane inside the window from the player side."""
     fallen = (
-        queries.scan("objectives", args.parquet)
+        queries.with_objective_labels(queries.scan("objectives", args.parquet))
         .filter(
             pl.col("match_id") == row["match_id"],
             pl.col("lane") == lane,
@@ -1306,7 +1306,7 @@ def _objective_events(row: dict[str, Any], args: argparse.Namespace) -> list[tup
     events = []
 
     objectives = (
-        queries.scan("objectives", args.parquet)
+        queries.with_objective_labels(queries.scan("objectives", args.parquet))
         .filter(
             pl.col("match_id") == row["match_id"],
             pl.col("destroyed_time_s").is_not_null(),
@@ -1436,7 +1436,9 @@ def _objective_income_events(
 
     treasure = (
         queries.scan("soul_sources", args.parquet)
-        .filter(pl.col("match_id") == match_id, pl.col("source_name") == "treasure")
+        .filter(
+            pl.col("match_id") == match_id, pl.col("source") == int(queries.GoldSource.TREASURE)
+        )
         .select("account_id", "time_stamp_s", "souls", "souls_orbs")
         .sort("account_id", "time_stamp_s")
         .with_columns((pl.col("souls") + pl.col("souls_orbs")).alias("total"))
@@ -1774,7 +1776,7 @@ def buffs_report(row: dict[str, Any], args: argparse.Namespace) -> None:
         return
 
     df = (
-        queries.scan("buffs", args.parquet)
+        queries.with_buff_labels(queries.scan("buffs", args.parquet))
         .filter(
             pl.col("match_id") == row["match_id"],
             pl.col("account_id") == row["account_id"],
@@ -2837,7 +2839,7 @@ def _normal_matchmaking(args: argparse.Namespace) -> bool:
 
 
 def _selected_mode_label(args: argparse.Namespace) -> str:
-    """Human-readable label for the CLI's selected match/game mode pair."""
+    """Label the selected match and game mode pair for output."""
     match_mode, game_mode = getattr(
         args,
         "mode",

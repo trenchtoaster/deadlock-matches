@@ -155,8 +155,11 @@ class Players(Table):
     hero_id = Column(pl.Int64, "Numeric hero id (queries.player_rows adds the name)")
     team = Column(pl.Int64, "0 = The Hidden King (Amber internally), 1 = The Archmother (Sapphire)")
     player_slot = Column(pl.Int64, "Slot within the match, joins to damage target/dealer")
-    assigned_lane = Column(pl.Int64, "Starting lane, raw engine id (1/4/6 on the three-lane map)")
-    lane = Column(pl.String, "Color of the starting lane")
+    assigned_lane = Column(
+        pl.Int64,
+        "Starting lane, raw engine id, 1/4/6 on the three-lane map "
+        "(queries.with_lane_name adds the color)",
+    )
     won = Column(pl.Boolean, "Whether this player's team won")
     kills = Column(pl.Int64, "Final kills")
     deaths = Column(pl.Int64, "Final deaths")
@@ -249,9 +252,10 @@ class SoulSources(Table):
     account_id = ACCOUNT_ID
     hero_id = HERO_ID
     time_stamp_s = Column(pl.Int64, "Snapshot time in seconds, souls are cumulative")
-    source = Column(pl.Int64, "Income source enum id")
-    source_name = Column(
-        pl.String, "Income source: players/troopers/jungle/bosses/treasure/breakables/..."
+    source = Column(
+        pl.Int64,
+        "Income source id from the protobuf EGoldSource enum "
+        "(queries.with_soul_source_name adds the slug)",
     )
     souls = Column(pl.Int64, "Cumulative souls from this source")
     souls_orbs = Column(pl.Int64, "The orb-confirm portion of souls (protobuf gold_orbs)")
@@ -301,16 +305,10 @@ class Buffs(Table):
     start_time = START_TIME
     account_id = ACCOUNT_ID
     hero_id = HERO_ID
-    type = Column(pl.String, "Engine class name of the buff pickup")
-    buff = Column(
+    type = Column(
         pl.String,
-        "hp = max health, spirit = spirit power, wp = weapon damage, "
-        "firerate = fire rate, ammo = ammo, cd = cooldown reduction, plus the bridge "
-        "buff families, null for unrecognized names",
-    )
-    level = Column(
-        pl.Int64,
-        "Statue level 1-3, statues strengthen as the game goes on, null for bridge buffs",
+        "Engine class name of the buff pickup (queries.with_buff_labels adds "
+        "the buff family and statue level)",
     )
     count = Column(pl.Int64, "How many of that buff the player gained")
     permanent = Column(pl.Boolean, "Permanent stat buffs, false for the timed bridge buffs")
@@ -451,11 +449,11 @@ class Objectives(Table):
     match_id = MATCH_ID
     start_time = START_TIME
     team = Column(pl.Int64, "Team the objective belonged to")
-    objective_id = Column(pl.Int64, "Raw ECitadelTeamObjective id")
-    objective = Column(
-        pl.String, "Guardian, Walker, Base Guardians, Shrine, Patron, or Weakened Patron"
+    objective_id = Column(
+        pl.Int64,
+        "Raw ECitadelTeamObjective id (queries.with_objective_labels adds "
+        "the objective name and lane color)",
     )
-    lane = Column(pl.String, "Color of its lane")
     destroyed_time_s = Column(pl.Int64, "Game time in seconds when it was destroyed")
     first_damage_time_s = Column(pl.Int64, "Game time in seconds when it first took damage")
     player_damage = Column(pl.Int64, "Damage dealt to it by players (gun and spirit combined)")

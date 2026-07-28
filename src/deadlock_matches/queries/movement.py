@@ -10,6 +10,7 @@ import polars as pl
 
 from deadlock_matches.queries.core import _resolved_accounts, player_rows, scan, table_exists
 from deadlock_matches.queries.games import _collect_game_records, _hero_game_rows
+from deadlock_matches.queries.labels import with_soul_source_name
 from deadlock_matches.queries.semantic import Dimension, Measure, MetricView, view, view_frame
 
 if TYPE_CHECKING:
@@ -165,7 +166,7 @@ def movement_profile(parquet_dir: str | Path | None = None) -> pl.LazyFrame:
     metrics = movement_metrics(parquet_dir)
 
     farm = (
-        scan("soul_sources", parquet_dir)
+        with_soul_source_name(scan("soul_sources", parquet_dir))
         .filter(pl.col("source_name").is_in(["troopers", "jungle", "treasure", "denies"]))
         .group_by("match_id", "account_id", "source_name")
         .agg(pl.col("souls").max())

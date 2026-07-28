@@ -212,14 +212,17 @@ def test_tables_have_expected_rows():
     assert len(tables["custom_stats"]) == 2
 
 
-def test_players_lane_columns():
+def test_players_lane_resolves_at_read_time():
     info = build_match()
     info.players[0].assigned_lane = 1
     info.players[1].assigned_lane = 6
     players = export.build_tables([info])["players"]
 
     assert players.get_column("assigned_lane").to_list() == [1, 6]
-    assert players.get_column("lane").to_list() == ["yellow", "green"]
+    assert "lane" not in players.columns
+
+    named = queries.with_lane_name(players.lazy()).collect()
+    assert named.get_column("lane").to_list() == ["yellow", "green"]
 
 
 def test_damage_sources_cumulative_matches_damage_total():
@@ -366,11 +369,15 @@ def test_gold_fields_renamed_to_souls():
     assert stats.get_column("souls_player")[0] == 500
 
 
-def test_soul_sources_named():
+def test_soul_sources_resolve_names_at_read_time():
     src = export.build_tables([build_match()])["soul_sources"]
-    named = dict(zip(src.get_column("source_name"), src.get_column("souls"), strict=True))
 
-    assert named == {"troopers": 700, "breakables": 90}
+    assert "source_name" not in src.columns
+
+    named = queries.with_soul_source_name(src.lazy()).collect()
+    by_name = dict(zip(named.get_column("source_name"), named.get_column("souls"), strict=True))
+
+    assert by_name == {"troopers": 700, "breakables": 90}
 
 
 def test_players_won_flag():
@@ -536,8 +543,11 @@ def test_buffs_keep_permanent_and_bridge_pickups():
     table = export.build_tables([build_match()])["buffs"]
 
     assert table.height == 2
+    assert "buff" not in table.columns
+    assert "level" not in table.columns
 
-    rows = {r["type"]: r for r in table.to_dicts()}
+    labeled = queries.with_buff_labels(table.lazy()).collect()
+    rows = {r["type"]: r for r in labeled.to_dicts()}
 
     perm = rows["hp_permanent_pickup_lv2"]
     assert perm["buff"] == "hp"
@@ -605,8 +615,13 @@ def test_mid_boss_rows():
 def test_objectives_rows():
     obj = export.build_tables([build_match()])["objectives"]
 
-    assert obj.get_column("objective").to_list() == ["Guardian", "Patron"]
-    assert obj.get_column("lane").to_list() == ["yellow", None]
+    assert "objective" not in obj.columns
+    assert "lane" not in obj.columns
+
+    labeled = queries.with_objective_labels(obj.lazy()).collect()
+
+    assert labeled.get_column("objective").to_list() == ["Guardian", "Patron"]
+    assert labeled.get_column("lane").to_list() == ["yellow", None]
     assert obj.get_column("team").to_list() == [0, 1]
     assert obj.get_column("destroyed_time_s").to_list() == [660, None]
     assert obj.get_column("first_damage_time_s").to_list() == [120, None]
@@ -1458,7 +1473,7 @@ def test_gold_source_matches_protobuf_enum():
         for v in enum.values
     }
 
-    assert {m.name: m.value for m in export.GoldSource} == expected
+    assert {m.name: m.value for m in queries.GoldSource} == expected
 
 
 def test_swap_into_place_replaces_and_leaves_no_backup(tmp_path):

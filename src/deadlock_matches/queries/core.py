@@ -18,8 +18,10 @@ from deadlock_matches.assets import skill_rating as sr
 from deadlock_matches.queries.labels import (
     game_mode_name,
     hero_name,
+    lane_name,
     match_mode_name,
     with_hero_name,
+    with_lane_name,
 )
 from deadlock_matches.queries.semantic import (
     Dimension,
@@ -165,8 +167,8 @@ def table_exists(table: str, parquet_dir: str | Path | None = None) -> bool:
 
 
 def player_rows(parquet_dir: str | Path | None = None) -> pl.LazyFrame:
-    """Read players with the current hero display name derived from hero_id."""
-    return with_hero_name(scan("players", parquet_dir))
+    """Read players with the hero display name and lane color derived from the ids."""
+    return with_lane_name(with_hero_name(scan("players", parquet_dir)))
 
 
 def _asof_era_join(
@@ -252,7 +254,7 @@ MY_GAMES_DIMENSIONS = {
         comment="Raw engine id, use lane for the readable color.",
     ),
     "lane": Dimension(
-        pl.col("lane"),
+        lane_name(),
         comment="Lane color, the same for both teams where left and right flip.",
     ),
     "day": Dimension(pl.col("start_local").dt.date(), comment="Local date, not the UTC date."),

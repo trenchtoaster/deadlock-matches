@@ -14,11 +14,11 @@ Use `deadlock schema [table]` when you want the exact columns, data types, and d
 ## Tables
 
 - `matches`: one row per match.
-- `players`: one row per player per match, with `hero_id`, `won`, and `lane` (the starting lane color). `queries.player_rows()` adds the current hero display name as `hero`.
+- `players`: one row per player per match, with `hero_id`, `won`, and `assigned_lane`. `queries.player_rows()` adds the current hero display name as `hero` and the starting lane color as `lane`.
 - `stats`: cumulative stat snapshots, every 3 minutes through 15:00 and every 5 minutes after, plus one at match end.
-- `soul_sources`: souls per income source per snapshot.
+- `soul_sources`: souls per income source per snapshot. Parquet stores the `source` id; `queries.with_soul_source_name()` adds the readable slug.
 - `item_events`: item purchases, with historical item names, prices, and tiers merged in from the cached API data. Prices reflect the patch each match was played on; the current imbued-ability name is derived from `imbued_ability_id` at read time.
-- `buffs`: the buffs each player ended the match with, one row per pickup type with the buff family and level. Permanent statue buffs and temporary bridge buffs are told apart by the `permanent` column. `statue_history` holds the per-pickup values by patch.
+- `buffs`: the buffs each player ended the match with, one row per pickup type. `queries.with_buff_labels()` adds the buff family and statue level from the class name. Permanent statue buffs and temporary bridge buffs are told apart by the `permanent` column. `statue_history` holds the per-pickup values by patch.
 - `stacks`: the final counters from stacking abilities and items, one row per counter per player. Parquet stores `ability_id`; `queries.with_stack_labels()` adds its current class and display name.
 - `custom_stats`: the named stat counters the game tracks but never shows, one row per stat per player per snapshot with the family and name split out. Examples include parries, accuracy against heroes, damage by range, comeback souls, and per-hero counters.
 - `damage`: damage, healing, and mitigation per source and target. Parquet stores stable `source_class`; `queries.hero_damage()` and `queries.with_damage_source_name()` add current labels such as Dust Devil or "Promises Kept (crit)". `queries.damage_category()` distinguishes match-screen totals from individual sources.
@@ -64,7 +64,7 @@ A metric view declares which dimensions you can group by and which measures you 
 
 Every query in the module is a lazy polars plan and all collections use the streaming engine. Nothing is read until `.collect()`, the plan prunes the scan down to the columns and rows it actually touches, and memory stays bounded at any archive size. Keep your own queries lazy from `scan()` to `.collect()` and they get the same treatment.
 
-Current asset labels are deliberately not stored in match parquet. Hero, damage/healing source, imbued abilities, stack, and accolade labels resolve from their stable IDs or engine classes when queried, so an asset refresh fixes match displays without a full archive rebuild. Aggregate on the stable key first and attach the label to the reduced frame when writing a new aggregate query.
+Labels are deliberately not stored in match parquet. Hero, damage/healing source, imbued abilities, stack, and accolade labels resolve from their stable IDs or engine classes when queried, so an asset refresh fixes match displays without a full archive rebuild. The fixed mappings work the same way: soul source slugs, lane colors, objective names, and buff family/level all derive from the stored ids at read time, so a mapping fix is a code edit rather than a rebuild. Aggregate on the stable key first and attach the label to the reduced frame when writing a new aggregate query.
 
 Here is the general shape. A rate like `win_rate` is total wins over total scored games at whatever grain you ask for. It is never the mean of per-day rates. Measures come back raw. A rate is a proportion and scaling it to a percent is yours to do where you print:
 

@@ -59,7 +59,6 @@ def _write(parquet_dir):
             "team": 0 if won else 1,
             "player_slot": 1,
             "assigned_lane": 1,
-            "lane": "yellow",
             "won": won,
             "kills": 6,
             "deaths": 3,

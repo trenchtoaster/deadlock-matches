@@ -239,6 +239,7 @@ def melee_pq(tmp_path):
             "account_id": [42, 99, 42],
             "hero_id": [52, 27, 52],
             "team": [1, 0, 1],
+            "assigned_lane": [1, 1, 4],
         }
     )
 

@@ -9,7 +9,7 @@ import polars as pl
 
 from deadlock_matches.queries.core import player_rows, scan
 from deadlock_matches.queries.delivery import damage_category, hero_damage, with_delivery
-from deadlock_matches.queries.labels import damage_source_name
+from deadlock_matches.queries.labels import damage_source_name, with_soul_source_name
 from deadlock_matches.queries.semantic import Dimension, Measure, MetricView, view
 
 if TYPE_CHECKING:
@@ -196,7 +196,7 @@ def _source_gains(
     separately before the gains are summed.
     """
     per_source = (
-        scan("soul_sources", parquet_dir)
+        with_soul_source_name(scan("soul_sources", parquet_dir))
         .join(games.select(_KEYS).unique(), on=_KEYS)
         .filter(pl.col("source_name").is_in(list(sources)))
         .select(
@@ -328,7 +328,7 @@ def game_totals(
 
     elif stat in SOUL_COMPOSITES:
         totals = (
-            scan("soul_sources", parquet_dir)
+            with_soul_source_name(scan("soul_sources", parquet_dir))
             .join(games.select(_KEYS).unique(), on=_KEYS)
             .filter(pl.col("source_name").is_in(list(SOUL_COMPOSITES[stat])))
             .group_by(*_KEYS, "source_name")
@@ -393,7 +393,7 @@ def cumulative_at(
 
     elif stat in SOUL_COMPOSITES:
         values = (
-            scan("soul_sources", parquet_dir)
+            with_soul_source_name(scan("soul_sources", parquet_dir))
             .join(games.select(_KEYS).unique(), on=_KEYS)
             .filter(pl.col("source_name").is_in(list(SOUL_COMPOSITES[stat])))
             .select(
@@ -858,7 +858,7 @@ def soul_intervals(
     )
 
     samples = (
-        scan("soul_sources", parquet_dir)
+        with_soul_source_name(scan("soul_sources", parquet_dir))
         .filter(pl.col("match_id") == match_id, pl.col("account_id") == account_id)
         .select(
             "source_name", "time_stamp_s", (pl.col("souls") + pl.col("souls_orbs")).alias("souls")

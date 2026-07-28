@@ -1,7 +1,7 @@
 import datetime as dt
 import zoneinfo
 
-from deadlock_matches import export, schemas
+from deadlock_matches import queries, schemas
 from deadlock_matches.assets import history, store
 from deadlock_matches.extract import pb
 
@@ -452,11 +452,11 @@ def build_souls_match(match_id=100):
     snap = info.players[0].stats[-1]
 
     for source, gold, orbs in (
-        (export.GoldSource.LANE_CREEPS, 2000, 500),
-        (export.GoldSource.PLAYERS, 600, 0),
-        (export.GoldSource.BOSSES, 800, 0),
-        (export.GoldSource.TEAM_BONUS, 100, 0),
-        (export.GoldSource.DENIES, 0, 0),
+        (queries.GoldSource.LANE_CREEPS, 2000, 500),
+        (queries.GoldSource.PLAYERS, 600, 0),
+        (queries.GoldSource.BOSSES, 800, 0),
+        (queries.GoldSource.TEAM_BONUS, 100, 0),
+        (queries.GoldSource.DENIES, 0, 0),
     ):
         gs = snap.gold_sources.add()
         gs.source = source

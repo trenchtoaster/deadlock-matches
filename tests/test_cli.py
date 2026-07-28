@@ -14,6 +14,7 @@ from deadlock_matches import (
     export,
     extract,
     players,
+    queries,
     schemas,
 )
 from deadlock_matches.assets import (
@@ -2865,7 +2866,7 @@ def test_match_scoreboard_shows_buff_totals(capsys, tmp_path):
 def test_match_souls_flag_prints_source_and_group_table(capsys, tmp_path):
     cache = tmp_path / "cache"
     cache.mkdir()
-    g = export.GoldSource
+    g = queries.GoldSource
     write_cache_entry(
         cache,
         match_id=100,
@@ -2901,7 +2902,7 @@ def test_match_souls_flag_prints_source_and_group_table(capsys, tmp_path):
 def test_souls_command_milestones(capsys, tmp_path):
     cache = tmp_path / "cache"
     cache.mkdir()
-    g = export.GoldSource
+    g = queries.GoldSource
 
     for match_id in (100, 101, 102):
         write_cache_entry(
@@ -3873,7 +3874,7 @@ def test_healing_command_without_account_prints_hint(capsys, tmp_path):
 
 
 def test_souls_command_prints_group_source_and_game_tables(capsys, tmp_path):
-    g = export.GoldSource
+    g = queries.GoldSource
     cache = tmp_path / "cache"
     cache.mkdir()
     write_cache_entry(
@@ -4258,7 +4259,6 @@ def test_schema_command_prints_sample_rows(capsys, tmp_path):
                 "team": 1,
                 "player_slot": 0,
                 "assigned_lane": 4,
-                "lane": "blue",
                 "won": True,
                 "kills": i,
                 "deaths": 0,
@@ -4282,7 +4282,7 @@ def test_schema_command_prints_sample_rows(capsys, tmp_path):
     assert "Sample rows from" in out
     assert "hero_id" in out
     assert "Mirage" not in out
-    assert "shape: (5, 18)" in out
+    assert "shape: (5, 17)" in out
 
 
 def test_schema_command_samples_asset_table(capsys, tmp_path):
