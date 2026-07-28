@@ -1,6 +1,50 @@
 # Changelog
 
 All notable changes to this project are documented here.
+## [0.10.0] - 2026-07-28
+
+### Added
+
+- Add hero-level combat records ([87edb7e](https://github.com/trenchtoaster/deadlock-matches/commit/87edb7e78fdf4129f8b13dd9ba73746bc1c76a30))
+
+- Add metric views ([dd45079](https://github.com/trenchtoaster/deadlock-matches/commit/dd450796c2949c75f26fb6070c1c1362c9bb48e5))
+
+- Migrate comparison reports to metric views ([12528a4](https://github.com/trenchtoaster/deadlock-matches/commit/12528a4d2405e12898e48bdda7eef0818a3fd9e1))
+
+- Name the metric views in the schema listing ([358f904](https://github.com/trenchtoaster/deadlock-matches/commit/358f904348e690dd31c98024c43a425796b0ed80))
+
+- Scope reports to normal matchmaking with mode flags ([687ddba](https://github.com/trenchtoaster/deadlock-matches/commit/687ddba2a3536b85ea003d69e64eec552aafa33f))
+
+- Store tables hive-partitioned with start_time and hero_id ([1a22c93](https://github.com/trenchtoaster/deadlock-matches/commit/1a22c9319f1c33724c63cba7bd6f800e7a983b29))
+
+- Add winrate --by mode for a per-mode record ([2d68baa](https://github.com/trenchtoaster/deadlock-matches/commit/2d68baac764f87938600f5ad2dabad7f61dc4f52))
+
+
+### Documentation
+
+- Update docs and add information about metric views ([6cdf926](https://github.com/trenchtoaster/deadlock-matches/commit/6cdf926753ef90c5b39a143c0d08932677c9fdb2))
+
+- Document the mode flags and the matchmaking default ([83dddda](https://github.com/trenchtoaster/deadlock-matches/commit/83dddda5298a7f8e6a8aa8ec80ec212837e63b31))
+
+- Cover mode filtering in the catalog and caveats ([d4a7551](https://github.com/trenchtoaster/deadlock-matches/commit/d4a7551a160d94c96095c14dd81d0859ad089ee9))
+
+
+### Fixed
+
+- Install schema caveat references ([bb3b161](https://github.com/trenchtoaster/deadlock-matches/commit/bb3b16166f14ff4391d2f9c7ccf183dff5c7b328))
+
+- Derive current asset labels at read time ([9379fe9](https://github.com/trenchtoaster/deadlock-matches/commit/9379fe964d085281d299ae367598e449f9393259))
+
+- Read the last stats snapshot instead of the biggest ([a912a39](https://github.com/trenchtoaster/deadlock-matches/commit/a912a39c15c285214f8191b9e128d8af27921811))
+
+- Count UnknownAbility as a detail row, not a total ([c6b5659](https://github.com/trenchtoaster/deadlock-matches/commit/c6b565964ccb35a091822480547e161a151bfad5))
+
+
+### Internal
+
+- Moved soul, lane, objective, and buff labels to read time ([bc47087](https://github.com/trenchtoaster/deadlock-matches/commit/bc470872dd1cdcff38255f5bbbf387da94d5644a))
+
+
 ## [0.9.1] - 2026-07-20
 
 ### Added
