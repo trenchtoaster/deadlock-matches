@@ -1500,13 +1500,14 @@ On its own it only says what it would build and where. Re-run it with `--confirm
 ### The agent skill
 
 ```
-deadlock skill install
+deadlock skill install --agent codex
 ```
 
 - writes the bundled agent skill to your skills directory, teaching an agent the CLI, schemas, query helpers, and data pitfalls
-- defaults to Claude Code's `.claude/skills` directory
+- `--agent claude`, `--agent codex`, and `--agent gemini` select `~/.claude/skills`, `${CODEX_HOME:-~/.codex}/skills`, and `~/.gemini/skills`
+- defaults to Claude for backward compatibility
 - existing local edits are left alone unless you pass `--force`
-- `deadlock skill path` prints the destination, `--dir` uses a different one
+- `deadlock skill path --agent codex` prints that agent's destination, `--dir` uses a custom one
 - `deadlock skill print` writes the skill to stdout for a quick read or for other agents
 
 ### The data dictionary

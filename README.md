@@ -135,26 +135,28 @@ deadlock match
 
 This is the main analysis command. A stack of flags swap the interval table for other views of the same game, like `--souls`, `--damage`, `--laning`, and `--items`. See [the match views in docs/commands.md](docs/commands.md#one-match) for the full set and example output.
 
-### 5. Optional: install the Claude Code skill
+### 5. Optional: install the agent skill
 
 This step is only for people who want to use Claude Code or another LLM agent with their local match data. The normal workflow does not require AI.
 
-The Python package includes a Claude Code skill that teaches an agent the CLI, schemas, query helpers, and data pitfalls.
+The Python package includes an agent skill that teaches Claude Code, Codex, or Gemini CLI the CLI, schemas, query helpers, and data pitfalls. Pick the agent you use:
 
 ```
-deadlock skill install
+deadlock skill install --agent claude
+deadlock skill install --agent codex
+deadlock skill install --agent gemini
 ```
 
-This writes the skill to your Claude skills directory. If you edited your local copy it is left alone unless you pass `--force`. Run `deadlock skill path` to see where it goes on your OS.
+These write to `~/.claude/skills`, `${CODEX_HOME:-~/.codex}/skills`, and `~/.gemini/skills`, respectively. Claude remains the default when `--agent` is omitted for backward compatibility. If you edited your local copy it is left alone unless you pass `--force`. Run `deadlock skill path --agent codex` (or another agent) to see the exact destination.
 
 To let the agent run `deadlock` commands without a prompt each time, add a `Bash(deadlock *)` allow rule to your Claude Code permissions. From a source clone the command is `uv run deadlock`, so use `Bash(uv run deadlock *)` instead.
 
 Useful skill commands:
 
 ```
-deadlock skill path
+deadlock skill path --agent codex
 deadlock skill print
-deadlock skill install --force
+deadlock skill install --agent codex --force
 ```
 
 The marimo notebooks are example/reference files in the repository. If you want them, browse or download [`notebooks/`](notebooks/) from GitHub. The CLI does not install them.
@@ -216,7 +218,7 @@ A few flags repeat across commands:
 - `accounts` - Steam accounts on this PC with a paste-ready `[accounts]` block for `config.toml`
 - `config` - where `config.toml` lives and the settings it holds, `--edit` opens it
 - `assets` - refresh the hero, item, and ability values after a patch, `--backfill --confirm` extends the `--as-of` history
-- `skill` - install the bundled Claude Code skill
+- `skill` - install the bundled agent skill for Claude, Codex, or Gemini
 - `schema` - column docs for the parquet tables, the data dictionary
 
 ### A few of the reports
@@ -475,9 +477,9 @@ LLM agent support is completely optional. The CLI, parquet tables, notebooks, an
 
 If you do use an agent, the same things that make the tables easy to query manually also make them easy for it.
 
-- `.claude/skills/deadlock-matches` is a Claude Code skill that teaches the agent the CLI, the schemas, and the query helpers, so it writes the same polars you would
-- installed users can run `deadlock skill install` to copy that skill into their Claude skills directory, and `deadlock skill path` prints where it goes on the current OS
-- `AGENTS.md` points Codex and other agents at the same file
+- `.claude/skills/deadlock-matches` is the source-checkout copy of a portable agent skill that teaches the agent the CLI, the schemas, and the query helpers, so it writes the same polars you would
+- installed users can run `deadlock skill install --agent claude`, `--agent codex`, or `--agent gemini`; `deadlock skill path --agent ...` prints the destination
+- `AGENTS.md` points agents working in the source checkout at the same file
 - the skill has notes about the parts of the data that are easy to get wrong (rows that double count, snapshot stats that are not aligned with the scoreboard) so an agent does not provide wrong answers
 
 With an agent you ask in English instead of writing the query yourself. Real questions from my own sessions:

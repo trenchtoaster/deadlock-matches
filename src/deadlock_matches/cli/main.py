@@ -673,10 +673,17 @@ def build_parser(config: str | Path | None = None) -> argparse.ArgumentParser:
     sk = command("skill")
     sk_sub = sk.add_subparsers(dest="skill_action", metavar="<action>")
     sk_path = sk_sub.add_parser("path", help="print where the agent skill installs")
-    sk_path.add_argument(
+    sk_path_destination = sk_path.add_mutually_exclusive_group()
+    sk_path_destination.add_argument(
+        "--agent",
+        choices=data.AGENT_SKILL_TARGETS,
+        default="claude",
+        help="use the skills directory for this agent (default: claude)",
+    )
+    sk_path_destination.add_argument(
         "--dir",
         default=None,
-        help="use this skills directory instead of the default",
+        help="use this custom skills directory instead",
     )
     sk_print = sk_sub.add_parser("print", help="print the bundled agent skill")
     sk_print.add_argument(
@@ -685,10 +692,17 @@ def build_parser(config: str | Path | None = None) -> argparse.ArgumentParser:
         help=argparse.SUPPRESS,
     )
     sk_install = sk_sub.add_parser("install", help="install the agent skill")
-    sk_install.add_argument(
+    sk_install_destination = sk_install.add_mutually_exclusive_group()
+    sk_install_destination.add_argument(
+        "--agent",
+        choices=data.AGENT_SKILL_TARGETS,
+        default="claude",
+        help="install for this agent (default: claude)",
+    )
+    sk_install_destination.add_argument(
         "--dir",
         default=None,
-        help="use this skills directory instead of the default",
+        help="use this custom skills directory instead",
     )
     sk_install.add_argument(
         "--force",

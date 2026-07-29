@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import datetime as dt
 import json
+import os
 import unicodedata
 from importlib import resources
 from pathlib import Path
@@ -54,6 +55,7 @@ MVP_LABELS = {1: "1 (MVP)", 2: "2 (Key)", 3: "3 (Key)"}
 AGENT_SKILL_DIR = "agent/skills/deadlock-matches"
 AGENT_SKILL_RESOURCE = f"{AGENT_SKILL_DIR}/SKILL.md"
 AGENT_SKILL_REFERENCES = ("references/schema-caveats.md",)
+AGENT_SKILL_TARGETS = ("claude", "codex", "gemini")
 LEADERBOARD_NAME_WIDTH = 20
 
 
@@ -73,12 +75,23 @@ def _fit_display(text: str, width: int) -> str:
     return out + " " * (width - used)
 
 
-def _skill_install_path(skills_dir: str | Path | None = None) -> Path:
-    root = (
-        Path(skills_dir).expanduser()
-        if skills_dir is not None
-        else Path.home() / ".claude" / "skills"
-    )
+def _skill_install_path(
+    skills_dir: str | Path | None = None,
+    *,
+    agent: str = "claude",
+) -> Path:
+    if skills_dir is not None:
+        root = Path(skills_dir).expanduser()
+    elif agent == "claude":
+        root = Path.home() / ".claude" / "skills"
+    elif agent == "codex":
+        root = Path(os.environ.get("CODEX_HOME") or Path.home() / ".codex") / "skills"
+    elif agent == "gemini":
+        root = Path.home() / ".gemini" / "skills"
+    else:
+        msg = f"unknown agent skill target: {agent}"
+        raise ValueError(msg)
+
     return root / "deadlock-matches" / "SKILL.md"
 
 
@@ -93,7 +106,10 @@ def _bundled_skill_file(relative_path: str) -> resources.abc.Traversable:
 def skill_report(args: argparse.Namespace) -> None:
     """Handle `deadlock skill`."""
     action = args.skill_action or "path"
-    target = _skill_install_path(getattr(args, "dir", None))
+    target = _skill_install_path(
+        getattr(args, "dir", None),
+        agent=getattr(args, "agent", "claude"),
+    )
 
     if action == "path":
         print(_tilde(target))
@@ -117,9 +133,15 @@ def skill_report(args: argparse.Namespace) -> None:
         reference_target.parent.mkdir(parents=True, exist_ok=True)
         reference_target.write_bytes(_bundled_skill_file(relative_path).read_bytes())
     print(f"Installed agent skill at {_tilde(target)}")
-    print(
-        "Allow Bash(deadlock *) in Claude settings to skip the permission prompt on these commands."
-    )
+    if getattr(args, "agent", "claude") == "claude" and getattr(args, "dir", None) is None:
+        print(
+            "Allow Bash(deadlock *) in Claude settings to skip the permission prompt "
+            "on these commands."
+        )
+    elif getattr(args, "agent", "claude") == "gemini" and getattr(args, "dir", None) is None:
+        print("Run `/skills reload` in Gemini CLI to use it in the current session.")
+    else:
+        print("Start a new agent session to load it.")
 
 
 def final_stats(match_ids: pl.LazyFrame, parquet_dir: str | Path) -> pl.LazyFrame:

@@ -1974,6 +1974,46 @@ def test_skill_command_prints_install_path(capsys, tmp_path):
     assert "skills/deadlock-matches/SKILL.md" in out
 
 
+@pytest.mark.parametrize(
+    ("agent", "directory"),
+    [
+        ("claude", ".claude"),
+        ("codex", ".codex"),
+        ("gemini", ".gemini"),
+    ],
+)
+def test_skill_command_prints_agent_install_path(agent, directory, capsys, tmp_path, monkeypatch):
+    monkeypatch.setattr(data.Path, "home", lambda: tmp_path)
+    monkeypatch.delenv("CODEX_HOME", raising=False)
+
+    main(["skill", "path", "--agent", agent], config=tmp_path / "none.json")
+
+    expected = tmp_path / directory / "skills" / "deadlock-matches" / "SKILL.md"
+    assert data._skill_install_path(agent=agent) == expected
+    assert capsys.readouterr().out.strip() == str(
+        Path("~") / directory / "skills" / "deadlock-matches" / "SKILL.md"
+    )
+
+
+def test_skill_command_uses_codex_home(capsys, tmp_path, monkeypatch):
+    codex_home = tmp_path / "codex-home"
+    monkeypatch.setenv("CODEX_HOME", str(codex_home))
+
+    main(["skill", "path", "--agent", "codex"], config=tmp_path / "none.json")
+
+    expected = codex_home / "skills" / "deadlock-matches" / "SKILL.md"
+    assert data._skill_install_path(agent="codex") == expected
+    assert capsys.readouterr().out.strip().endswith("codex-home/skills/deadlock-matches/SKILL.md")
+
+
+def test_skill_command_empty_codex_home_falls_back(tmp_path, monkeypatch):
+    monkeypatch.setattr(data.Path, "home", lambda: tmp_path)
+    monkeypatch.setenv("CODEX_HOME", "")
+
+    expected = tmp_path / ".codex" / "skills" / "deadlock-matches" / "SKILL.md"
+    assert data._skill_install_path(agent="codex") == expected
+
+
 def test_skill_command_installs_bundled_agent_skill(capsys, tmp_path):
     root = tmp_path / "skills"
 
@@ -1988,6 +2028,18 @@ def test_skill_command_installs_bundled_agent_skill(capsys, tmp_path):
     assert caveats.exists()
     assert 'id="matches.not-scored"' in caveats.read_text()
     assert "skills/deadlock-matches/SKILL.md" in out
+
+
+@pytest.mark.parametrize("agent", ["claude", "codex", "gemini"])
+def test_skill_command_installs_for_each_agent(agent, capsys, tmp_path, monkeypatch):
+    monkeypatch.setattr(data.Path, "home", lambda: tmp_path)
+    monkeypatch.delenv("CODEX_HOME", raising=False)
+
+    main(["skill", "install", "--agent", agent], config=tmp_path / "none.json")
+
+    target = tmp_path / f".{agent}" / "skills" / "deadlock-matches"
+    assert (target / "SKILL.md").exists()
+    assert (target / "references" / "schema-caveats.md").exists()
 
 
 def test_skill_command_refuses_to_overwrite_without_force(capsys, tmp_path):
