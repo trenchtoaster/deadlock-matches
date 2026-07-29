@@ -4721,7 +4721,7 @@ def test_item_command_card_shows_active_section(capsys, tmp_path):
     assert "Active\n" in out
     assert "Reset the cooldown" in out
     assert (
-        "cooldown                                  35s  (26.25s with Transcendent Cooldown)" in out
+        "cooldown                                  30s  (22.5s with Transcendent Cooldown)" in out
     )
 
 
