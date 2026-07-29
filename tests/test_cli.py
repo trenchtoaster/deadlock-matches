@@ -4263,6 +4263,10 @@ def test_assets_subcommand_reports_counts(monkeypatch, capsys):
     monkeypatch.setattr(snapshots, "refresh_accolades", lambda *a, **k: 0)
     monkeypatch.setattr(snapshots, "refresh_statues", lambda *a, **k: 0)
     monkeypatch.setattr(snapshots, "history_lags", lambda **k: [])
+    monkeypatch.setattr(
+        snapshots, "client_version_dates", lambda **k: {6640: "2026-07-25T11:19:46"}
+    )
+    monkeypatch.setattr(extract, "installed_client_version", lambda *a, **k: None)
 
     data.refresh_assets(argparse.Namespace())
 
@@ -5164,7 +5168,7 @@ def test_live_history_checks_match_history_builders():
     assert checks == builders
 
 
-def _stub_refreshes(monkeypatch):
+def _stub_refreshes(monkeypatch, builds=None, installed=None):
     for fn in (
         "refresh_heroes",
         "refresh_items",
@@ -5174,6 +5178,10 @@ def _stub_refreshes(monkeypatch):
         "refresh_statues",
     ):
         monkeypatch.setattr(snapshots, fn, lambda *a, **k: 0)
+
+    dates = builds if builds is not None else {6640: "2026-07-25T11:19:46"}
+    monkeypatch.setattr(snapshots, "client_version_dates", lambda **k: dates)
+    monkeypatch.setattr(extract, "installed_client_version", lambda *a, **k: installed)
 
 
 def test_assets_warns_when_history_trails(monkeypatch, capsys):
@@ -5198,6 +5206,55 @@ def test_assets_quiet_when_history_current(monkeypatch, capsys):
     out = capsys.readouterr().out
 
     assert "behind the live patch" not in out
+
+
+def test_assets_reports_live_build_behind_installed(monkeypatch, capsys):
+    _stub_refreshes(
+        monkeypatch,
+        builds={6628: "2026-07-08T10:00:00", 6640: "2026-07-25T11:19:46"},
+        installed=6642,
+    )
+    monkeypatch.setattr(snapshots, "history_lags", lambda **k: [])
+
+    main(["assets"], config="none.json")
+
+    out = capsys.readouterr().out
+
+    assert "Live data: build 6640 (2026-07-25), behind the installed client 6642" in out
+
+
+def test_assets_reports_live_build_matching_installed(monkeypatch, capsys):
+    _stub_refreshes(monkeypatch, installed=6640)
+    monkeypatch.setattr(snapshots, "history_lags", lambda **k: [])
+
+    main(["assets"], config="none.json")
+
+    out = capsys.readouterr().out
+
+    assert "Live data: build 6640 (2026-07-25), matches the installed client" in out
+
+
+def test_assets_reports_live_build_without_install(monkeypatch, capsys):
+    _stub_refreshes(monkeypatch)
+    monkeypatch.setattr(snapshots, "history_lags", lambda **k: [])
+
+    main(["assets"], config="none.json")
+
+    out = capsys.readouterr().out
+
+    assert "Live data: build 6640 (2026-07-25)\n" in out
+    assert "installed client" not in out
+
+
+def test_assets_reports_live_build_ahead_of_installed(monkeypatch, capsys):
+    _stub_refreshes(monkeypatch, installed=6628)
+    monkeypatch.setattr(snapshots, "history_lags", lambda **k: [])
+
+    main(["assets"], config="none.json")
+
+    out = capsys.readouterr().out
+
+    assert "Live data: build 6640 (2026-07-25), ahead of the installed client 6628" in out
 
 
 def test_hero_card_as_of_shows_era_label(capsys, tmp_path):

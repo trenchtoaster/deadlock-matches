@@ -484,6 +484,21 @@ def refresh_assets(args: argparse.Namespace) -> None:
     for name in sorted(old_items - new_items):
         print(f"  gone item: {name}")
 
+    dates = snapshots.client_version_dates()
+    build = max(dates)
+    installed = extract.installed_client_version(getattr(args, "cache", extract.DEFAULT_CACHE))
+
+    if installed is None:
+        note = ""
+    elif build == installed:
+        note = ", matches the installed client"
+    elif build < installed:
+        note = f", behind the installed client {installed}"
+    else:
+        note = f", ahead of the installed client {installed}"
+
+    print(f"\nLive data: build {build} ({dates[build][:10]}){note}")
+
     lags = snapshots.history_lags(seed=seed)
 
     if lags:

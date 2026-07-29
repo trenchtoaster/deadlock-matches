@@ -9,7 +9,7 @@ Reads match metadata from Steam's HTTP cache and compares the user's games again
 
 ## Invoking the CLI
 
-The examples below call `deadlock <command>`, the name an installed tool puts on PATH (`uv tool install deadlock-matches`, the recommended setup). If the user works from a source clone instead, there is no `deadlock` on PATH — prepend `uv run` from the repo root, so `deadlock history` becomes `deadlock history`. Check which case you are in before running: `command -v deadlock` finds an installed tool, otherwise look for a `pyproject.toml` naming `deadlock-matches` in the working directory and use `uv run`. The ad-hoc Python section at the end assumes a clone (it runs scripts with `uv run` from the repo root).
+The examples below call `deadlock <command>`, the name an installed tool puts on PATH (`uv tool install deadlock-matches`, the recommended setup). If the user works from a source clone instead, there is no `deadlock` on PATH — prepend `uv run` from the repo root, so `deadlock history` becomes `uv run deadlock history`. Check which case you are in before running: `command -v deadlock` finds an installed tool, otherwise look for a `pyproject.toml` naming `deadlock-matches` in the working directory and use `uv run`. The ad-hoc Python section at the end assumes a clone (it runs scripts with `uv run` from the repo root).
 
 ## User config
 
@@ -271,7 +271,10 @@ deadlock meta [--hero Mirage] [--by rating|day|week|month] [--min-rating Eternus
                                           # (each flag combo is its own URL, cached up to a day)
 deadlock schema [table]            # the data dictionary — read before writing polars
 deadlock schema --views [name]  # what summarize accepts: arguments, dimensions, measures
-deadlock assets                    # refresh the bundled current-patch data after a patch
+deadlock assets                    # refresh the bundled current-patch data after a patch;
+                                          # the Live data line says which build the data is from
+                                          # and whether it trails the installed client (the
+                                          # assets API can lag a patch by a day or so)
 deadlock sync                      # rebuild parquet tables; --full from scratch;
                                           # --source api pulls missing matches from the
                                           # match-history API into the archive (it may not
