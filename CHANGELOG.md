@@ -1,6 +1,15 @@
 # Changelog
 
 All notable changes to this project are documented here.
+## [0.11.0] - 2026-07-29
+
+### Added
+
+- Add codex and gemini targets to skill install ([ca05485](https://github.com/trenchtoaster/deadlock-matches/commit/ca05485f40c0c5065fc0ebbe3c979efd3c717cf1))
+
+- Report the live data build in assets ([2eb1131](https://github.com/trenchtoaster/deadlock-matches/commit/2eb11316a62607ce87ca6c3f5b87d2449226a20d))
+
+
 ## [0.10.0] - 2026-07-28
 
 ### Added
