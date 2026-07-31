@@ -119,24 +119,31 @@ class Matches(Table):
     )
     match_mode = Column(
         pl.Int64,
-        "Protobuf ECitadelMatchMode value, 1 = matchmaking (Deadlock has one "
-        "queue, there is no ranked/unranked split), 2 = private lobby such as a "
-        "scrim, 4 = the retired ranked queue",
+        "Protobuf ECitadelMatchMode value: 1 = Standard, 2 = private lobby such "
+        "as a scrim, 4 = Ranked, 8 = New Player Placement",
     )
     game_mode = Column(
         pl.Int64,
         "Protobuf ECitadelGameMode value, 1 = normal, 4 = Street Brawl, which "
         "is a different map and ruleset that still carries match_mode 1",
     )
+    ranked_type = Column(
+        pl.Int64,
+        "Protobuf ECitadelRankedType value: 0 = invalid/not Ranked, 1 = normal Ranked",
+    )
+    rank_interval = Column(
+        pl.Int64,
+        "Ranked matchmaking interval supplied by Valve, 0 outside Ranked",
+    )
     average_badge_team0 = Column(
         pl.Int64,
         "Average skill rating of team 0 as a badge level, tier * 10 + level "
-        "(95 = Phantom 5, queries.skill_rating maps it), null if unset",
+        "(95 = Phantom 5, queries.skill_rating maps it), 0 in Standard and null if unset",
     )
     average_badge_team1 = Column(
         pl.Int64,
         "Average skill rating of team 1 as a badge level, tier * 10 + level "
-        "(112 = Eternus 2, queries.skill_rating maps it), null if unset",
+        "(112 = Eternus 2, queries.skill_rating maps it), 0 in Standard and null if unset",
     )
     not_scored = Column(
         pl.Boolean,
@@ -160,7 +167,39 @@ class Players(Table):
         "Starting lane, raw engine id, 1/4/6 on the three-lane map "
         "(queries.with_lane_name adds the color)",
     )
-    won = Column(pl.Boolean, "Whether this player's team won")
+    won = Column(
+        pl.Boolean,
+        "Whether Valve scored this player as a winner when player_match_outcome is "
+        "available, otherwise whether their team won",
+    )
+    player_match_outcome = Column(
+        pl.Int64,
+        "Per-player EPlayerMatchOutcome: 1 = win, 2 = loss, 3 = penalized, "
+        "4 = penalized party, 5 = not scored; null in older metadata",
+    )
+    player_rank_initial_display_rank = Column(
+        pl.Int64,
+        "Rank badge at Ranked match start, encoded as tier * 10 + subrank",
+    )
+    player_rank_initial_flat_progress = Column(
+        pl.Int64, "Rank Points before the match on Valve's flat progression scale"
+    )
+    player_rank_final_flat_progress = Column(
+        pl.Int64, "Rank Points after the match on Valve's flat progression scale"
+    )
+    player_rank_desired_progress_change = Column(
+        pl.Int64, "Rank Point change the matchmaker assigned for this result"
+    )
+    player_rank_initial_calibration_games = Column(
+        pl.Int64, "Calibration/placement games remaining before this match"
+    )
+    player_rank_initial_demotion_protection_games = Column(
+        pl.Int64, "Demotion-protection games remaining before this match"
+    )
+    player_rank_consumed_demotion_protection = Column(
+        pl.Boolean, "Whether this match consumed one game of demotion protection"
+    )
+    player_rank_initial_win_streak = Column(pl.Int64, "Win-streak count before this match")
     kills = Column(pl.Int64, "Final kills")
     deaths = Column(pl.Int64, "Final deaths")
     assists = Column(pl.Int64, "Final assists")
@@ -179,6 +218,20 @@ class Players(Table):
     )
     abandon_time_s = Column(
         pl.Int64, "Game time in seconds when the player abandoned, null if they stayed"
+    )
+
+
+class HeroXPRewards(Table):
+    """Hero XP grants awarded to each player after a match."""
+
+    match_id = MATCH_ID
+    start_time = START_TIME
+    account_id = ACCOUNT_ID
+    hero_id = HERO_ID
+    xp_grant = Column(pl.Int64, "Hero XP granted by this reward")
+    reason = Column(
+        pl.Int64,
+        "EHeroXPGrantReason: 0 = win, 1 = loss, 2 = post-match award",
     )
 
 
@@ -717,6 +770,7 @@ class StatueHistory(Table):
 TABLES: dict[str, dict[str, Column]] = {
     "matches": Matches.spec(),
     "players": Players.spec(),
+    "hero_xp_rewards": HeroXPRewards.spec(),
     "stats": Stats.spec(),
     "soul_sources": SoulSources.spec(),
     "item_events": ItemEvents.spec(),
@@ -771,6 +825,7 @@ PARTITIONED = frozenset(TABLES) - ASSET_TABLES - {"downloads"}
 IDENTITY: dict[str, tuple[str, ...]] = {
     "matches": ("match_id",),
     "players": ("match_id", "account_id"),
+    "hero_xp_rewards": ("match_id", "account_id", "hero_id", "reason"),
     "stats": ("match_id", "account_id", "time_stamp_s"),
     "soul_sources": ("match_id", "account_id", "time_stamp_s", "source"),
     "item_events": ("match_id", "account_id", "game_time_s", "item_id"),

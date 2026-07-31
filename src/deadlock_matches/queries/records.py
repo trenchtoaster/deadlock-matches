@@ -11,6 +11,7 @@ import polars as pl
 from deadlock_matches import config
 from deadlock_matches.queries.core import (
     INHERIT,
+    SCORED,
     ModeArg,
     hero_filter,
     my_games,
@@ -165,7 +166,30 @@ def _subrank(column: str) -> pl.Expr:
 
     - the expression form of skill_rating.subrank_index
     """
-    return (pl.col(column) // 10) * 6 + pl.col(column) % 10
+    badge = pl.col(column)
+
+    return (badge // 10) * 6 + badge % 10
+
+
+def _lobby_subrank() -> pl.Expr:
+    """Average both team badges only when Valve supplied a rating for each.
+
+    - observed unrated modes carry an explicit 0/0 instead of absent fields
+    - a partial 0/positive pair is not a complete lobby rating either
+    """
+    team0 = pl.col("matches.average_badge_team0")
+    team1 = pl.col("matches.average_badge_team1")
+
+    return (
+        pl.when((team0 > 0) & (team1 > 0))
+        .then(
+            pl.mean_horizontal(
+                _subrank("matches.average_badge_team0"),
+                _subrank("matches.average_badge_team1"),
+            )
+        )
+        .otherwise(None)
+    )
 
 
 def badge_from_subrank(subrank: pl.Expr) -> pl.Expr:
@@ -335,10 +359,8 @@ def _record_game_rows(
         "game_mode",
         "won",
         "mvp_rank",
-        pl.col("matches.not_scored").alias("not_scored"),
-        pl.mean_horizontal(
-            _subrank("matches.average_badge_team0"), _subrank("matches.average_badge_team1")
-        ).alias("lobby_subrank"),
+        (~SCORED).alias("not_scored"),
+        _lobby_subrank().alias("lobby_subrank"),
     )
 
 

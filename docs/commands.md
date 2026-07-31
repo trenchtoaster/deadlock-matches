@@ -29,7 +29,7 @@ A few flags repeat across commands:
 - `--days N` filters your last N days of games (`--days 7`)
 - `--since YYYY-MM-DD` filters for data since a date (`--since 2026-07-01`)
 - `--hero Mirage` filters a report to one hero (required for the tracked player commands since players are tracked per hero). Quote names with spaces: `--hero "Mo & Krill"`, though capitals and punctuation are optional (`--hero "mo krill"` works too)
-- normal matchmaking is the default for reports, comparisons, and tracked-player downloads. `--street-brawl` swaps in Street Brawl; `--private-lobby` swaps in Private Lobby games such as scrims and FACEIT. The archive and player store retain every downloaded mode, but a report never mixes them
+- Standard is the default for reports, comparisons, and tracked-player downloads. `--ranked`, `--placement`, `--street-brawl`, and `--private-lobby` select those modes instead; `--calibration` remains an alias for `--placement`. The archive and player store retain every downloaded mode, but a report never mixes them
 - `--min-rating Oracle` limits public stats to lobbies at that average skill rating or higher. `winrate` and `item` default to Eternus, `meta` counts every rating, and `all` disables the filter
 
 ## Match analysis
@@ -42,7 +42,7 @@ deadlock history
 
 - one line per game of yours with the match ID, newest last
 - shows your last 10 games, `--days` and `--since` reach further back
-- normal matchmaking is shown by default; use `--street-brawl` or `--private-lobby` for those histories
+- Standard is shown by default; use `--ranked`, `--placement`, `--street-brawl`, or `--private-lobby` for those histories
 - the ID feeds the other commands: `match 12345678`, `download --match 12345678`
 - matches you only viewed in game stay hidden unless you name their players with `--account`
 
@@ -61,13 +61,13 @@ deadlock match
 
 - the final scoreboard of a single match and the per-5-minute interval data for your character by default
 - `deadlock match 12345678` reads THAT match from your tables, `deadlock match` your most recent one. `--ago 1` steps back to the game before that (`--ago 2` two back, and so on) without needing the ID. `--hero Wraith` follows another player from the match instead (your games keep all 12 players), and `--interval 10` changes the bucket size
-- without a match ID, normal matchmaking is the default; `--street-brawl` and `--private-lobby` select the latest game in those modes. An explicit match ID is always read regardless of mode
+- without a match ID, Standard is the default; `--ranked`, `--placement`, `--street-brawl`, and `--private-lobby` select the latest game in those modes. An explicit match ID is always read regardless of mode
 - the scoreboard shows the match screen numbers while the interval columns come from the minute snapshots, so the Last hits totals can differ slightly. Troopers and Neutrals split the interval Last hits column
 - a game that is not yours works too: `deadlock download --match <id>` pulls it into the players tables once, and `deadlock match <id> --hero Wraith` reads it from there automatically
 
 ```
 Match 12345678: Mirage, win, 2026-07-08 07:16, 36:03
-Lobby average: The Hidden King Oracle 1, The Archmother Archon 6
+Lobby average: The Hidden King Oracle I, The Archmother Emissary VI
 
   Team             Hero                    K/D/A        Souls   Damage Obj damage  Healing Prevented Last hits Denies    Buffs
   The Hidden King  Mo & Krill     2 (Key)  10/3/24     57,278   42,261      6,775   33,086       662       248      3       34
@@ -548,8 +548,8 @@ deadlock winrate
 - `--by week` or `--by month` rolls the table into weekly or monthly rows, weeks start on Monday
 - `--by mode` replaces the date table with one total row per stored game mode. It deliberately
   reads every mode, while `--account`, `--hero`, `--days`, and `--since` still narrow the games.
-  Do not combine it with `--street-brawl` or `--private-lobby`
-- `--hero Mirage` filters to one hero and, for normal matchmaking, also adds the public win rate from `deadlock-api.com` under the table, scoped by `--min-rating` (Eternus+ by default). Street Brawl and Private Lobby omit that line because the public analytics endpoint has no matching mode filter
+  Do not combine it with a mode-selection flag
+- `--hero Mirage` filters to one hero and, for Standard, also adds the public win rate from `deadlock-api.com` under the table, scoped by `--min-rating` (Eternus+ by default). Ranked, New Player Placement, Street Brawl, and Private Lobby omit that line because the public analytics endpoint has no matching mode filter
 - Lobby is the average lobby skill rating of the day, averaged in subrank steps
 - games where someone abandoned stay in the table (they are still wins and losses), a footer separates them: who left with each record, how many leavers reconnected and finished, and your record without them
 - games Valve flagged as not scored are left out of the table and reported under it, match history still shows their result
@@ -582,7 +582,7 @@ Synthetic example:
 
 ```
   Mode            Games     W     L   Win rate
-  Matchmaking       128    72    56      56.3%
+  Standard          128    72    56      56.3%
   Street Brawl       18    11     7      61.1%
   Private Lobby       9     6     3      66.7%
 ```
@@ -1103,9 +1103,9 @@ The comparison commands (`compare`, `builds`, and the top player part of `item`)
 
 2. **Track the ones you want.** Paste their lines under `[players.<Hero>]` in `config.toml`. The name is just a label for reports, keep theirs or write your own.
 
-3. **Download their games.** `deadlock download --hero Mirage` pulls recent normal-matchmaking games from everyone tracked for the hero. Nothing is ever downloaded from the leaderboard on its own. Re-running adds new games without downloading old ones again. Add `--street-brawl` or `--private-lobby` when you deliberately want those games.
+3. **Download their games.** `deadlock download --hero Mirage` pulls recent Standard games from everyone tracked for the hero. Nothing is ever downloaded from the leaderboard on its own. Re-running adds new games without downloading old ones again. Add `--ranked`, `--placement`, `--street-brawl`, or `--private-lobby` when you deliberately want those games.
 
-To stop comparing against someone, delete their line from `config.toml`. The downloaded matches stay on disk (they cost little space and a game can contain more than one tracked player), they just stop being read, and tracking the player again later needs no new downloads. Mode selection works the same way: old Street Brawl or scrim rows remain safely stored but do not join the default normal-matchmaking pool. `deadlock compare movement --hero Mirage` shows who is in the selected pool with their games and account IDs.
+To stop comparing against someone, delete their line from `config.toml`. The downloaded matches stay on disk (they cost little space and a game can contain more than one tracked player), they just stop being read, and tracking the player again later needs no new downloads. Mode selection works the same way: old Ranked, New Player Placement, Street Brawl, or scrim rows remain safely stored but do not join the default Standard pool. `deadlock compare movement --hero Mirage` shows who is in the selected pool with their games and account IDs.
 
 ### Hero meta by rating
 
@@ -1127,13 +1127,13 @@ Mirage public data (Oracle+ lobbies, deadlock-api.com)
   Rating            Matches Win rate Pick rate
   Oracle 1            5,523    47.4%     21.2%
   Oracle 2            5,586    48.5%     21.3%
-  Oracle 3            5,317    47.8%     21.2%
+  Oracle III          5,317    47.8%     21.2%
   Oracle 4            4,958    48.1%     21.0%
   Oracle 5            4,847    48.3%     21.1%
   Oracle 6            4,357    48.4%     21.1%
   Phantom 1           2,849    48.1%     20.9%
   Phantom 2           2,822    47.1%     21.5%
-  Phantom 3           2,695    50.5%     22.1%
+  Phantom III         2,695    50.5%     22.1%
 ```
 
 ### Tracked player builds
@@ -1144,7 +1144,7 @@ deadlock builds --hero Mirage
 
 - items your tracked players buy (in wins vs losses), from their downloaded games
 - `--min-percent 30` hides items bought in fewer than 30% of the builds
-- normal matchmaking is the default; `--street-brawl` or `--private-lobby` reads builds from that mode alone
+- Standard is the default; `--ranked`, `--placement`, `--street-brawl`, or `--private-lobby` reads builds from that mode alone
 - an expensive late item with a big win/loss gap usually just means the winner got rich enough to buy it
 
 ```
@@ -1176,7 +1176,7 @@ deadlock compare souls --hero Mirage
 - `compare souls` starts with income-source gaps, then net worth over time. `--milestones` flips it to the median minute each side reaches each net-worth mark
 - `compare damage` and `compare healing` start with the source breakdown, grouped like the standalone commands, then print the interval table underneath. Healing includes a healing-prevented section when anti-heal rows exist
 - `compare combat` compares aim, incoming fire, and parries as whole-window counters. `compare movement` prints whole-game movement averages and has its own section below
-- the interval reports use the same 5-minute windows the `match` command uses (`--interval 10` for wider rows). Normal matchmaking is the default on both sides; `--street-brawl` or `--private-lobby` swaps both sides to that mode
+- the interval reports use the same 5-minute windows the `match` command uses (`--interval 10` for wider rows). Standard is the default on both sides; `--ranked`, `--placement`, `--street-brawl`, or `--private-lobby` swaps both sides to that mode
 - the summary table shows each player as one row with their whole-game rate, you first for contrast
 - every interval cell is the median of the per-game rates inside that window, so a game only counts while it lasts. The cumulative gap column keeps the running total of the gap column — positive means you are ahead by that point in a typical game, negative means you trail
 - late intervals are not shown once too few games reach them on either side, sparse records would skew the medians
@@ -1336,7 +1336,7 @@ deadlock download --hero Mirage
 ```
 
 - downloads recent games from the players you track into their own parquet tables (see below). Nothing is ever downloaded from the leaderboard on its own
-- normal matchmaking is the default. `--street-brawl` downloads only Street Brawl, and `--private-lobby` downloads only Private Lobby games such as scrims and FACEIT
+- Standard is the default. `--ranked`, `--placement`, `--street-brawl`, and `--private-lobby` download only the selected mode
 - without `--account` it downloads everyone under `[players.<Hero>]` in your config.toml
 - `--account 111222333` downloads a specific player without tracking them (still needs `--hero`, comma-separated for several). Their games archive and `deadlock match` reads them, but only players in config.toml join the comparisons
 - `--match 12345678` fetches one match by ID (comma-separated for several), no `--hero` needed: it stores every player in the match, so `match --hero <anyone>` then works on it
@@ -1396,7 +1396,7 @@ deadlock leaderboard --hero Mirage
 ```
 
 - the current top players of a hero from the per-hero leaderboard, with their account IDs and paste-ready config lines for the ones you are not tracking yet ([Tracked players](#tracked-players-and-public-stats))
-- `--matches` (optionally `--matches 10`) lists each one's recent normal-matchmaking match IDs, win or loss, so you can pick a game to pull. `--street-brawl` or `--private-lobby` selects those IDs instead
+- `--matches` (optionally `--matches 10`) lists each one's recent Standard match IDs, win or loss, so you can pick a game to pull. `--ranked`, `--placement`, `--street-brawl`, or `--private-lobby` selects those IDs instead
 - tracked `[players.<Hero>]` entries show up too, marked `tracked`
 
 ```
@@ -1424,7 +1424,9 @@ deadlock sync
   - it prints a line per match as it lands and lists the ids the API does not have, so those can be opened in game instead
   - a short rate limit wait is slept through, a long one defers the rest of the downloads and the next sync picks them up
 - after a game update, sync pulls the new item data once and re-exports the matches that came in with the old data, printing a line for each step. It reads the installed version from steam.inf, so between patches it never calls the assets API, and offline it just skips
-- `--full` rebuilds every table from scratch, needed after a schema change or a backfill
+- `--full` rebuilds every table from scratch, needed after a schema change or a backfill. Full
+  rebuilds print archive progress every 50 files, then say when the bundled asset-history tables
+  are being written, so a long rebuild never looks stuck
 - `--dry-run` shows what would happen without writing anything
 
 ```

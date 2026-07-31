@@ -775,11 +775,24 @@ def _match_player(match_id: int, args: argparse.Namespace, tz: str) -> pl.DataFr
 
 def _final_scoreboard(row: dict[str, Any], args: argparse.Namespace) -> None:
     """Print the 12-player post-game scoreboard with the resolved player starred."""
-    badges = [
-        f"{TEAMS[team]} {skill_rating.label(row[f'average_badge_team{team}'])}"
-        for team in (0, 1)
-        if row.get(f"average_badge_team{team}") is not None
-    ]
+    rank = skill_rating.label(row.get("player_rank_initial_display_rank"))
+
+    if rank is not None:
+        print(f"Rank at match start: {rank}")
+
+    initial_points = row.get("player_rank_initial_flat_progress")
+    final_points = row.get("player_rank_final_flat_progress")
+
+    if initial_points is not None and final_points is not None:
+        change = final_points - initial_points
+        print(f"Rank Points: {initial_points:,} -> {final_points:,} ({change:+,})")
+
+    badge_values = [row.get(f"average_badge_team{team}") for team in (0, 1)]
+    badges = (
+        [f"{TEAMS[team]} {skill_rating.label(row[f'average_badge_team{team}'])}" for team in (0, 1)]
+        if all(badge is not None and badge > 0 for badge in badge_values)
+        else []
+    )
 
     if badges:
         print("Lobby average: " + ", ".join(badges))
@@ -2689,7 +2702,7 @@ def winrate_report(args: argparse.Namespace, config: str | Path | None = None) -
         print("No games found for the configured accounts")
         _unscored_line(games)
 
-        if args.hero is not None and _normal_matchmaking(args):
+        if args.hero is not None and _standard_mode(args):
             _hero_baseline_line(args.hero, args.min_rating, args.since)
 
         return
@@ -2753,13 +2766,13 @@ def winrate_report(args: argparse.Namespace, config: str | Path | None = None) -
 
     _unscored_line(games)
 
-    if args.hero is not None and _normal_matchmaking(args):
+    if args.hero is not None and _standard_mode(args):
         _hero_baseline_line(args.hero, args.min_rating, args.since)
 
 
 def _winrate_mode_report(args: argparse.Namespace, tz: str) -> None:
     """Print scored-game totals for every stored match/game mode pair."""
-    if not _normal_matchmaking(args):
+    if not _standard_mode(args):
         print("--by mode already includes every mode; remove the mode-selection flag")
         return
 
@@ -2799,8 +2812,14 @@ def _winrate_mode_report(args: argparse.Namespace, tz: str) -> None:
         }
         for row in modes.iter_rows(named=True)
     ]
-    order = {"Matchmaking": 0, "Street Brawl": 1, "Private Lobby": 2}
-    rows.sort(key=lambda row: (order.get(row["mode"], 3), row["mode"]))
+    order = {
+        "Standard": 0,
+        "New Player Placement": 1,
+        "Ranked": 2,
+        "Street Brawl": 3,
+        "Private Lobby": 4,
+    }
+    rows.sort(key=lambda row: (order.get(row["mode"], len(order)), row["mode"]))
     width = max(12, *(len(row["mode"]) for row in rows))
 
     print(f"  {'Mode':<{width}}{'Games':>8}{'W':>6}{'L':>6}{'Win rate':>11}")
@@ -2823,19 +2842,19 @@ def _mode_pair_label(match_mode: str | None, game_mode: str | None) -> str:
     if game_label == "Normal":
         return match_label
 
-    if match_label == "Matchmaking":
+    if match_label == "Standard":
         return game_label
 
     return f"{match_label} / {game_label}"
 
 
-def _normal_matchmaking(args: argparse.Namespace) -> bool:
-    """Whether a report is reading the mode covered by public hero analytics."""
+def _standard_mode(args: argparse.Namespace) -> bool:
+    """Whether a report is reading the default Standard mode."""
     return getattr(
         args,
         "mode",
-        (extract.MATCH_MODE_MATCHMAKING, extract.GAME_MODE_NORMAL),
-    ) == (extract.MATCH_MODE_MATCHMAKING, extract.GAME_MODE_NORMAL)
+        (extract.MATCH_MODE_STANDARD, extract.GAME_MODE_NORMAL),
+    ) == (extract.MATCH_MODE_STANDARD, extract.GAME_MODE_NORMAL)
 
 
 def _selected_mode_label(args: argparse.Namespace) -> str:
@@ -2843,8 +2862,14 @@ def _selected_mode_label(args: argparse.Namespace) -> str:
     match_mode, game_mode = getattr(
         args,
         "mode",
-        (extract.MATCH_MODE_MATCHMAKING, extract.GAME_MODE_NORMAL),
+        (extract.MATCH_MODE_STANDARD, extract.GAME_MODE_NORMAL),
     )
+
+    if match_mode == extract.MATCH_MODE_RANKED:
+        return "Ranked"
+
+    if match_mode == extract.MATCH_MODE_PLACEMENT:
+        return "New Player Placement"
 
     if game_mode == extract.GAME_MODE_STREET_BRAWL:
         return "Street Brawl"
@@ -2852,7 +2877,7 @@ def _selected_mode_label(args: argparse.Namespace) -> str:
     if match_mode == extract.MATCH_MODE_PRIVATE_LOBBY:
         return "Private Lobby"
 
-    return "matchmaking"
+    return "Standard"
 
 
 def _abandon_lines(abandons: pl.DataFrame, games: int, wins: int) -> None:

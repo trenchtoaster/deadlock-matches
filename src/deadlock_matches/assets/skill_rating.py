@@ -11,6 +11,7 @@ from deadlock_matches.assets import history, store
 
 SKILL_RATING_JSON = store.seed_path("skill_rating.json")
 RANK_HISTORY_PARQUET = store.seed_path("rank_history.parquet")
+SUBRANK_LABELS = {1: "I", 2: "II", 3: "III", 4: "IV", 5: "V", 6: "VI"}
 
 
 @functools.cache
@@ -64,7 +65,7 @@ def label(badge: int | None, path: Path | None = None) -> str | None:
     """Turn a badge level into a label.
 
     - badge levels are the tier number * 10 plus the level within the tier
-    - 0 is Obscurus, 62 is Emissary 2, 106 is Ascendant 6, 111 is Eternus 1
+    - 0 is Obscurus, 62 is Ritualist II, 106 is Ascendant VI, 111 is Eternus I
     - unknown tiers come back as badge<N>
     """
     if badge is None:
@@ -79,4 +80,4 @@ def label(badge: int | None, path: Path | None = None) -> str | None:
     if tier == 0:
         return name
 
-    return f"{name} {level}"
+    return f"{name} {SUBRANK_LABELS.get(level, level)}"

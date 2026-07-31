@@ -240,6 +240,7 @@ def melee_pq(tmp_path):
             "hero_id": [52, 27, 52],
             "team": [1, 0, 1],
             "assigned_lane": [1, 1, 4],
+            "player_rank_initial_display_rank": [None, None, None],
         }
     )
 
@@ -518,9 +519,9 @@ def test_mode_dimensions_read_as_names(mode_pq):
     )
 
     assert pairs == [
-        ("Matchmaking", "Normal"),
-        ("Matchmaking", "Street Brawl"),
         ("Private Lobby", "Normal"),
+        ("Standard", "Normal"),
+        ("Standard", "Street Brawl"),
     ]
 
 

@@ -454,11 +454,13 @@ def refresh_assets(args: argparse.Namespace) -> None:
 
     old_items = {i.name for i in items.item_map(target("items.json")).values()}
     old_heroes = {h.name for h in heroes.hero_map(target("heroes.json")).values()}
+    dates = snapshots.client_version_dates()
+    build = max(dates)
 
     n_heroes = snapshots.refresh_heroes(target("heroes.json"))
     n_items = snapshots.refresh_items(target("items.json"))
     n_abilities = snapshots.refresh_abilities(target("abilities.json"))
-    n_tiers = snapshots.refresh_skill_rating(target("skill_rating.json"))
+    n_tiers = snapshots.refresh_skill_rating(target("skill_rating.json"), build=build)
     n_accolades = snapshots.refresh_accolades(target("accolades.json"))
     n_statues = snapshots.refresh_statues(target("statues.json"))
 
@@ -484,8 +486,6 @@ def refresh_assets(args: argparse.Namespace) -> None:
     for name in sorted(old_items - new_items):
         print(f"  gone item: {name}")
 
-    dates = snapshots.client_version_dates()
-    build = max(dates)
     installed = extract.installed_client_version(getattr(args, "cache", extract.DEFAULT_CACHE))
 
     if installed is None:
@@ -619,7 +619,11 @@ def no_pool_hint(
     """Pick the hint that matches how far the tracking setup got for a hero."""
     mode_flag = ""
 
-    if mode == (extract.MATCH_MODE_MATCHMAKING, extract.GAME_MODE_STREET_BRAWL):
+    if mode == (extract.MATCH_MODE_RANKED, extract.GAME_MODE_NORMAL):
+        mode_flag = " --ranked"
+    elif mode == (extract.MATCH_MODE_PLACEMENT, extract.GAME_MODE_NORMAL):
+        mode_flag = " --placement"
+    elif mode == (extract.MATCH_MODE_STANDARD, extract.GAME_MODE_STREET_BRAWL):
         mode_flag = " --street-brawl"
     elif mode == (extract.MATCH_MODE_PRIVATE_LOBBY, extract.GAME_MODE_NORMAL):
         mode_flag = " --private-lobby"

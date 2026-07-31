@@ -11,6 +11,11 @@ from typing import TYPE_CHECKING, Any
 
 from google.protobuf import json_format
 
+if sys.version_info >= (3, 14):
+    from compression import zstd
+else:
+    from backports import zstd  # ty: ignore[unresolved-import]
+
 sys.path.insert(0, str(Path(__file__).parent / "gen"))
 
 import citadel_gcmessages_common_pb2 as pb
@@ -22,8 +27,14 @@ if TYPE_CHECKING:
 
 MatchInfo = pb.CMsgMatchMetaDataContents.MatchInfo
 
-MATCH_MODE_MATCHMAKING = pb.k_ECitadelMatchMode_Unranked
+MATCH_MODE_STANDARD = pb.k_ECitadelMatchMode_Unranked
+MATCH_MODE_RANKED = pb.k_ECitadelMatchMode_Ranked
+MATCH_MODE_PLACEMENT = pb.k_ECitadelMatchMode_NewPlayerPlacement
+# Compatibility alias for callers and saved commands using the old mode name.
+MATCH_MODE_CALIBRATION = MATCH_MODE_PLACEMENT
 MATCH_MODE_PRIVATE_LOBBY = pb.k_ECitadelMatchMode_PrivateLobby
+# Compatibility alias for callers written before Standard and Ranked split.
+MATCH_MODE_MATCHMAKING = MATCH_MODE_STANDARD
 GAME_MODE_NORMAL = pb.k_ECitadelGameMode_Normal
 GAME_MODE_STREET_BRAWL = pb.k_ECitadelGameMode_StreetBrawl
 
@@ -47,7 +58,7 @@ def _mode_labels(enum: str, prefix: str, overrides: dict[int, str]) -> dict[int,
 MATCH_MODES = _mode_labels(
     "ECitadelMatchMode",
     "k_ECitadelMatchMode_",
-    {pb.k_ECitadelMatchMode_Unranked: "Matchmaking"},
+    {pb.k_ECitadelMatchMode_Unranked: "Standard"},
 )
 GAME_MODES = _mode_labels("ECitadelGameMode", "k_ECitadelGameMode_", {})
 
@@ -105,6 +116,8 @@ DEFAULT_CACHE = default_cache()
 ARCHIVE_DIR = paths.data_dir() / "deadlock-matches/matches"
 META_HOST = re.compile(rb"replay\d+\.valve\.net")
 META_PATH = re.compile(rb"/1422450/(\d+)_(\d+)\.meta\.bz2")
+BZ2_MAGIC = b"BZh"
+ZSTD_MAGIC = b"\x28\xb5\x2f\xfd"
 DEADLOCK_APP_ID = "1422450"
 STEAM64_BASE = 76561197960265728
 LOGIN_BLOCK = re.compile(r'"(\d{17})"\s*\{([^{}]*)\}')
@@ -367,7 +380,11 @@ class CacheFile:
 
 
 def parse_cache_file(path: str | Path) -> CacheFile:
-    """Parse one cache file (or archived copy) to a CacheFile."""
+    """Parse one cache file (or archived copy) to a CacheFile.
+
+    Valve kept the .meta.bz2 URL after switching the response body from bzip2
+    to Zstandard in July 2026, so detect the stream from its magic bytes.
+    """
     data = Path(path).read_bytes()
 
     m = META_PATH.search(data)
@@ -378,12 +395,15 @@ def parse_cache_file(path: str | Path) -> CacheFile:
     host = META_HOST.search(data)
     url = (host.group(0).decode() if host else "") + m.group(0).decode()
 
-    start = data.find(b"BZh")
-    if start < 0:
-        msg = f"no bzip2 body in {path}"
+    starts = [(data.find(BZ2_MAGIC), bz2.decompress), (data.find(ZSTD_MAGIC), zstd.decompress)]
+    streams = [(start, decompress) for start, decompress in starts if start >= 0]
+
+    if not streams:
+        msg = f"no bzip2 or Zstandard body in {path}"
         raise ValueError(msg)
 
-    raw = bz2.BZ2Decompressor().decompress(data[start:])
+    start, decompress = min(streams, key=lambda stream: stream[0])
+    raw = decompress(data[start:])
 
     return CacheFile(url, int(m.group(1)), int(m.group(2)), raw)
 

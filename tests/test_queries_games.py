@@ -713,6 +713,7 @@ def test_combat_games_counts_every_game_and_rates_read_the_summed_counters(tmp_p
         ],
     )
     _write([first, build_match(101)], tmp_path)
+    _write_item_history(tmp_path)
 
     df = queries.summarize(
         queries.combat_games,

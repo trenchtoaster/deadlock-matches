@@ -76,8 +76,7 @@ def match_mode_name(column: str = "match_mode") -> pl.Expr:
     """Turn a match mode number into its readable name.
 
     - the names come from the compiled protobuf enum
-    - value 1 reads as Matchmaking because Deadlock has one queue, and the
-      protobuf calls it Unranked only as a holdover
+    - the protobuf's Unranked value reads as the in-game name Standard
     """
     return pl.col(column).replace_strict(extract.MATCH_MODES, default=None, return_dtype=pl.String)
 

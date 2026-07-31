@@ -427,7 +427,7 @@ def stat_snapshots(
       sample and the biggest sample are not the same number
     - games cuts the rows to an explicit frame of match_id/account_id pairs
       and is trusted as-is instead of applying another mode filter
-    - ordinary matchmaking is the default; the two mode arguments inherit
+    - Standard is the default; the two mode arguments inherit
       from mode_context
     """
     return MetricView(source=_snapshot_series(games, accounts, tz, match_mode, game_mode))
@@ -577,7 +577,7 @@ def hero_games(
 ) -> pl.LazyFrame:
     """List your games on one hero as match and account pairs.
 
-    - only ordinary matchmaking games count, matching the downloaded pool
+    - only Standard games count, matching the downloaded pool
     - since keeps games from that local day onward
     """
     hero_id = heroes.hero_id_by_name(hero)

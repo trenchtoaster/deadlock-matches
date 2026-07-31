@@ -20,7 +20,15 @@ from builders import (
     build_upgrade_match,
 )
 
-from deadlock_matches import export, schemas
+from deadlock_matches import config, export, players, schemas
+
+
+@pytest.fixture(autouse=True)
+def isolated_user_state(tmp_path, monkeypatch):
+    """Keep default config and parquet reads inside each test's temporary directory."""
+    monkeypatch.setattr(config.paths, "config_dir", lambda: tmp_path / "user-config")
+    monkeypatch.setattr(export, "PARQUET_DIR", tmp_path / "user-parquet")
+    monkeypatch.setattr(players, "PARQUET_DIR", tmp_path / "user-parquet-players")
 
 
 @pytest.fixture

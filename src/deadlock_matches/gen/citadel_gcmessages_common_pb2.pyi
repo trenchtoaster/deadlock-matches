@@ -34,7 +34,7 @@ class ECitadelMatchMode(int, metaclass=_enum_type_wrapper.EnumTypeWrapper):
     k_ECitadelMatchMode_ServerTest: _ClassVar[ECitadelMatchMode]
     k_ECitadelMatchMode_Tutorial: _ClassVar[ECitadelMatchMode]
     k_ECitadelMatchMode_HeroLabs: _ClassVar[ECitadelMatchMode]
-    k_ECitadelMatchMode_Calibration: _ClassVar[ECitadelMatchMode]
+    k_ECitadelMatchMode_NewPlayerPlacement: _ClassVar[ECitadelMatchMode]
 
 class ECitadelLobbyTeam(int, metaclass=_enum_type_wrapper.EnumTypeWrapper):
     __slots__ = ()
@@ -48,6 +48,11 @@ class ECitadelAccountStatMedal(int, metaclass=_enum_type_wrapper.EnumTypeWrapper
     k_eBronze: _ClassVar[ECitadelAccountStatMedal]
     k_eSilver: _ClassVar[ECitadelAccountStatMedal]
     k_eGold: _ClassVar[ECitadelAccountStatMedal]
+
+class ECitadelRankedType(int, metaclass=_enum_type_wrapper.EnumTypeWrapper):
+    __slots__ = ()
+    k_ECitadelRankedType_Invalid: _ClassVar[ECitadelRankedType]
+    k_ECitadelRankedType_Normal: _ClassVar[ECitadelRankedType]
 
 class ECitadelMMPreference(int, metaclass=_enum_type_wrapper.EnumTypeWrapper):
     __slots__ = ()
@@ -169,6 +174,21 @@ class EFeatureBanReason(int, metaclass=_enum_type_wrapper.EnumTypeWrapper):
     k_eFeatureBanReason_ReportedByOtherPlayers: _ClassVar[EFeatureBanReason]
     k_eFeatureBanReason_MatchAbandons: _ClassVar[EFeatureBanReason]
     k_eFeatureBanReason_TooManyReportsSubmitted: _ClassVar[EFeatureBanReason]
+
+class EHeroXPGrantReason(int, metaclass=_enum_type_wrapper.EnumTypeWrapper):
+    __slots__ = ()
+    k_EHeroXPGrantReason_Win: _ClassVar[EHeroXPGrantReason]
+    k_EHeroXPGrantReason_Loss: _ClassVar[EHeroXPGrantReason]
+    k_EHeroXPGrantReason_Award: _ClassVar[EHeroXPGrantReason]
+
+class EPlayerMatchOutcome(int, metaclass=_enum_type_wrapper.EnumTypeWrapper):
+    __slots__ = ()
+    k_EPlayerMatchOutcome_Invalid: _ClassVar[EPlayerMatchOutcome]
+    k_EPlayerMatchOutcome_Win: _ClassVar[EPlayerMatchOutcome]
+    k_EPlayerMatchOutcome_Loss: _ClassVar[EPlayerMatchOutcome]
+    k_EPlayerMatchOutcome_Penalized: _ClassVar[EPlayerMatchOutcome]
+    k_EPlayerMatchOutcome_PenalizedParty: _ClassVar[EPlayerMatchOutcome]
+    k_EPlayerMatchOutcome_NotScored: _ClassVar[EPlayerMatchOutcome]
 k_ELaneColor_Invalid: CMsgLaneColor
 k_ELaneColor_Yellow: CMsgLaneColor
 k_ELaneColor_Green: CMsgLaneColor
@@ -184,7 +204,7 @@ k_ECitadelMatchMode_Ranked: ECitadelMatchMode
 k_ECitadelMatchMode_ServerTest: ECitadelMatchMode
 k_ECitadelMatchMode_Tutorial: ECitadelMatchMode
 k_ECitadelMatchMode_HeroLabs: ECitadelMatchMode
-k_ECitadelMatchMode_Calibration: ECitadelMatchMode
+k_ECitadelMatchMode_NewPlayerPlacement: ECitadelMatchMode
 k_ECitadelLobbyTeam_Team0: ECitadelLobbyTeam
 k_ECitadelLobbyTeam_Team1: ECitadelLobbyTeam
 k_ECitadelLobbyTeam_Spectator: ECitadelLobbyTeam
@@ -192,6 +212,8 @@ k_eNone: ECitadelAccountStatMedal
 k_eBronze: ECitadelAccountStatMedal
 k_eSilver: ECitadelAccountStatMedal
 k_eGold: ECitadelAccountStatMedal
+k_ECitadelRankedType_Invalid: ECitadelRankedType
+k_ECitadelRankedType_Normal: ECitadelRankedType
 k_ECitadelMMPreference_Invalid: ECitadelMMPreference
 k_ECitadelMMPreference_Casual: ECitadelMMPreference
 k_ECitadelMMPreference_Serious: ECitadelMMPreference
@@ -283,6 +305,15 @@ k_eFeatureBanReason_DevCommand: EFeatureBanReason
 k_eFeatureBanReason_ReportedByOtherPlayers: EFeatureBanReason
 k_eFeatureBanReason_MatchAbandons: EFeatureBanReason
 k_eFeatureBanReason_TooManyReportsSubmitted: EFeatureBanReason
+k_EHeroXPGrantReason_Win: EHeroXPGrantReason
+k_EHeroXPGrantReason_Loss: EHeroXPGrantReason
+k_EHeroXPGrantReason_Award: EHeroXPGrantReason
+k_EPlayerMatchOutcome_Invalid: EPlayerMatchOutcome
+k_EPlayerMatchOutcome_Win: EPlayerMatchOutcome
+k_EPlayerMatchOutcome_Loss: EPlayerMatchOutcome
+k_EPlayerMatchOutcome_Penalized: EPlayerMatchOutcome
+k_EPlayerMatchOutcome_PenalizedParty: EPlayerMatchOutcome
+k_EPlayerMatchOutcome_NotScored: EPlayerMatchOutcome
 
 class CSOCitadelLobby(_message.Message):
     __slots__ = ("lobby_id", "match_id", "match_mode", "game_mode", "compatibility_version", "extra_messages", "server_steam_id", "server_state", "udp_connect_ip", "udp_connect_port", "sdr_address", "server_version", "safe_to_abandon", "match_punishes_abandons", "game_mode_version")
@@ -717,6 +748,36 @@ class CMsgMatchPlayerDamageMatrix(_message.Message):
     source_details: CMsgMatchPlayerDamageMatrix.SourceDetails
     def __init__(self, damage_dealers: _Optional[_Iterable[_Union[CMsgMatchPlayerDamageMatrix.DamageDealer, _Mapping]]] = ..., sample_time_s: _Optional[_Iterable[int]] = ..., source_details: _Optional[_Union[CMsgMatchPlayerDamageMatrix.SourceDetails, _Mapping]] = ...) -> None: ...
 
+class CMsgHeroXPGrant(_message.Message):
+    __slots__ = ("hero_id", "xp_grant", "reason")
+    HERO_ID_FIELD_NUMBER: _ClassVar[int]
+    XP_GRANT_FIELD_NUMBER: _ClassVar[int]
+    REASON_FIELD_NUMBER: _ClassVar[int]
+    hero_id: int
+    xp_grant: int
+    reason: EHeroXPGrantReason
+    def __init__(self, hero_id: _Optional[int] = ..., xp_grant: _Optional[int] = ..., reason: _Optional[_Union[EHeroXPGrantReason, str]] = ...) -> None: ...
+
+class CMsgMatchPlayerRankData(_message.Message):
+    __slots__ = ("initial_display_rank", "initial_flat_progress", "final_flat_progress", "desired_progress_change", "initial_calibration_games", "initial_demotion_protection_games", "consumed_demotion_protection", "initial_win_streak")
+    INITIAL_DISPLAY_RANK_FIELD_NUMBER: _ClassVar[int]
+    INITIAL_FLAT_PROGRESS_FIELD_NUMBER: _ClassVar[int]
+    FINAL_FLAT_PROGRESS_FIELD_NUMBER: _ClassVar[int]
+    DESIRED_PROGRESS_CHANGE_FIELD_NUMBER: _ClassVar[int]
+    INITIAL_CALIBRATION_GAMES_FIELD_NUMBER: _ClassVar[int]
+    INITIAL_DEMOTION_PROTECTION_GAMES_FIELD_NUMBER: _ClassVar[int]
+    CONSUMED_DEMOTION_PROTECTION_FIELD_NUMBER: _ClassVar[int]
+    INITIAL_WIN_STREAK_FIELD_NUMBER: _ClassVar[int]
+    initial_display_rank: int
+    initial_flat_progress: int
+    final_flat_progress: int
+    desired_progress_change: int
+    initial_calibration_games: int
+    initial_demotion_protection_games: int
+    consumed_demotion_protection: bool
+    initial_win_streak: int
+    def __init__(self, initial_display_rank: _Optional[int] = ..., initial_flat_progress: _Optional[int] = ..., final_flat_progress: _Optional[int] = ..., desired_progress_change: _Optional[int] = ..., initial_calibration_games: _Optional[int] = ..., initial_demotion_protection_games: _Optional[int] = ..., consumed_demotion_protection: _Optional[bool] = ..., initial_win_streak: _Optional[int] = ...) -> None: ...
+
 class CMsgMatchMetaDataContents(_message.Message):
     __slots__ = ("match_info",)
     class EMatchOutcome(int, metaclass=_enum_type_wrapper.EnumTypeWrapper):
@@ -962,6 +1023,11 @@ class CMsgMatchMetaDataContents(_message.Message):
         xp_amount: int
         starting_xp: int
         def __init__(self, book_id: _Optional[int] = ..., xp_amount: _Optional[int] = ..., starting_xp: _Optional[int] = ...) -> None: ...
+    class HeroXPReward(_message.Message):
+        __slots__ = ("xp_grant",)
+        XP_GRANT_FIELD_NUMBER: _ClassVar[int]
+        xp_grant: CMsgHeroXPGrant
+        def __init__(self, xp_grant: _Optional[_Union[CMsgHeroXPGrant, _Mapping]] = ...) -> None: ...
     class PlayerAccolade(_message.Message):
         __slots__ = ("accolade_id", "accolade_stat_value", "accolade_threshold_achieved")
         ACCOLADE_ID_FIELD_NUMBER: _ClassVar[int]
@@ -972,7 +1038,7 @@ class CMsgMatchMetaDataContents(_message.Message):
         accolade_threshold_achieved: int
         def __init__(self, accolade_id: _Optional[int] = ..., accolade_stat_value: _Optional[int] = ..., accolade_threshold_achieved: _Optional[int] = ...) -> None: ...
     class Players(_message.Message):
-        __slots__ = ("account_id", "player_slot", "death_details", "items", "stats", "team", "kills", "deaths", "assists", "net_worth", "hero_id", "last_hits", "denies", "ability_points", "assigned_lane", "level", "pings", "ability_stats", "stats_type_stat", "book_rewards", "abandon_match_time_s", "hero_data", "rewards_eligible", "player_tracked_stats", "accolades", "mvp_rank", "earned_holiday_award_2025", "power_up_buffs")
+        __slots__ = ("account_id", "player_slot", "death_details", "items", "stats", "team", "kills", "deaths", "assists", "net_worth", "hero_id", "last_hits", "denies", "ability_points", "assigned_lane", "level", "pings", "ability_stats", "stats_type_stat", "book_rewards", "abandon_match_time_s", "hero_data", "rewards_eligible", "player_tracked_stats", "accolades", "mvp_rank", "earned_holiday_award_2025", "power_up_buffs", "hero_xp_rewards", "player_rank_data", "player_match_outcome")
         ACCOUNT_ID_FIELD_NUMBER: _ClassVar[int]
         PLAYER_SLOT_FIELD_NUMBER: _ClassVar[int]
         DEATH_DETAILS_FIELD_NUMBER: _ClassVar[int]
@@ -1001,6 +1067,9 @@ class CMsgMatchMetaDataContents(_message.Message):
         MVP_RANK_FIELD_NUMBER: _ClassVar[int]
         EARNED_HOLIDAY_AWARD_2025_FIELD_NUMBER: _ClassVar[int]
         POWER_UP_BUFFS_FIELD_NUMBER: _ClassVar[int]
+        HERO_XP_REWARDS_FIELD_NUMBER: _ClassVar[int]
+        PLAYER_RANK_DATA_FIELD_NUMBER: _ClassVar[int]
+        PLAYER_MATCH_OUTCOME_FIELD_NUMBER: _ClassVar[int]
         account_id: int
         player_slot: int
         death_details: _containers.RepeatedCompositeFieldContainer[CMsgMatchMetaDataContents.Deaths]
@@ -1029,7 +1098,10 @@ class CMsgMatchMetaDataContents(_message.Message):
         mvp_rank: int
         earned_holiday_award_2025: bool
         power_up_buffs: _containers.RepeatedCompositeFieldContainer[CMsgMatchMetaDataContents.PowerUpBuff]
-        def __init__(self, account_id: _Optional[int] = ..., player_slot: _Optional[int] = ..., death_details: _Optional[_Iterable[_Union[CMsgMatchMetaDataContents.Deaths, _Mapping]]] = ..., items: _Optional[_Iterable[_Union[CMsgMatchMetaDataContents.Items, _Mapping]]] = ..., stats: _Optional[_Iterable[_Union[CMsgMatchMetaDataContents.PlayerStats, _Mapping]]] = ..., team: _Optional[_Union[ECitadelLobbyTeam, str]] = ..., kills: _Optional[int] = ..., deaths: _Optional[int] = ..., assists: _Optional[int] = ..., net_worth: _Optional[int] = ..., hero_id: _Optional[int] = ..., last_hits: _Optional[int] = ..., denies: _Optional[int] = ..., ability_points: _Optional[int] = ..., assigned_lane: _Optional[int] = ..., level: _Optional[int] = ..., pings: _Optional[_Iterable[_Union[CMsgMatchMetaDataContents.Ping, _Mapping]]] = ..., ability_stats: _Optional[_Iterable[_Union[CMsgMatchMetaDataContents.AbilityStat, _Mapping]]] = ..., stats_type_stat: _Optional[_Iterable[float]] = ..., book_rewards: _Optional[_Iterable[_Union[CMsgMatchMetaDataContents.BookReward, _Mapping]]] = ..., abandon_match_time_s: _Optional[int] = ..., hero_data: _Optional[_Union[CMsgPlayerHeroData, _Mapping]] = ..., rewards_eligible: _Optional[bool] = ..., player_tracked_stats: _Optional[_Iterable[_Union[CMsgTrackedStat, _Mapping]]] = ..., accolades: _Optional[_Iterable[_Union[CMsgMatchMetaDataContents.PlayerAccolade, _Mapping]]] = ..., mvp_rank: _Optional[int] = ..., earned_holiday_award_2025: _Optional[bool] = ..., power_up_buffs: _Optional[_Iterable[_Union[CMsgMatchMetaDataContents.PowerUpBuff, _Mapping]]] = ...) -> None: ...
+        hero_xp_rewards: _containers.RepeatedCompositeFieldContainer[CMsgMatchMetaDataContents.HeroXPReward]
+        player_rank_data: CMsgMatchPlayerRankData
+        player_match_outcome: EPlayerMatchOutcome
+        def __init__(self, account_id: _Optional[int] = ..., player_slot: _Optional[int] = ..., death_details: _Optional[_Iterable[_Union[CMsgMatchMetaDataContents.Deaths, _Mapping]]] = ..., items: _Optional[_Iterable[_Union[CMsgMatchMetaDataContents.Items, _Mapping]]] = ..., stats: _Optional[_Iterable[_Union[CMsgMatchMetaDataContents.PlayerStats, _Mapping]]] = ..., team: _Optional[_Union[ECitadelLobbyTeam, str]] = ..., kills: _Optional[int] = ..., deaths: _Optional[int] = ..., assists: _Optional[int] = ..., net_worth: _Optional[int] = ..., hero_id: _Optional[int] = ..., last_hits: _Optional[int] = ..., denies: _Optional[int] = ..., ability_points: _Optional[int] = ..., assigned_lane: _Optional[int] = ..., level: _Optional[int] = ..., pings: _Optional[_Iterable[_Union[CMsgMatchMetaDataContents.Ping, _Mapping]]] = ..., ability_stats: _Optional[_Iterable[_Union[CMsgMatchMetaDataContents.AbilityStat, _Mapping]]] = ..., stats_type_stat: _Optional[_Iterable[float]] = ..., book_rewards: _Optional[_Iterable[_Union[CMsgMatchMetaDataContents.BookReward, _Mapping]]] = ..., abandon_match_time_s: _Optional[int] = ..., hero_data: _Optional[_Union[CMsgPlayerHeroData, _Mapping]] = ..., rewards_eligible: _Optional[bool] = ..., player_tracked_stats: _Optional[_Iterable[_Union[CMsgTrackedStat, _Mapping]]] = ..., accolades: _Optional[_Iterable[_Union[CMsgMatchMetaDataContents.PlayerAccolade, _Mapping]]] = ..., mvp_rank: _Optional[int] = ..., earned_holiday_award_2025: _Optional[bool] = ..., power_up_buffs: _Optional[_Iterable[_Union[CMsgMatchMetaDataContents.PowerUpBuff, _Mapping]]] = ..., hero_xp_rewards: _Optional[_Iterable[_Union[CMsgMatchMetaDataContents.HeroXPReward, _Mapping]]] = ..., player_rank_data: _Optional[_Union[CMsgMatchPlayerRankData, _Mapping]] = ..., player_match_outcome: _Optional[_Union[EPlayerMatchOutcome, str]] = ...) -> None: ...
     class Teams(_message.Message):
         __slots__ = ("team", "team_tracked_stats")
         TEAM_FIELD_NUMBER: _ClassVar[int]
@@ -1093,7 +1165,7 @@ class CMsgMatchMetaDataContents(_message.Message):
         winning_team: ECitadelLobbyTeam
         def __init__(self, round_duration_s: _Optional[int] = ..., winning_team: _Optional[_Union[ECitadelLobbyTeam, str]] = ...) -> None: ...
     class MatchInfo(_message.Message):
-        __slots__ = ("duration_s", "match_outcome", "winning_team", "players", "start_time", "match_id", "legacy_objectives_mask", "game_mode", "match_mode", "objectives", "match_paths", "damage_matrix", "match_pauses", "custom_user_stats", "watched_death_replays", "objectives_mask_team0", "objectives_mask_team1", "mid_boss", "is_high_skill_range_parties", "low_pri_pool", "new_player_pool", "average_badge_team0", "average_badge_team1", "game_mode_version", "rewards_eligible", "not_scored", "team_score", "match_tracked_stats", "teams", "bot_difficulty", "street_brawl_rounds")
+        __slots__ = ("duration_s", "match_outcome", "winning_team", "players", "start_time", "match_id", "legacy_objectives_mask", "game_mode", "match_mode", "objectives", "match_paths", "damage_matrix", "match_pauses", "custom_user_stats", "watched_death_replays", "objectives_mask_team0", "objectives_mask_team1", "mid_boss", "is_high_skill_range_parties", "low_pri_pool", "new_player_pool", "average_badge_team0", "average_badge_team1", "game_mode_version", "rewards_eligible", "not_scored", "team_score", "match_tracked_stats", "teams", "bot_difficulty", "street_brawl_rounds", "ranked_type", "rank_interval")
         DURATION_S_FIELD_NUMBER: _ClassVar[int]
         MATCH_OUTCOME_FIELD_NUMBER: _ClassVar[int]
         WINNING_TEAM_FIELD_NUMBER: _ClassVar[int]
@@ -1125,6 +1197,8 @@ class CMsgMatchMetaDataContents(_message.Message):
         TEAMS_FIELD_NUMBER: _ClassVar[int]
         BOT_DIFFICULTY_FIELD_NUMBER: _ClassVar[int]
         STREET_BRAWL_ROUNDS_FIELD_NUMBER: _ClassVar[int]
+        RANKED_TYPE_FIELD_NUMBER: _ClassVar[int]
+        RANK_INTERVAL_FIELD_NUMBER: _ClassVar[int]
         duration_s: int
         match_outcome: CMsgMatchMetaDataContents.EMatchOutcome
         winning_team: ECitadelLobbyTeam
@@ -1156,7 +1230,9 @@ class CMsgMatchMetaDataContents(_message.Message):
         teams: _containers.RepeatedCompositeFieldContainer[CMsgMatchMetaDataContents.Teams]
         bot_difficulty: ECitadelBotDifficulty
         street_brawl_rounds: _containers.RepeatedCompositeFieldContainer[CMsgMatchMetaDataContents.StreetBrawlRound]
-        def __init__(self, duration_s: _Optional[int] = ..., match_outcome: _Optional[_Union[CMsgMatchMetaDataContents.EMatchOutcome, str]] = ..., winning_team: _Optional[_Union[ECitadelLobbyTeam, str]] = ..., players: _Optional[_Iterable[_Union[CMsgMatchMetaDataContents.Players, _Mapping]]] = ..., start_time: _Optional[int] = ..., match_id: _Optional[int] = ..., legacy_objectives_mask: _Optional[int] = ..., game_mode: _Optional[_Union[ECitadelGameMode, str]] = ..., match_mode: _Optional[_Union[ECitadelMatchMode, str]] = ..., objectives: _Optional[_Iterable[_Union[CMsgMatchMetaDataContents.Objective, _Mapping]]] = ..., match_paths: _Optional[_Union[CMsgMatchPlayerPathsData, _Mapping]] = ..., damage_matrix: _Optional[_Union[CMsgMatchPlayerDamageMatrix, _Mapping]] = ..., match_pauses: _Optional[_Iterable[_Union[CMsgMatchMetaDataContents.Pause, _Mapping]]] = ..., custom_user_stats: _Optional[_Iterable[_Union[CMsgMatchMetaDataContents.CustomUserStatInfo, _Mapping]]] = ..., watched_death_replays: _Optional[_Iterable[_Union[CMsgMatchMetaDataContents.WatchedDeathReplay, _Mapping]]] = ..., objectives_mask_team0: _Optional[int] = ..., objectives_mask_team1: _Optional[int] = ..., mid_boss: _Optional[_Iterable[_Union[CMsgMatchMetaDataContents.MidBoss, _Mapping]]] = ..., is_high_skill_range_parties: _Optional[bool] = ..., low_pri_pool: _Optional[bool] = ..., new_player_pool: _Optional[bool] = ..., average_badge_team0: _Optional[int] = ..., average_badge_team1: _Optional[int] = ..., game_mode_version: _Optional[int] = ..., rewards_eligible: _Optional[bool] = ..., not_scored: _Optional[bool] = ..., team_score: _Optional[_Iterable[int]] = ..., match_tracked_stats: _Optional[_Iterable[_Union[CMsgTrackedStat, _Mapping]]] = ..., teams: _Optional[_Iterable[_Union[CMsgMatchMetaDataContents.Teams, _Mapping]]] = ..., bot_difficulty: _Optional[_Union[ECitadelBotDifficulty, str]] = ..., street_brawl_rounds: _Optional[_Iterable[_Union[CMsgMatchMetaDataContents.StreetBrawlRound, _Mapping]]] = ...) -> None: ...
+        ranked_type: ECitadelRankedType
+        rank_interval: int
+        def __init__(self, duration_s: _Optional[int] = ..., match_outcome: _Optional[_Union[CMsgMatchMetaDataContents.EMatchOutcome, str]] = ..., winning_team: _Optional[_Union[ECitadelLobbyTeam, str]] = ..., players: _Optional[_Iterable[_Union[CMsgMatchMetaDataContents.Players, _Mapping]]] = ..., start_time: _Optional[int] = ..., match_id: _Optional[int] = ..., legacy_objectives_mask: _Optional[int] = ..., game_mode: _Optional[_Union[ECitadelGameMode, str]] = ..., match_mode: _Optional[_Union[ECitadelMatchMode, str]] = ..., objectives: _Optional[_Iterable[_Union[CMsgMatchMetaDataContents.Objective, _Mapping]]] = ..., match_paths: _Optional[_Union[CMsgMatchPlayerPathsData, _Mapping]] = ..., damage_matrix: _Optional[_Union[CMsgMatchPlayerDamageMatrix, _Mapping]] = ..., match_pauses: _Optional[_Iterable[_Union[CMsgMatchMetaDataContents.Pause, _Mapping]]] = ..., custom_user_stats: _Optional[_Iterable[_Union[CMsgMatchMetaDataContents.CustomUserStatInfo, _Mapping]]] = ..., watched_death_replays: _Optional[_Iterable[_Union[CMsgMatchMetaDataContents.WatchedDeathReplay, _Mapping]]] = ..., objectives_mask_team0: _Optional[int] = ..., objectives_mask_team1: _Optional[int] = ..., mid_boss: _Optional[_Iterable[_Union[CMsgMatchMetaDataContents.MidBoss, _Mapping]]] = ..., is_high_skill_range_parties: _Optional[bool] = ..., low_pri_pool: _Optional[bool] = ..., new_player_pool: _Optional[bool] = ..., average_badge_team0: _Optional[int] = ..., average_badge_team1: _Optional[int] = ..., game_mode_version: _Optional[int] = ..., rewards_eligible: _Optional[bool] = ..., not_scored: _Optional[bool] = ..., team_score: _Optional[_Iterable[int]] = ..., match_tracked_stats: _Optional[_Iterable[_Union[CMsgTrackedStat, _Mapping]]] = ..., teams: _Optional[_Iterable[_Union[CMsgMatchMetaDataContents.Teams, _Mapping]]] = ..., bot_difficulty: _Optional[_Union[ECitadelBotDifficulty, str]] = ..., street_brawl_rounds: _Optional[_Iterable[_Union[CMsgMatchMetaDataContents.StreetBrawlRound, _Mapping]]] = ..., ranked_type: _Optional[_Union[ECitadelRankedType, str]] = ..., rank_interval: _Optional[int] = ...) -> None: ...
     MATCH_INFO_FIELD_NUMBER: _ClassVar[int]
     match_info: CMsgMatchMetaDataContents.MatchInfo
     def __init__(self, match_info: _Optional[_Union[CMsgMatchMetaDataContents.MatchInfo, _Mapping]] = ...) -> None: ...

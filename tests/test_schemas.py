@@ -13,6 +13,8 @@ MATCH_ROW = {
     "winning_team": 1,
     "match_mode": 1,
     "game_mode": 1,
+    "ranked_type": None,
+    "rank_interval": None,
     "average_badge_team0": 76,
     "average_badge_team1": 83,
     "not_scored": False,

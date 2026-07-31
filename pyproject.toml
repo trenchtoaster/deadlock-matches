@@ -7,6 +7,7 @@ license = "MIT"
 license-files = ["LICENSE"]
 requires-python = ">=3.12"
 dependencies = [
+  "backports.zstd; python_version < '3.14'",
   "polars>=1.43.1",
   "protobuf>=6.33.5,<7",
   "tzdata; sys_platform == 'win32'",

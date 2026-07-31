@@ -97,7 +97,7 @@ main = 111222333
 - commands that read your matches archive the cache into `~/.local/share/deadlock-matches/matches/` (`%LOCALAPPDATA%\deadlock-matches\matches` on Windows)
   - Steam's cache only keeps the last 10,000 files it used for all of Steam combined - archiving the matches ensures you do not lose historical data
   - opening game history and clicking a match puts it back in the cache (or keeps it there), so it works as recovery too
-- newly archived matches update the parquet tables automatically. Only the new matches get read each run and running `deadlock sync` yourself stays quick. `deadlock sync --full` rebuilds every table from scratch after a backfill or a schema change
+- newly archived matches update the parquet tables automatically. Only the new matches get read each run and running `deadlock sync` yourself stays quick. `deadlock sync --full` rebuilds every table from scratch after a backfill or a schema change and prints progress every 50 archive files
 
 ### 3. Import matches
 
@@ -178,7 +178,7 @@ A few flags repeat across commands:
 - `--days N` filters your last N days of games (`--days 7`)
 - `--since YYYY-MM-DD` filters for data since a date (`--since 2026-07-01`)
 - `--hero Mirage` filters a report to one hero (required for the tracked player commands since players are tracked per hero). Quote names with spaces: `--hero "Mo & Krill"`, though capitals and punctuation are optional (`--hero "mo krill"` works too)
-- match reports and tracked-player downloads default to normal matchmaking. `--street-brawl` selects Street Brawl instead; `--private-lobby` selects scrims, FACEIT, and other Private Lobby games. Stored matches are retained across modes, but modes never mix in a report or comparison
+- match reports and tracked-player downloads default to Standard. `--ranked`, `--placement`, `--street-brawl`, and `--private-lobby` select those modes instead; `--calibration` remains an alias for `--placement`. Stored matches are retained across modes, but modes never mix in a report or comparison
 - `--min-rating Oracle` limits public stats to lobbies at that average skill rating or higher. `winrate` and `item` default to Eternus, `meta` counts every rating, and `all` disables the filter
 
 ### Command index
@@ -187,7 +187,7 @@ A few flags repeat across commands:
 
 - `history` - one line per game with the match ID
 - `match` - the final scoreboard plus a per-5-minute breakdown of your play. Flags swap the interval table for another view of the same game: `--souls`, `--damage`, `--healing`, `--teams`, `--laning`, `--abilities`, `--items`, `--accolades`, `--buffs`, `--stacks`, `--combat`, `--melee`, `--movement`, `--deaths`, `--kills`
-- `winrate` - wins and losses per day or per stored mode, with MVP and Key Player awards and, for normal matchmaking, a hero's public win rate
+- `winrate` - wins and losses per day or per stored mode, with MVP and Key Player awards and, for Standard, a hero's public win rate
 - `laning` - every game bucketed by where your lane stood at 9:00, so you can read whether winning lane wins the game
 - `deaths` - deaths bucketed by game time, who kills you, and with movement exported whether you were alone
 - `damage` - your damage sources summed across every game of a hero, then the gun/ability/item split game by game
@@ -206,7 +206,7 @@ A few flags repeat across commands:
 **Tracked players and public stats** reads games `deadlock download` fetched and the public meta. Full output in [docs/commands.md](docs/commands.md#tracked-players-and-public-stats).
 
 - `leaderboard` - top players of a hero with paste-ready config lines
-- `download` - pull recent normal-matchmaking games from the players you track, or explicitly select Street Brawl/Private Lobby
+- `download` - pull recent Standard games from the players you track, or explicitly select another mode
 - `compare` - your souls, damage, healing, combat, and movement vs your tracked players; `--against tracked1` narrows the pool, `--pool-since` filters their games, and `compare souls --milestones` compares the net-worth target timings
 - `builds` - what your tracked players buy in wins vs losses
 - `meta` - public win and pick rates by rating or over time
@@ -330,9 +330,9 @@ Lobby average: The Hidden King Ascendant 1, The Archmother Phantom 6
   Week          Games    W    L   Win rate         Lobby   MVP   Key  Abandons   Net wins   Cumulative net
   2026-06-15       24   17    7      70.8%     Phantom 4     1     2         1        +10              +10
   2026-06-22       26   14   12      53.8%     Phantom 2     1     3         2         +2              +12
-  2026-06-29        3    2    1      66.7%     Phantom 3     0     1                   +1              +13
+  2026-06-29        3    2    1      66.7%   Phantom III     0     1                   +1              +13
 
-Overall: 53 games, 33-20, 62.3% win rate, +13 net wins, 2 MVP, 6 Key Player, Phantom 3 lobbies.
+Overall: 53 games, 33-20, 62.3% win rate, +13 net wins, 2 MVP, 6 Key Player, Phantom III lobbies.
 
 Abandons: 3 games — an ally left 1 (0-1), an enemy left 2 (2-0).
   Without them: 50 games, 31-19, 62.0% win rate.

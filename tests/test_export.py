@@ -21,6 +21,8 @@ def build_match(match_id=100, winning_team=pb.k_ECitadelLobbyTeam_Team1):
     info.winning_team = winning_team
     info.match_mode = pb.k_ECitadelMatchMode_Unranked
     info.game_mode = pb.k_ECitadelGameMode_Normal
+    info.ranked_type = pb.k_ECitadelRankedType_Normal
+    info.rank_interval = 3
 
     a = info.players.add()
     a.account_id = 42
@@ -29,12 +31,30 @@ def build_match(match_id=100, winning_team=pb.k_ECitadelLobbyTeam_Team1):
     a.player_slot = 5
     a.kills = 7
     a.mvp_rank = 1
+    a.player_match_outcome = pb.k_EPlayerMatchOutcome_Win
+    a.player_rank_data.initial_display_rank = 52
+    a.player_rank_data.initial_flat_progress = 5000
+    a.player_rank_data.final_flat_progress = 5250
+    a.player_rank_data.desired_progress_change = 250
+    a.player_rank_data.initial_calibration_games = 4
+    a.player_rank_data.initial_demotion_protection_games = 2
+    a.player_rank_data.consumed_demotion_protection = False
+    a.player_rank_data.initial_win_streak = 1
+    reward = a.hero_xp_rewards.add().xp_grant
+    reward.hero_id = 52
+    reward.xp_grant = 100
+    reward.reason = pb.k_EHeroXPGrantReason_Win
+    award = a.hero_xp_rewards.add().xp_grant
+    award.hero_id = 52
+    award.xp_grant = 25
+    award.reason = pb.k_EHeroXPGrantReason_Award
 
     b = info.players.add()
     b.account_id = 43
     b.hero_id = 1
     b.team = pb.k_ECitadelLobbyTeam_Team0
     b.player_slot = 6
+    b.player_match_outcome = pb.k_EPlayerMatchOutcome_Loss
 
     s = a.stats.add()
     s.time_stamp_s = 180
@@ -197,6 +217,7 @@ def test_tables_have_expected_rows():
 
     assert len(tables["matches"]) == 1
     assert len(tables["players"]) == 2
+    assert len(tables["hero_xp_rewards"]) == 2
     assert len(tables["stats"]) == 1
     assert len(tables["soul_sources"]) == 2
     assert len(tables["item_events"]) == 2
@@ -210,6 +231,32 @@ def test_tables_have_expected_rows():
     assert len(tables["deaths"]) == 1
     assert len(tables["stacks"]) == 3
     assert len(tables["custom_stats"]) == 2
+
+    match = tables["matches"].row(0, named=True)
+    assert match["ranked_type"] == pb.k_ECitadelRankedType_Normal
+    assert match["rank_interval"] == 3
+
+    player = tables["players"].filter(pl.col("account_id") == 42).row(0, named=True)
+    assert player["player_match_outcome"] == pb.k_EPlayerMatchOutcome_Win
+    assert player["player_rank_initial_display_rank"] == 52
+    assert player["player_rank_initial_flat_progress"] == 5000
+    assert player["player_rank_final_flat_progress"] == 5250
+    assert player["player_rank_desired_progress_change"] == 250
+    assert player["player_rank_initial_calibration_games"] == 4
+    assert player["player_rank_initial_demotion_protection_games"] == 2
+    assert player["player_rank_consumed_demotion_protection"] is False
+    assert player["player_rank_initial_win_streak"] == 1
+
+
+def test_player_outcome_overrides_team_result():
+    info = build_match()
+    info.players[0].player_match_outcome = pb.k_EPlayerMatchOutcome_Penalized
+
+    player = (
+        export.build_tables([info])["players"].filter(pl.col("account_id") == 42).row(0, named=True)
+    )
+
+    assert player["won"] is False
 
 
 def test_players_lane_resolves_at_read_time():
@@ -706,6 +753,7 @@ def test_export_all_writes_parquet(tmp_path):
     df = queries.player_rows(out).collect()
 
     assert df.filter(pl.col("account_id") == 42)["hero"][0] == "Mirage"
+    assert df.filter(pl.col("account_id") == 42)["rank"][0] == "Mystic II"
 
     result = export.export_all(arc, out, exclude=("movement",))
 
@@ -996,6 +1044,36 @@ def test_skipped_matches_reset_when_the_accounts_change(tmp_path):
 
     assert result.counts["matches"] == 1
     assert export.exported_match_ids(out) == {7, 9}
+
+
+def test_stored_accounts_distinguishes_a_filter_from_an_unknown_store(tmp_path):
+    out = tmp_path / "pq"
+
+    assert export.stored_accounts(out) is None
+
+    out.mkdir()
+    (out / "skipped_matches.json").write_text('{"accounts": [42, 43], "match_ids": []}')
+    assert export.stored_accounts(out) == [42, 43]
+
+    (out / "skipped_matches.json").write_text('{"accounts": [], "match_ids": []}')
+    assert export.stored_accounts(out) == []
+
+    (out / "skipped_matches.json").write_text('{"accounts": "42", "match_ids": []}')
+    assert export.stored_accounts(out) is None
+
+
+def test_full_export_reports_archive_progress(tmp_path, capsys):
+    arc = tmp_path / "arc"
+    arc.mkdir()
+    _archive_match(arc, 7, dt.datetime(2026, 6, 1, tzinfo=dt.UTC))
+    _archive_match(arc, 8, dt.datetime(2026, 6, 2, tzinfo=dt.UTC))
+
+    export.export_all(arc, tmp_path / "pq", accounts=[42])
+
+    captured = capsys.readouterr()
+    assert "Building the tables from the archive (2 archived matches)" in captured.out
+    assert "Archive progress: 2/2 (100%)" in captured.err
+    assert "Writing the asset reference tables" in captured.err
 
 
 def _meta_body(match_id):

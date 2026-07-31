@@ -1,9 +1,15 @@
 import bz2
+import sys
 
 import pytest
 
 from deadlock_matches import extract
 from deadlock_matches.extract import pb
+
+if sys.version_info >= (3, 14):
+    from compression import zstd
+else:
+    from backports import zstd  # ty: ignore[unresolved-import]
 
 
 def build_meta_bytes(match_id=12345, account_id=42, kills=5):
@@ -24,12 +30,13 @@ def build_meta_bytes(match_id=12345, account_id=42, kills=5):
     return meta.SerializeToString()
 
 
-def write_cache_file(tmp_path, match_id=12345, salt=678, raw=None):
+def write_cache_file(tmp_path, match_id=12345, salt=678, raw=None, compression="bz2"):
     raw = raw if raw is not None else build_meta_bytes(match_id)
     header = b"replay999.valve.net\x00" + f"/1422450/{match_id}_{salt}.meta.bz2".encode() + b"\x00"
+    compressed = bz2.compress(raw) if compression == "bz2" else zstd.compress(raw)
 
     f = tmp_path / "fakecache"
-    f.write_bytes(header + bz2.compress(raw))
+    f.write_bytes(header + compressed)
 
     return f
 
@@ -42,6 +49,16 @@ def test_parse_cache_file_extracts_ids(tmp_path):
     assert parsed.match_id == 99
     assert parsed.replay_salt == 777
     assert parsed.url == "replay999.valve.net/1422450/99_777.meta.bz2"
+    assert parsed.raw == build_meta_bytes(99)
+
+
+def test_parse_cache_file_accepts_zstandard_under_bz2_url(tmp_path):
+    f = write_cache_file(tmp_path, match_id=99, salt=777, compression="zstd")
+
+    parsed = extract.parse_cache_file(f)
+
+    assert parsed.match_id == 99
+    assert parsed.replay_salt == 777
     assert parsed.raw == build_meta_bytes(99)
 
 
@@ -73,11 +90,11 @@ def test_parse_rejects_non_meta_file(tmp_path):
         extract.parse_cache_file(f)
 
 
-def test_parse_rejects_missing_bzip(tmp_path):
+def test_parse_rejects_missing_compressed_body(tmp_path):
     f = tmp_path / "nobz"
     f.write_bytes(b"replay1.valve.net\x00/1422450/1_2.meta.bz2\x00no body here")
 
-    with pytest.raises(ValueError, match="no bzip2 body"):
+    with pytest.raises(ValueError, match="no bzip2 or Zstandard body"):
         extract.parse_cache_file(f)
 
 

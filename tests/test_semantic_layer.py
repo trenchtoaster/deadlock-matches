@@ -44,6 +44,8 @@ def _write(parquet_dir):
             "winning_team": 0,
             "match_mode": 1,
             "game_mode": 1,
+            "ranked_type": None,
+            "rank_interval": None,
             "average_badge_team0": 71,
             "average_badge_team1": 75,
             "not_scored": not_scored,
@@ -60,6 +62,15 @@ def _write(parquet_dir):
             "player_slot": 1,
             "assigned_lane": 1,
             "won": won,
+            "player_match_outcome": None,
+            "player_rank_initial_display_rank": None,
+            "player_rank_initial_flat_progress": None,
+            "player_rank_final_flat_progress": None,
+            "player_rank_desired_progress_change": None,
+            "player_rank_initial_calibration_games": None,
+            "player_rank_initial_demotion_protection_games": None,
+            "player_rank_consumed_demotion_protection": None,
+            "player_rank_initial_win_streak": None,
             "kills": 6,
             "deaths": 3,
             "assists": 3,
@@ -247,7 +258,7 @@ def test_lobby_badge_is_a_badge_level_and_the_subrank_is_not(semantic_pq):
 
     assert df.get_column("lobby_subrank").item() == 45.0
     assert df.get_column("lobby_badge").item() == 73
-    assert labelled.get_column("lobby").item() == "Archon 3"
+    assert labelled.get_column("lobby").item() == "Emissary III"
 
 
 def test_unknown_dimension_and_measure_list_the_valid_names(semantic_pq):
@@ -1040,7 +1051,7 @@ def test_resolve_view_never_calls_an_unmarked_function():
     assert queries.resolve_view(not_a_view) is None
     assert not called
     assert queries.resolve_view(queries.daily_record) is None
-    resolved = queries.resolve_view(queries.my_games)
+    resolved = queries.resolve_view(queries.my_games, accounts=[10], tz="America/Chicago")
 
     assert resolved is not None
     assert resolved.name == "my_games"

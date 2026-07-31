@@ -3,7 +3,7 @@ import datetime as dt
 import pytest
 from builders import build_abandon_match, build_day_match, build_match
 
-from deadlock_matches import export, queries
+from deadlock_matches import export, extract, queries
 
 
 def test_daily_record(record_pq):
@@ -16,6 +16,17 @@ def test_daily_record(record_pq):
     assert df.get_column("cum_net").to_list() == [-1, 1]
     assert df.get_column("win_rate").to_list() == pytest.approx([1 / 3, 1.0])
     assert df.get_column("day").is_sorted()
+
+
+def test_daily_record_excludes_per_player_not_scored(tmp_path):
+    info = build_day_match(1, 0, won=True)
+    player = next(p for p in info.players if p.account_id == 42)
+    player.player_match_outcome = extract.pb.k_EPlayerMatchOutcome_NotScored
+
+    for name, df in export.build_tables([info], exclude=("movement",)).items():
+        df.write_parquet(tmp_path / f"{name}.parquet")
+
+    assert queries.daily_record(tmp_path, accounts=[42], tz="America/Chicago").is_empty()
 
 
 def test_daily_record_last_n_days_window(record_pq):
@@ -79,8 +90,22 @@ def test_daily_record_lobby_label(tmp_path):
 
     df = queries.daily_record(tmp_path, accounts=[42], tz="America/Chicago")
 
-    assert df.get_column("lobby").to_list() == ["Phantom 3"]
+    assert df.get_column("lobby").to_list() == ["Phantom III"]
     assert df.get_column("rated_games").to_list() == [1]
+
+
+@pytest.mark.parametrize("badges", [(0, 0), (0, 95), (95, 0)])
+def test_daily_record_lobby_requires_both_team_badges(tmp_path, badges):
+    info = build_day_match(1, 0, won=True)
+    info.average_badge_team0, info.average_badge_team1 = badges
+
+    for name, df in export.build_tables([info], exclude=("movement",)).items():
+        df.write_parquet(tmp_path / f"{name}.parquet")
+
+    df = queries.daily_record(tmp_path, accounts=[42], tz="America/Chicago")
+
+    assert df.get_column("lobby").to_list() == [None]
+    assert df.get_column("rated_games").to_list() == [0]
 
 
 def test_daily_record_lobby_null_without_badges(record_pq):

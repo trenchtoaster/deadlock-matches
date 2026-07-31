@@ -16,6 +16,19 @@ def test_scan_unknown_table():
         queries.scan("test")
 
 
+def test_scan_does_not_hide_columns_an_older_export_never_wrote(pq):
+    dropped = "player_match_outcome"
+    path = schemas.table_path("players", pq)
+    pl.read_parquet(path).drop(dropped).write_parquet(path)
+
+    rows = queries.scan("players", pq)
+
+    assert dropped not in rows.collect_schema()
+
+    with pytest.raises(ValueError, match="player_match_outcome"):
+        _my_games(pq).collect()
+
+
 def test_table_exists(pq, movement_pq):
     assert queries.table_exists("deaths", pq)
     assert not queries.table_exists("movement", pq)
@@ -137,4 +150,4 @@ def test_skill_rating_labels_badge_columns():
         schema={"average_badge_team0": pl.Int64},
     ).with_columns(queries.skill_rating("average_badge_team0").alias("label"))
 
-    assert df.get_column("label").to_list() == ["Archon 6", "Oracle 3", "Obscurus", None]
+    assert df.get_column("label").to_list() == ["Emissary VI", "Oracle III", "Obscurus", None]

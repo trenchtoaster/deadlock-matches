@@ -18,3 +18,15 @@ jobs:
       - run: uv run --group lint ruff check .
       - run: uv run --group lint ruff format --check .
       - run: uv run --group lint ty check
+
+  compression-compat:
+    strategy:
+      matrix:
+        python-version: ["3.12", "3.13", "3.14"]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: astral-sh/setup-uv@v8.3.1
+        with:
+          python-version: ${{ matrix.python-version }}
+      - run: uv run --python ${{ matrix.python-version }} pytest -q tests/test_extract.py

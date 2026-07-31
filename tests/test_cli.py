@@ -13,6 +13,7 @@ import pytest
 from deadlock_matches import (
     export,
     extract,
+    paths,
     players,
     queries,
     schemas,
@@ -27,7 +28,13 @@ from deadlock_matches.assets import (
 from deadlock_matches.cli import cards, data, performance
 from deadlock_matches.cli import items as cli_items
 from deadlock_matches.cli import meta as cli_meta
-from deadlock_matches.cli.main import build_parser, main, parse_accounts, resolve_store
+from deadlock_matches.cli.main import (
+    _repair_players_store,
+    build_parser,
+    main,
+    parse_accounts,
+    resolve_store,
+)
 from deadlock_matches.extract import STEAM64_BASE, pb
 from deadlock_matches.queries import registered_views
 
@@ -429,6 +436,113 @@ def run_main(tmp_path, *args, accounts="you = 42", extra=""):
     base = ["--cache", str(tmp_path / "cache"), "--archive", str(tmp_path / "arc")]
     base += ["--parquet", str(tmp_path / "pq")]
     main([*base, *args], config=cfg)
+
+
+def test_report_rebuilds_schema_drift_without_a_new_cache_entry(tmp_path, capsys):
+    cache = tmp_path / "cache"
+    cache.mkdir()
+    write_cache_entry(cache, match_id=100, stats=[(300, 3000)])
+
+    run_main(tmp_path, "history", "--account", "42")
+    target = next((tmp_path / "pq" / "players").glob("month=*/*.parquet"))
+    pl.read_parquet(target).drop("player_match_outcome").write_parquet(target)
+
+    assert export.schema_drift(tmp_path / "pq") is not None
+    capsys.readouterr()
+
+    run_main(tmp_path, "history", "--account", "42")
+
+    assert export.schema_drift(tmp_path / "pq") is None
+    assert "player_match_outcome" in pl.read_parquet_schema(target)
+    assert "Rebuilt all tables from the archive" in capsys.readouterr().out
+
+
+def test_explicit_match_reuses_the_stored_account_filter_when_config_is_empty(tmp_path, capsys):
+    cache = tmp_path / "cache"
+    cache.mkdir()
+    write_cache_entry(cache, match_id=100, stats=[(300, 3000)])
+
+    run_main(tmp_path, "history", "--account", "42")
+    target = next((tmp_path / "pq" / "players").glob("month=*/*.parquet"))
+    pl.read_parquet(target).drop("player_match_outcome").write_parquet(target)
+    capsys.readouterr()
+
+    run_main(tmp_path, "match", "100", "--hero", "Mirage", accounts=None)
+
+    assert export.schema_drift(tmp_path / "pq") is None
+    assert export.stored_accounts(tmp_path / "pq") == [42]
+    out = capsys.readouterr().out
+    assert "Rebuilt all tables from the archive" in out
+    assert "Match 100: Mirage" in out
+
+
+def test_report_repairs_a_selected_tracked_player_store(tmp_path, monkeypatch, capsys):
+    cfg = tmp_path / "config.toml"
+    cfg.write_text("[accounts]\nmain = 42\n")
+    seen = {}
+    args = argparse.Namespace(
+        parquet=str(players.PARQUET_DIR),
+        cmd="history",
+        archive=str(tmp_path / "arc"),
+    )
+    monkeypatch.setattr(export, "schema_drift", lambda out, exclude: "players columns differ")
+
+    def repair(rows, out_dir, exclude, archive_dir):
+        seen.update(
+            rows=rows,
+            out_dir=out_dir,
+            exclude=exclude,
+            archive_dir=archive_dir,
+        )
+
+    monkeypatch.setattr(players, "write_player_tables", repair)
+
+    _repair_players_store(args, cfg)
+
+    assert seen == {
+        "rows": [],
+        "out_dir": players.PARQUET_DIR,
+        "exclude": set(),
+        "archive_dir": str(tmp_path / "arc"),
+    }
+    assert "Rebuilt the tracked-player tables from the archive" in capsys.readouterr().out
+
+
+def test_report_repairs_an_explicit_custom_tracked_player_store(tmp_path, monkeypatch, capsys):
+    store = tmp_path / "custom-players"
+    store.mkdir()
+    schemas.conform(
+        "downloads",
+        [
+            {
+                "match_id": 500,
+                "account_id": 99,
+                "player": "pro",
+                "hero_id": 52,
+                "rank": None,
+                "region": None,
+                "downloaded_at": dt.datetime(2026, 7, 1, tzinfo=dt.UTC),
+            }
+        ],
+    ).write_parquet(store / "downloads.parquet")
+    args = argparse.Namespace(
+        parquet=str(store),
+        cmd="match",
+        archive=str(tmp_path / "arc"),
+        hero="Mirage",
+    )
+    seen = []
+    monkeypatch.setattr(export, "schema_drift", lambda out, exclude: "players columns differ")
+    monkeypatch.setattr(
+        players,
+        "write_player_tables",
+        lambda rows, out_dir, exclude, archive_dir: seen.append(Path(out_dir)),
+    )
+
+    _repair_players_store(args, tmp_path / "config.toml")
+
+    assert seen == [store]
+    assert paths.tilde(store) in capsys.readouterr().out
 
 
 def test_parse_accounts_single():
@@ -1091,12 +1205,18 @@ def test_compare_reports_are_subcommands(tmp_path):
 def test_mode_flags_default_and_select_alternatives(tmp_path):
     parser = build_parser(tmp_path / "config.toml")
 
-    normal = parser.parse_args(["download", "--hero", "Mirage"])
+    standard = parser.parse_args(["download", "--hero", "Mirage"])
+    ranked = parser.parse_args(["download", "--hero", "Mirage", "--ranked"])
+    placement = parser.parse_args(["download", "--hero", "Mirage", "--placement"])
+    calibration_alias = parser.parse_args(["download", "--hero", "Mirage", "--calibration"])
     brawl = parser.parse_args(["download", "--hero", "Mirage", "--street-brawl"])
     private = parser.parse_args(["download", "--hero", "Mirage", "--private-lobby"])
 
-    assert normal.mode == (extract.MATCH_MODE_MATCHMAKING, extract.GAME_MODE_NORMAL)
-    assert brawl.mode == (extract.MATCH_MODE_MATCHMAKING, extract.GAME_MODE_STREET_BRAWL)
+    assert standard.mode == (extract.MATCH_MODE_STANDARD, extract.GAME_MODE_NORMAL)
+    assert ranked.mode == (extract.MATCH_MODE_RANKED, extract.GAME_MODE_NORMAL)
+    assert placement.mode == (extract.MATCH_MODE_PLACEMENT, extract.GAME_MODE_NORMAL)
+    assert calibration_alias.mode == placement.mode
+    assert brawl.mode == (extract.MATCH_MODE_STANDARD, extract.GAME_MODE_STREET_BRAWL)
     assert private.mode == (extract.MATCH_MODE_PRIVATE_LOBBY, extract.GAME_MODE_NORMAL)
 
     with pytest.raises(SystemExit):
@@ -1106,8 +1226,10 @@ def test_mode_flags_default_and_select_alternatives(tmp_path):
 @pytest.mark.parametrize(
     ("mode", "flag"),
     [
+        ((extract.MATCH_MODE_RANKED, extract.GAME_MODE_NORMAL), "--ranked"),
+        ((extract.MATCH_MODE_PLACEMENT, extract.GAME_MODE_NORMAL), "--placement"),
         (
-            (extract.MATCH_MODE_MATCHMAKING, extract.GAME_MODE_STREET_BRAWL),
+            (extract.MATCH_MODE_STANDARD, extract.GAME_MODE_STREET_BRAWL),
             "--street-brawl",
         ),
         (
@@ -1654,6 +1776,7 @@ def test_compare_command_combat_stat_prints_aggregate_table(tmp_path, monkeypatc
         for match_id in (900, 901, 902)
     ]
     players.write_player_tables(ledger, out_dir=store)
+    monkeypatch.setattr(export, "PARQUET_DIR", tmp_path / "pq")
     monkeypatch.setattr(players, "PARQUET_DIR", store)
 
     run_main(
@@ -3077,7 +3200,7 @@ def test_match_laning_without_lanes(capsys, tmp_path):
     assert "No lane assignments in this match" in capsys.readouterr().out
 
 
-def test_match_deaths_without_the_table(capsys, tmp_path):
+def test_match_rebuilds_a_missing_deaths_table_before_reading(capsys, tmp_path):
     cache = tmp_path / "cache"
     cache.mkdir()
     write_cache_entry(cache, match_id=100, stats=[(300, 3000)])
@@ -3088,7 +3211,10 @@ def test_match_deaths_without_the_table(capsys, tmp_path):
 
     run_main(tmp_path, "match", "100", "--deaths", "--account", "42")
 
-    assert "No deaths table yet" in capsys.readouterr().out
+    out = capsys.readouterr().out
+
+    assert "Rebuilt all tables from the archive (the deaths table is missing)" in out
+    assert "No deaths in this match" in out
 
 
 def test_match_kills_without_any(capsys, tmp_path):
@@ -3543,10 +3669,51 @@ def test_winrate_by_mode_honors_account_and_hero(capsys, tmp_path, monkeypatch):
 
     out = capsys.readouterr().out
 
-    assert re.search(r"Matchmaking\s+2\s+1\s+1\s+50\.0%", out)
+    assert re.search(r"Standard\s+2\s+1\s+1\s+50\.0%", out)
     assert re.search(r"Street Brawl\s+3\s+2\s+1\s+66\.7%", out)
     assert re.search(r"Private Lobby\s+3\s+2\s+1\s+66\.7%", out)
     assert "Overall:" not in out
+
+
+def test_winrate_by_mode_sorts_unknown_mode_pairs_after_known_modes(capsys, tmp_path):
+    cache = tmp_path / "cache"
+    cache.mkdir()
+    normal = pb.k_ECitadelGameMode_Normal
+    brawl = pb.k_ECitadelGameMode_StreetBrawl
+    standard = pb.k_ECitadelMatchMode_Unranked
+    placement = pb.k_ECitadelMatchMode_NewPlayerPlacement
+    ranked = pb.k_ECitadelMatchMode_Ranked
+    private = pb.k_ECitadelMatchMode_PrivateLobby
+
+    for match_id, match_mode, game_mode in (
+        (100, standard, normal),
+        (101, placement, normal),
+        (102, ranked, normal),
+        (103, standard, brawl),
+        (104, private, normal),
+        (105, ranked, brawl),
+    ):
+        write_cache_entry(
+            cache,
+            match_id=match_id,
+            match_mode=match_mode,
+            game_mode=game_mode,
+        )
+
+    run_main(tmp_path, "winrate", "--by", "mode", "--account", "42")
+
+    out = capsys.readouterr().out
+    labels = [
+        "Standard",
+        "New Player Placement",
+        "Ranked",
+        "Street Brawl",
+        "Private Lobby",
+        "Ranked / Street Brawl",
+    ]
+    positions = [out.index(f"\n  {label}") for label in labels]
+
+    assert positions == sorted(positions)
 
 
 def test_winrate_by_mode_rejects_a_mode_selection(capsys, tmp_path):
@@ -3616,8 +3783,8 @@ def test_winrate_lobby_column(capsys, tmp_path):
     out = capsys.readouterr().out
 
     assert "Lobby" in out.splitlines()[3]
-    assert "Phantom 3" in out
-    assert "Phantom 3 lobbies." in out
+    assert "Phantom III" in out
+    assert "Phantom III lobbies." in out
 
 
 def test_winrate_lobby_blank_without_badges(capsys, tmp_path):
@@ -4316,6 +4483,15 @@ def test_schema_command_prints_sample_rows(capsys, tmp_path):
                 "player_slot": 0,
                 "assigned_lane": 4,
                 "won": True,
+                "player_match_outcome": None,
+                "player_rank_initial_display_rank": None,
+                "player_rank_initial_flat_progress": None,
+                "player_rank_final_flat_progress": None,
+                "player_rank_desired_progress_change": None,
+                "player_rank_initial_calibration_games": None,
+                "player_rank_initial_demotion_protection_games": None,
+                "player_rank_consumed_demotion_protection": None,
+                "player_rank_initial_win_streak": None,
                 "kills": i,
                 "deaths": 0,
                 "assists": 1,
@@ -4338,7 +4514,7 @@ def test_schema_command_prints_sample_rows(capsys, tmp_path):
     assert "Sample rows from" in out
     assert "hero_id" in out
     assert "Mirage" not in out
-    assert "shape: (5, 17)" in out
+    assert "shape: (5, 26)" in out
 
 
 def test_schema_command_samples_asset_table(capsys, tmp_path):

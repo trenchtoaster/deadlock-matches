@@ -47,20 +47,20 @@ INHERIT: Literal["inherit"] = "inherit"
 type ModeArg = int | Literal["inherit"] | None
 
 _AMBIENT_MODES: contextvars.ContextVar[tuple[int | None, int | None]] = contextvars.ContextVar(
-    "deadlock_modes", default=(extract.MATCH_MODE_MATCHMAKING, extract.GAME_MODE_NORMAL)
+    "deadlock_modes", default=(extract.MATCH_MODE_STANDARD, extract.GAME_MODE_NORMAL)
 )
 
 
 @contextlib.contextmanager
 def mode_context(
-    match_mode: int | None = extract.MATCH_MODE_MATCHMAKING,
+    match_mode: int | None = extract.MATCH_MODE_STANDARD,
     game_mode: int | None = extract.GAME_MODE_NORMAL,
 ) -> Iterator[None]:
     """Make one pair of match and game modes the default for every view inside the block.
 
     - a report picks its games this way instead of every helper growing two
       more arguments
-    - the standing default is ordinary matchmaking games
+    - the standing default is Standard games
     - None on either argument lifts that half of the filter
     """
     token = _AMBIENT_MODES.set((match_mode, game_mode))
@@ -167,8 +167,10 @@ def table_exists(table: str, parquet_dir: str | Path | None = None) -> bool:
 
 
 def player_rows(parquet_dir: str | Path | None = None) -> pl.LazyFrame:
-    """Read players with the hero display name and lane color derived from the ids."""
-    return with_lane_name(with_hero_name(scan("players", parquet_dir)))
+    """Read players with hero, lane, and starting Ranked badge labels derived from ids."""
+    rows = with_lane_name(with_hero_name(scan("players", parquet_dir)))
+
+    return rows.with_columns(skill_rating("player_rank_initial_display_rank").alias("rank"))
 
 
 def _asof_era_join(
@@ -234,15 +236,18 @@ def hero_filter(name: str) -> pl.Expr:
     return pl.col("hero_id") == hero_id
 
 
-SCORED = ~pl.col("matches.not_scored").fill_null(value=False)
+SCORED = ~pl.col("matches.not_scored").fill_null(value=False) & (
+    pl.col("player_match_outcome").is_null()
+    | (pl.col("player_match_outcome") != extract.pb.k_EPlayerMatchOutcome_NotScored)
+)
 
 MY_GAMES_DIMENSIONS = {
     "account": Dimension(pl.col("account_id")),
     "hero": Dimension(hero_name(), resolve=hero_filter),
     "match_mode": Dimension(
         match_mode_name("matches.match_mode"),
-        comment="Matchmaking is the only queue, Private Lobby is a scrim. "
-        "Views keep Matchmaking alone unless match_mode= says otherwise.",
+        comment="Standard, Ranked, New Player Placement, or Private Lobby. "
+        "Views keep Standard alone unless match_mode= says otherwise.",
     ),
     "game_mode": Dimension(
         game_mode_name("matches.game_mode"),
@@ -358,7 +363,7 @@ def _played_matches(
       built where the parameter is known, and everything derived from it
       then reads one column
     - match_mode and game_mode inherit from mode_context, which stands at
-      ordinary matchmaking games
+      Standard games
     """
     zone = config.config_timezone() if tz is None else tz
     modes = mode_filter(match_mode, game_mode)
@@ -393,7 +398,7 @@ def my_games(
     - grouping by day or week uses the local date, not the UTC date
     - accounts (Steam32 account IDs) and tz default to config.toml and
       the detected zone
-    - only ordinary matchmaking games count by default, so Street Brawl and
+    - only Standard games count by default, so Ranked, Street Brawl, and
       private lobbies stay out of every rate built on this view
     - match_mode and game_mode inherit from mode_context unless passed
     - game_mode=extract.GAME_MODE_STREET_BRAWL gives the brawl games alone

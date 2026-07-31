@@ -32,8 +32,10 @@ ACCOUNT_HELP = (
     "your account IDs or names from config.toml, defaults to all accounts there. "
     "A tracked player name from [players.<hero>] reads their downloaded games instead"
 )
-NORMAL_MODE = (extract.MATCH_MODE_MATCHMAKING, extract.GAME_MODE_NORMAL)
-STREET_BRAWL_MODE = (extract.MATCH_MODE_MATCHMAKING, extract.GAME_MODE_STREET_BRAWL)
+STANDARD_MODE = (extract.MATCH_MODE_STANDARD, extract.GAME_MODE_NORMAL)
+RANKED_MODE = (extract.MATCH_MODE_RANKED, extract.GAME_MODE_NORMAL)
+PLACEMENT_MODE = (extract.MATCH_MODE_PLACEMENT, extract.GAME_MODE_NORMAL)
+STREET_BRAWL_MODE = (extract.MATCH_MODE_STANDARD, extract.GAME_MODE_STREET_BRAWL)
 PRIVATE_LOBBY_MODE = (extract.MATCH_MODE_PRIVATE_LOBBY, extract.GAME_MODE_NORMAL)
 
 COMMAND_HELP = {
@@ -166,14 +168,30 @@ def build_parser(config: str | Path | None = None) -> argparse.ArgumentParser:
         return sub.add_parser(name, description=COMMAND_HELP[name])
 
     def mode_flags(parser: argparse.ArgumentParser) -> None:
-        """Add the explicit alternatives to the normal-matchmaking default."""
+        """Add the explicit alternatives to the Standard default."""
         modes = parser.add_mutually_exclusive_group()
+        modes.add_argument(
+            "--ranked",
+            dest="mode",
+            action="store_const",
+            const=RANKED_MODE,
+            help="read or download Ranked instead of Standard games",
+        )
+        modes.add_argument(
+            "--placement",
+            "--calibration",
+            dest="mode",
+            action="store_const",
+            const=PLACEMENT_MODE,
+            help="read or download New Player Placement instead of Standard games "
+            "(--calibration remains an alias)",
+        )
         modes.add_argument(
             "--street-brawl",
             dest="mode",
             action="store_const",
             const=STREET_BRAWL_MODE,
-            help="read or download Street Brawl instead of normal matchmaking",
+            help="read or download Street Brawl instead of Standard games",
         )
         modes.add_argument(
             "--private-lobby",
@@ -181,9 +199,9 @@ def build_parser(config: str | Path | None = None) -> argparse.ArgumentParser:
             action="store_const",
             const=PRIVATE_LOBBY_MODE,
             help="read or download Private Lobby games such as scrims and FACEIT "
-            "instead of normal matchmaking",
+            "instead of Standard games",
         )
-        parser.set_defaults(mode=NORMAL_MODE)
+        parser.set_defaults(mode=STANDARD_MODE)
 
     d = command("history")
     d.add_argument(
@@ -650,7 +668,7 @@ def build_parser(config: str | Path | None = None) -> argparse.ArgumentParser:
         "--by",
         choices=sorted(meta.BUCKETS),
         default=None,
-        help="split into buckets: rating (Oracle 3) or day/week/month",
+        help="split into buckets: rating (Oracle III) or day/week/month",
     )
     me.add_argument(
         "--min-rating",
@@ -832,6 +850,50 @@ def resolve_store(args: argparse.Namespace, config: str | Path | None = None) ->
         args.parquet = str(players.PARQUET_DIR)
 
 
+def _is_players_store(parquet_dir: str | Path) -> bool:
+    """Identify tracked-player stores by their downloads ledger, including custom paths."""
+    parquet_dir = Path(parquet_dir)
+
+    return parquet_dir == Path(players.PARQUET_DIR) or (parquet_dir / "downloads.parquet").is_file()
+
+
+def _players_stores_read(args: argparse.Namespace) -> list[Path]:
+    """Return every tracked-player store dispatch can read."""
+    selected = Path(args.parquet)
+    stores = [selected] if _is_players_store(selected) else []
+    reads_default = args.cmd in ("compare", "builds") or (
+        args.cmd == "item" and args.hero is not None
+    )
+    match_falls_back = args.cmd == "match" and selected == Path(export.PARQUET_DIR)
+
+    if reads_default or match_falls_back:
+        stores.append(Path(players.PARQUET_DIR))
+
+    return list(dict.fromkeys(stores))
+
+
+def _repair_players_store(args: argparse.Namespace, config: str | Path | None) -> None:
+    """Rebuild every drifted tracked-player store before a report can query it."""
+    exclude = config_exclude(config)
+
+    for out_dir in _players_stores_read(args):
+        drift = export.schema_drift(out_dir, exclude)
+
+        if drift is None:
+            continue
+
+        players.write_player_tables(
+            [],
+            out_dir=out_dir,
+            exclude=exclude,
+            archive_dir=args.archive,
+        )
+        print(
+            f"Rebuilt the tracked-player tables from the archive at "
+            f"{paths.tilde(out_dir)} ({drift})\n"
+        )
+
+
 def main(argv: Sequence[str] | None = None, config: str | Path | None = None) -> None:
     """Entry point for the deadlock CLI."""
     args = build_parser(config).parse_args(argv)
@@ -840,36 +902,6 @@ def main(argv: Sequence[str] | None = None, config: str | Path | None = None) ->
         ensure_config()
 
     card_only = args.cmd == "item" and args.hero is None
-
-    if (
-        args.cmd
-        in (
-            None,
-            "history",
-            "item",
-            "compare",
-            "winrate",
-            "laning",
-            "deaths",
-            "damage",
-            "healing",
-            "souls",
-            "combat",
-            "movement",
-            "match",
-        )
-        and not card_only
-    ):
-        new = data.sync_archive(args.cache, args.archive, quiet=True)
-
-        if new:
-            accounts = config_accounts(config)
-
-            if accounts:
-                data.refresh_tables(
-                    args.archive, args.parquet, accounts, config_exclude(config), quiet=True
-                )
-
     needs_account = args.cmd in (
         None,
         "history",
@@ -892,7 +924,53 @@ def main(argv: Sequence[str] | None = None, config: str | Path | None = None) ->
     if needs_account:
         resolve_store(args, config)
 
-    match_mode, game_mode = getattr(args, "mode", NORMAL_MODE)
+    if (
+        args.cmd
+        in (
+            None,
+            "history",
+            "item",
+            "compare",
+            "winrate",
+            "laning",
+            "deaths",
+            "damage",
+            "healing",
+            "souls",
+            "combat",
+            "movement",
+            "match",
+        )
+        and not card_only
+    ):
+        new = data.sync_archive(args.cache, args.archive, quiet=True)
+        exclude = config_exclude(config)
+        selected = Path(args.parquet)
+
+        if not _is_players_store(selected):
+            drift = export.schema_drift(selected, exclude)
+            accounts = config_accounts(config)
+            rebuild_accounts = accounts if accounts else export.stored_accounts(selected)
+
+            if (new or drift) and rebuild_accounts is not None:
+                data.refresh_tables(
+                    args.archive,
+                    selected,
+                    rebuild_accounts,
+                    exclude,
+                    quiet=True,
+                )
+            elif drift:
+                print(
+                    f"Cannot safely rebuild the drifted tables at {paths.tilde(selected)}: "
+                    "their original account filter is unknown."
+                )
+                print("Add your [accounts] table to config.toml, then rerun the command.")
+                return
+
+    _repair_players_store(args, config)
+
+    match_mode, game_mode = getattr(args, "mode", STANDARD_MODE)
 
     with queries.mode_context(match_mode=match_mode, game_mode=game_mode):
         _dispatch(args, config)

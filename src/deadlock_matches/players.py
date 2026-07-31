@@ -159,12 +159,12 @@ def recent_hero_matches(
     hero_id: int,
     n: int = 10,
     *,
-    match_mode: int | None = extract.MATCH_MODE_MATCHMAKING,
+    match_mode: int | None = extract.MATCH_MODE_STANDARD,
     game_mode: int | None = extract.GAME_MODE_NORMAL,
 ) -> list[dict[str, Any]]:
     """List the N most recent selected-mode match-history rows for a player on a hero.
 
-    - normal matchmaking is the default
+    - Standard is the default
     - pass the Street Brawl or Private Lobby enum pair to fetch those instead
     - None on either mode lifts that half of the filter
     """
@@ -311,8 +311,8 @@ def pool_games(
 ) -> pl.LazyFrame:
     """List the pool of a hero as one downloads ledger row per downloaded game.
 
-    - normal matchmaking is the ambient default; mode_context selects
-      Street Brawl or Private Lobby instead
+    - Standard is the ambient default; mode_context selects Ranked,
+      New Player Placement, Street Brawl, or Private Lobby instead
     - the mode check happens at read time, so old off-mode ledger rows stay out
     - keeps match_id, account_id, rank, and downloaded_at
     - comes back empty when nothing is tracked or downloaded yet
@@ -417,13 +417,13 @@ def download_matches(
     n: int = 10,
     archive_dir: str | Path = extract.ARCHIVE_DIR,
     *,
-    match_mode: int | None = extract.MATCH_MODE_MATCHMAKING,
+    match_mode: int | None = extract.MATCH_MODE_STANDARD,
     game_mode: int | None = extract.GAME_MODE_NORMAL,
 ) -> list[dict[str, Any]]:
     """Download recent selected-mode games from tracked players.
 
     - one row per (match, player)
-    - normal matchmaking is the default
+    - Standard is the default
     - tracked rows need account_id and name, leaderboard entries also carry rank/region
     - bodies land in the archive as raw .bin files, a shared match downloads once
     - downloaded_at is the mtime of the body file, which re-runs never touch

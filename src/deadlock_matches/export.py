@@ -10,6 +10,7 @@ import datetime as dt
 import json
 import re
 import shutil
+import sys
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
@@ -30,7 +31,8 @@ if TYPE_CHECKING:
 
 PARQUET_DIR = paths.data_dir() / "deadlock-matches/parquet"
 
-EXPORT_LOGIC_VERSION = 1
+EXPORT_LOGIC_VERSION = 2
+PROGRESS_EVERY = 50
 
 
 def read_stamp(out_dir: str | Path) -> dict[str, Any]:
@@ -222,6 +224,7 @@ def build_tables(
     infos = list(infos)
     matches: list[dict] = []
     players: list[dict] = []
+    hero_xp_rewards: list[dict] = []
     stats: list[dict] = []
     sources: list[dict] = []
     item_events: list[dict] = []
@@ -250,6 +253,8 @@ def build_tables(
                 "winning_team": info.winning_team,
                 "match_mode": info.match_mode,
                 "game_mode": info.game_mode,
+                "ranked_type": info.ranked_type if info.HasField("ranked_type") else None,
+                "rank_interval": info.rank_interval if info.HasField("rank_interval") else None,
                 "average_badge_team0": (
                     info.average_badge_team0 if info.HasField("average_badge_team0") else None
                 ),
@@ -292,6 +297,8 @@ def build_tables(
         )
 
         for p in info.players:
+            player_outcome = p.player_match_outcome if p.HasField("player_match_outcome") else None
+            rank = p.player_rank_data if p.HasField("player_rank_data") else None
             players.append(
                 {
                     "match_id": info.match_id,
@@ -301,7 +308,52 @@ def build_tables(
                     "team": p.team,
                     "player_slot": p.player_slot,
                     "assigned_lane": p.assigned_lane,
-                    "won": p.team == info.winning_team,
+                    "won": (
+                        player_outcome == extract.pb.k_EPlayerMatchOutcome_Win
+                        if player_outcome not in (None, extract.pb.k_EPlayerMatchOutcome_Invalid)
+                        else p.team == info.winning_team
+                    ),
+                    "player_match_outcome": player_outcome,
+                    "player_rank_initial_display_rank": (
+                        rank.initial_display_rank
+                        if rank is not None and rank.HasField("initial_display_rank")
+                        else None
+                    ),
+                    "player_rank_initial_flat_progress": (
+                        rank.initial_flat_progress
+                        if rank is not None and rank.HasField("initial_flat_progress")
+                        else None
+                    ),
+                    "player_rank_final_flat_progress": (
+                        rank.final_flat_progress
+                        if rank is not None and rank.HasField("final_flat_progress")
+                        else None
+                    ),
+                    "player_rank_desired_progress_change": (
+                        rank.desired_progress_change
+                        if rank is not None and rank.HasField("desired_progress_change")
+                        else None
+                    ),
+                    "player_rank_initial_calibration_games": (
+                        rank.initial_calibration_games
+                        if rank is not None and rank.HasField("initial_calibration_games")
+                        else None
+                    ),
+                    "player_rank_initial_demotion_protection_games": (
+                        rank.initial_demotion_protection_games
+                        if rank is not None and rank.HasField("initial_demotion_protection_games")
+                        else None
+                    ),
+                    "player_rank_consumed_demotion_protection": (
+                        rank.consumed_demotion_protection
+                        if rank is not None and rank.HasField("consumed_demotion_protection")
+                        else None
+                    ),
+                    "player_rank_initial_win_streak": (
+                        rank.initial_win_streak
+                        if rank is not None and rank.HasField("initial_win_streak")
+                        else None
+                    ),
                     "kills": p.kills,
                     "deaths": p.deaths,
                     "assists": p.assists,
@@ -312,6 +364,19 @@ def build_tables(
                     "party": extract.player_party(p),
                     "abandon_time_s": p.abandon_match_time_s or None,
                 }
+            )
+
+            hero_xp_rewards.extend(
+                {
+                    "match_id": info.match_id,
+                    "start_time": start_time,
+                    "account_id": p.account_id,
+                    "hero_id": reward.xp_grant.hero_id,
+                    "xp_grant": reward.xp_grant.xp_grant,
+                    "reason": reward.xp_grant.reason,
+                }
+                for reward in p.hero_xp_rewards
+                if reward.HasField("xp_grant")
             )
 
             for s in p.stats:
@@ -528,6 +593,7 @@ def build_tables(
     tables = {
         "matches": schemas.conform("matches", matches),
         "players": schemas.conform("players", players),
+        "hero_xp_rewards": schemas.conform("hero_xp_rewards", hero_xp_rewards),
         "stats": schemas.conform("stats", stats),
         "soul_sources": schemas.conform("soul_sources", sources),
         "item_events": schemas.conform("item_events", item_events),
@@ -580,6 +646,22 @@ def _archive_paths(archive_dir: Path) -> list[Path]:
     return extract.archived_match_paths(archive_dir)
 
 
+def _archive_paths_with_progress(archive_paths: list[Path]) -> Iterator[Path]:
+    """Yield archive paths while reporting durable full-rebuild progress."""
+    total = len(archive_paths)
+
+    for completed, path in enumerate(archive_paths, start=1):
+        yield path
+
+        if completed % PROGRESS_EVERY == 0 or completed == total:
+            percent = completed / total * 100
+            print(
+                f"  Archive progress: {completed:,}/{total:,} ({percent:.0f}%)",
+                file=sys.stderr,
+                flush=True,
+            )
+
+
 def _decode_matches(paths: Iterable[Path]) -> Iterator[MatchInfo]:
     """Decode the given archive files in order and skip any that fail to parse."""
     for path in paths:
@@ -626,6 +708,33 @@ def skipped_match_ids(out_dir: str | Path, accounts: Collection[int] | None) -> 
         return set()
 
     return set(data.get("match_ids", []))
+
+
+def stored_accounts(out_dir: str | Path) -> list[int] | None:
+    """Return the account filter recorded by an existing main export.
+
+    - an empty list is a real value: the store was intentionally unfiltered
+    - None means the store predates the marker or the marker cannot be trusted
+    """
+    path = Path(out_dir) / "skipped_matches.json"
+
+    if not path.is_file():
+        return None
+
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except (json.JSONDecodeError, OSError):
+        return None
+
+    if not isinstance(data, dict):
+        return None
+
+    accounts = data.get("accounts")
+
+    if not isinstance(accounts, list) or any(type(account) is not int for account in accounts):
+        return None
+
+    return accounts
 
 
 def _write_skipped(
@@ -1055,21 +1164,25 @@ def export_all(
     - each built table is cleared first so a match dropped from the archive also leaves the tables
     - excluded tables are left untouched rather than deleted, so opting movement out keeps its history
     - the versioned asset tables flatten out of the committed history into out_dir/assets
-    - prints one line before the build starts
+    - reports archive progress every 50 files and says when asset tables are being written
     """
     archive_dir = extract.ARCHIVE_DIR if archive_dir is None else Path(archive_dir)
     out_dir = PARQUET_DIR if out_dir is None else Path(out_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
-    print("Building the tables from the archive")
+    archive_paths = _archive_paths(archive_dir)
+    total = len(archive_paths)
+    print(f"Building the tables from the archive ({total:,} archived matches)", flush=True)
 
     for name in schemas.PARTITIONED:
         if name not in exclude:
             clear_partition(name, out_dir)
 
     dropped: list[int] = []
-    infos = _select_infos(_decode_matches(_archive_paths(archive_dir)), accounts, dropped)
+    progress_paths = _archive_paths_with_progress(archive_paths)
+    infos = _select_infos(_decode_matches(progress_paths), accounts, dropped)
     counts = export_infos(infos, out_dir, exclude)
 
+    print("Writing the asset reference tables", file=sys.stderr, flush=True)
     _write_skipped(out_dir, accounts, set(dropped))
     _write_asset_tables(out_dir, counts)
     update_stamp(out_dir, logic_version=EXPORT_LOGIC_VERSION, asset_horizon=item_horizon())

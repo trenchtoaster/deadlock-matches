@@ -776,16 +776,53 @@ def refresh_heroes(path: Path | None = None) -> int:
     return len(records)
 
 
-def refresh_skill_rating(path: Path | None = None) -> int:
+RANKED_SEASON_ONE_BUILD = 6652
+PRE_SEASON_RANK_NAMES = {
+    0: "Obscurus",
+    1: "Initiate",
+    2: "Seeker",
+    3: "Alchemist",
+    4: "Arcanist",
+    5: "Ritualist",
+    6: "Emissary",
+    7: "Archon",
+    8: "Oracle",
+    9: "Phantom",
+    10: "Ascendant",
+    11: "Eternus",
+}
+SEASON_ONE_RANK_NAMES = {
+    0: "Obscurus",
+    1: "Initiate",
+    2: "Seeker",
+    3: "Acolyte",
+    4: "Sentinel",
+    5: "Mystic",
+    6: "Ritualist",
+    7: "Emissary",
+    8: "Oracle",
+    9: "Phantom",
+    10: "Ascendant",
+    11: "Eternus",
+}
+
+
+def refresh_skill_rating(path: Path | None = None, *, build: int | None = None) -> int:
     """Redownload skill_rating.json (badge tier names) and clear the lookup cache.
 
-    path defaults to the user asset store.
+    path defaults to the user asset store. Build 6652 launched Ranked Season 1,
+    but its assets response initially remained the complete pre-season ladder.
+    Replace only that exact stale ladder, leaving any later API revision intact.
     """
     path = store.write_path("skill_rating.json") if path is None else path
     records = api.get_json("v1/assets/ranks", use_cache=False)
+    names = {r["tier"]: r["name"] for r in records}
+
+    if build is not None and build >= RANKED_SEASON_ONE_BUILD and names == PRE_SEASON_RANK_NAMES:
+        names = SEASON_ONE_RANK_NAMES
 
     path.write_text(
-        json.dumps([{"tier": r["tier"], "name": r["name"]} for r in records]), encoding="utf-8"
+        json.dumps([{"tier": tier, "name": names[tier]} for tier in names]), encoding="utf-8"
     )
     skill_rating.tier_map.cache_clear()
 
