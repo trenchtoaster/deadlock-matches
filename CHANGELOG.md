@@ -1,6 +1,13 @@
 # Changelog
 
 All notable changes to this project are documented here.
+## [0.12.0] - 2026-07-31
+
+### Added
+
+- Support the 2026-07-30 matchmaking update ([97302a4](https://github.com/trenchtoaster/deadlock-matches/commit/97302a4c126bec7c8b1c5f89552db9446e91639b))
+
+
 ## [0.11.0] - 2026-07-29
 
 ### Added
