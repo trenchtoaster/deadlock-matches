@@ -214,7 +214,7 @@ def test_damage_game_records_raises(pq):
     with pytest.raises(ValueError, match="Unknown hero"):
         queries.damage_game_records("Nobody", accounts=[42], parquet_dir=pq)
 
-    with pytest.raises(ValueError, match="no games"):
+    with pytest.raises(queries.NoGames, match="No Ranked games of"):
         queries.damage_game_records("Haze", accounts=[42], parquet_dir=pq)
 
 
@@ -262,7 +262,7 @@ def test_healing_game_records_raises(pq):
     with pytest.raises(ValueError, match="Unknown hero"):
         queries.healing_game_records("Nobody", accounts=[42], parquet_dir=pq)
 
-    with pytest.raises(ValueError, match="no games"):
+    with pytest.raises(queries.NoGames, match="No Ranked games of"):
         queries.healing_game_records("Haze", accounts=[42], parquet_dir=pq)
 
 
@@ -364,7 +364,7 @@ def test_souls_game_records_raises(pq):
     with pytest.raises(ValueError, match="Unknown hero"):
         queries.souls_game_records("Nobody", accounts=[42], parquet_dir=pq)
 
-    with pytest.raises(ValueError, match="no games"):
+    with pytest.raises(queries.NoGames, match="No Ranked games of"):
         queries.souls_game_records("Haze", accounts=[42], parquet_dir=pq)
 
 
@@ -483,7 +483,7 @@ def test_combat_game_records_raises(pq):
     with pytest.raises(ValueError, match="Unknown hero"):
         queries.combat_game_records("Nobody", accounts=[42], parquet_dir=pq)
 
-    with pytest.raises(ValueError, match="no games"):
+    with pytest.raises(queries.NoGames, match="No Ranked games of"):
         queries.combat_game_records("Haze", accounts=[42], parquet_dir=pq)
 
 

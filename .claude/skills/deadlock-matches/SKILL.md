@@ -16,17 +16,18 @@ The examples below call `deadlock <command>`, the name an installed tool puts on
 - `config.toml` in the user config directory (`~/.config/deadlock-matches/` on Linux, `%APPDATA%\deadlock-matches\` on Windows — `deadlock config` prints the path) sets the `--account` default: an `[accounts]` table of `name = <steam32 id>` pairs (the only accepted shape — a plain list exits with the expected form). Every CLI run writes a commented starter config when the file is missing (`config.ensure_config`); the starter excludes the movement table (`exclude = ["movement"]`)
 - "your games" = union across all alt accounts; `--account` (comma-separated) overrides per-invocation and takes config names as well as ids (`--account main`), matched case-insensitively. Report headers print the names (`config.format_accounts`)
 - `--account` also takes a tracked player name from `[players.<Hero>]` (`--account someplayer`) or any downloaded account id — `history`, `match` (latest-game form), and the damage/healing/souls/combat/movement twins then read that player's downloaded games from the players store automatically (`cli.main.resolve_store`: flips when every account named is non-config and in the downloads ledger; a mix of yours and tracked stays on your tables, where the tracked games do not exist). `[accounts]` names win a name collision
-- accounts empty? run `deadlock accounts` — it lists the Steam accounts on this PC that have run Deadlock (userdata/ folder names = Steam32 ids, account/profile names from loginusers.vdf, archived game counts) and prints a paste-ready `[accounts]` block with neutral main/altN names; offer to fill config.toml in from it. `extract.steam_accounts()` is the underlying reader. Suggested names are deliberately NOT the Steam account names — those are half of the login credentials and config names print in report headers (output columns use Steam's terms: Account name = private login, Profile name = public persona)
+- accounts empty? run `deadlock accounts` — it lists the Steam accounts on this PC that have run Deadlock (userdata/ folder names = Steam32 ids, account/profile names from loginusers.vdf, archived game counts with the first and last game day) and prints a paste-ready `[accounts]` block with neutral main/altN names; offer to fill config.toml in from it. `extract.steam_accounts()` is the underlying reader. Suggested names are deliberately NOT the Steam account names — those are half of the login credentials and config names print in report headers (output columns use Steam's terms: Account name = private login, Profile name = public persona)
 - `--hero` is always explicit — take it from the question or the user's recent `history` output
-- `config.toml` also holds the tracked players per hero as `[players.<Hero>]` tables (top ladder accounts, friends, anyone) — this is THE comparison pool: `compare`, `builds`, and the tracked part of `item` read only downloaded games whose account_id sits in this table, resolved at query time (`players.pool_members` / `pool_games` / `pool_builds`). The pool readers enforce Standard at read time by default, so Ranked/New Player Placement/Street Brawl/scrim rows cannot leak in; `--ranked`, `--placement`, `--street-brawl`, or `--private-lobby` deliberately selects one of those modes instead. `--calibration` remains an alias for `--placement`. Deleting a line removes the player from every comparison without touching data; there is no untrack command. A bare `deadlock download --hero X` downloads exactly these players' Standard games — the leaderboard is never auto-downloaded, and old `--account` downloads stay in the ledger but never join comparisons. Read the table via `config.config_players("Mirage")` for ad-hoc analysis. Never hardcode or commit player names/ids; the config lives outside the repo for a reason
+- `config.toml` also holds the tracked players per hero as `[players.<Hero>]` tables (top ladder accounts, friends, anyone) — this is THE comparison pool: `compare`, `builds`, and the tracked part of `item` read only downloaded games whose account_id sits in this table, resolved at query time (`players.pool_members` / `pool_games` / `pool_builds`). The pool readers enforce ranked play at read time by default (Standard before build 6652, Ranked after it), so unranked/New Player Placement/Street Brawl/scrim rows cannot leak in; `--standard`, `--ranked`, `--placement`, `--street-brawl`, or `--private-lobby` deliberately selects one of those modes instead. `--calibration` remains an alias for `--placement`. Deleting a line removes the player from every comparison without touching data; there is no untrack command. A bare `deadlock download --hero X` downloads exactly these players' Ranked games (match-history rows carry no `ranked_type`, so the download side cannot span the older queue) — the leaderboard is never auto-downloaded, and old `--account` downloads stay in the ledger but never join comparisons. Read the table via `config.config_players("Mirage")` for ad-hoc analysis. Never hardcode or commit player names/ids; the config lives outside the repo for a reason
 - `config.config_timezone()` gives the zone for grouping matches into local days ("wins per day", "this week") — reads `timezone` from config.toml (the starter pins the detected zone at creation). Always `convert_time_zone()` with it before `.dt.date()`; `start_time` is UTC and late-night sessions split across days otherwise
 
 ## Common questions
 
 ```bash
 deadlock accounts                  # Steam accounts on this PC that have run Deadlock:
-                                          # ids, account/profile names, archived games, plus a
-                                          # paste-ready [accounts] block for config.toml
+                                          # ids, account/profile names, archived games and their
+                                          # date span, plus a paste-ready [accounts] block for
+                                          # config.toml
 deadlock history [--days N] [--since 2026-07-01]
                                           # lists one line per game of yours with account, hero,
                                           # result, K/D/A, souls, damage, timestamp, and match id,
@@ -48,6 +49,14 @@ deadlock match [12345678] [--ago 1] [--hero Wraith] [--interval 10] [--souls|--d
                                           # never reaches your tables — download --match pulls it
                                           # into the players tables and match falls back to them
                                           # by itself when the id is not in your tables);
+                                          # a Ranked match (match_mode 4) adds two scoreboard
+                                          # columns for ALL 12 players — Rating (the badge each
+                                          # one STARTED the match on, "Placing" at badge 0) and a
+                                          # signed Points change (final minus initial flat
+                                          # progress, so a clamped loss reads +0) — then a
+                                          # "Points: before -> after (change[, assigned])" line
+                                          # for the resolved player with placements left and
+                                          # demotion protection; other modes print unchanged;
                                           # the view flags are listed under this block
 ```
 
@@ -97,10 +106,9 @@ deadlock compare combat --hero Mirage
 deadlock compare movement --hero Mirage
                                           # whole-game movement averages instead of intervals:
                                           # the member list, the pooled gap table, and one row
-                                          # per tracked player (Rank = ladder rank at download
-                                          # or "-", a you row first for contrast, names padded
-                                          # by display width so CJK names keep the table
-                                          # aligned) — the audit view for who is in the pool
+                                          # per tracked player (a you row first for contrast,
+                                          # names padded by display width so CJK names keep the
+                                          # table aligned) — the audit view for who is in the pool
                                           # and whether the Tracked averages blend playstyles
 deadlock leaderboard --hero Mirage [--players 8] [--matches 5]
                                           # current top players from the per-hero leaderboard with
@@ -113,7 +121,7 @@ deadlock leaderboard --hero Mirage [--players 8] [--matches 5]
                                           # Steam profile URL minus extract.STEAM64_BASE
                                           # (76561197960265728), and shared matches hold the
                                           # exact id in the players table
-deadlock download --hero Mirage [--account 111222333] [--match 12345678] [--ranked|--placement|--street-brawl|--private-lobby]
+deadlock download --hero Mirage [--account 111222333] [--match 12345678] [--standard|--ranked|--placement|--street-brawl|--private-lobby]
                                           # materialize recent games from the tracked players
                                           # into parquet-players/ (see below). NOTHING is ever
                                           # downloaded from the leaderboard on its own: every
@@ -125,7 +133,9 @@ deadlock download --hero Mirage [--account 111222333] [--match 12345678] [--rank
                                           # --match fetches matches by ID, no --hero (stores
                                           # all 12 players, so match --hero works on any of
                                           # them, never joins comparisons). both comma-separate.
-                                          # Standard is the default; --ranked, --placement,
+                                          # Ranked is the default. match history has no
+                                          # ranked_type, so the older queue cannot be fetched.
+                                          # --standard, --ranked, --placement,
                                           # --street-brawl, and --private-lobby fetch only that mode. all fetched
                                           # modes stay stored and remain explicitly inspectable.
                                           # the current leaderboards only fill in rank/region/
@@ -134,18 +144,25 @@ deadlock download --hero Mirage [--account 111222333] [--match 12345678] [--rank
                                           # deadlock damage --hero Mirage --account someplayer
                                           # or a specific downloaded match directly by id:
                                           # deadlock match 12345678 --hero Mirage
-deadlock winrate [--days N] [--since 2026-07-01] [--by week|month|mode] [--hero Mirage] [--min-rating Oracle] [--ranked|--placement|--street-brawl|--private-lobby]
-                                          # daily W/L, MVP/Key Player counts, net wins, and a
-                                          # Lobby column (average lobby rating, averaged in
-                                          # subrank steps so means never land between levels);
-                                          # --by week/month rolls days into bigger buckets;
+deadlock winrate [--days N] [--since 2026-07-01] [--by day|week|month|mode|account] [--hero Mirage] [--min-rating Oracle] [--standard|--ranked|--placement|--street-brawl|--private-lobby]
+                                          # weekly W/L by default, MVP/Key Player counts, net
+                                          # wins, and a Lobby column (average lobby rating,
+                                          # averaged in subrank steps so means never land
+                                          # between levels; Valve's published average before
+                                          # build 6652, computed from the placed players'
+                                          # starting badges, 6+ of 12 placed, in Season One
+                                          # Ranked); --by day drills into daily rows,
+                                          # --by month rolls weeks into bigger buckets;
                                           # --by mode instead prints total Games/W/L/Win rate
                                           # per stored mode, deliberately lifting the mode
                                           # filter while --account/--hero/--days/--since still
                                           # apply; do not combine it with a mode-selection flag.
+                                          # --by account prints one total row per account in
+                                          # config order, keeping the standing selection, and
+                                          # mode flags narrow it as usual.
                                           # never hand-roll this in polars. --hero adds the
                                           # hero's public win rate (deadlock-api.com, Eternus+
-                                          # default) under Standard only; alternate
+                                          # default) on the default selection only; explicit
                                           # modes omit it because public stats cannot match them.
                                           # a footer separates games with an abandon (who left:
                                           # you/ally/enemy with each record, reconnects) plus
@@ -153,7 +170,51 @@ deadlock winrate [--days N] [--since 2026-07-01] [--by week|month|mode] [--hero 
                                           # the table, they are still real wins and losses.
                                           # not_scored games are left OUT of the table and
                                           # reported under it (match history still shows their
-                                          # result)
+                                          # result).
+                                          # any Ranked game in the window adds a Net points column
+                                          # (record_games net_points, the APPLIED points change
+                                          # summed per bucket) and a net points total on the
+                                          # Overall line. no flag needed. placements add
+                                          # nothing and a bucket with no points stays blank.
+                                          # --by mode always prints the column and only the
+                                          # Ranked row fills it. --standard output has no column
+deadlock rank [--account main] [--days N] [--since 2026-07-30]
+                                          # the Ranked games of the current season (match_mode 4)
+                                          # for the resolved accounts, OLDEST FIRST: day, time,
+                                          # account, hero, result, Rating (badge at match START,
+                                          # "Placing" while badge is 0), Points before -> after,
+                                          # the applied Change with the ASSIGNED change when a
+                                          # subrank floor clamped a loss, incoming win Streak, and
+                                          # a Note column (placements left, demotion protection
+                                          # used, not scored). Footer per account: current rating
+                                          # + points, points into the subrank (I-V are 1,000
+                                          # points wide, VI is 2,000, a full tier is 7,000;
+                                          # Eternus subranks are percentile-based so its footer
+                                          # shows points with no subrank progress),
+                                          # season record, and net points over the WINDOW while
+                                          # the record/rating always read the whole stored season.
+                                          # placements never count toward the net because their
+                                          # points reset every game. an account still placing
+                                          # shows "Rating: Placing." and no point total.
+                                          # points telescope between stored games, so a placed
+                                          # game that starts off the ending points of the game
+                                          # before it gets an "archive gap before this" note and
+                                          # the footer counts the gaps (whole season): games are
+                                          # missing, sync --source api backfills what the API has.
+                                          # placement games sit outside the check (bank resets).
+                                          # --account takes tracked player names or downloaded
+                                          # ids and flips to the players store like history.
+                                          # An account with ZERO stored Ranked games prints the
+                                          # ranked eligibility panel instead: total scored wins
+                                          # vs 60, qualified heroes vs 3, then per-hero wins
+                                          # descending with 15+ marked "qualified", counted from
+                                          # the LOCAL archive (Standard + Ranked, scored only) —
+                                          # unarchived games are not counted and the printed note
+                                          # says so. several such accounts print one summary
+                                          # line each instead of the full panel. Thresholds and
+                                          # the season start come live from
+                                          # v1/assets/ranked-seasons (cli.rank.season_rules) with
+                                          # SEASON_FALLBACK shipped for a failed request
 deadlock laning [--days N] [--since 2026-07-01] [--hero Mirage] [--minutes 9]
                                           # match --laning at archive scale: win rate bucketed
                                           # by the lane result at the mark (default 9:00, lane
@@ -280,9 +341,21 @@ deadlock sync                      # rebuild parquet tables; --full from scratch
                                           # match-history API into the archive (it may not
                                           # have every game — the rest need in-game clicks);
                                           # self-heals the asset history: a newer installed
-                                          # build (steam.inf, no network) triggers one silent
-                                          # backfill + re-export of matches priced on the
-                                          # old patch era
+                                          # build (steam.inf, no network) triggers one backfill
+                                          # + re-export of matches priced on the old patch era.
+                                          # The backfill reports itself: "Game updated, extending
+                                          # the asset history to build N", then ONE LINE PER
+                                          # history table (items/heroes/abilities/ranks/statues)
+                                          # counting builds walked (cached vs downloaded vs
+                                          # missing) while it runs and settling on
+                                          # "<before> -> <after> eras", plus an indented
+                                          # "no asset data for client build N, skipped" when the
+                                          # assets API has nothing for a build (the rest still
+                                          # build). A failure prints "Asset update failed, the
+                                          # next sync retries" and the sync carries on
+                                          # (cli.data._extend_asset_history, whose progress
+                                          # printer _history_progress is shared with
+                                          # assets --backfill)
 ```
 
 `compare` has report subcommands: `souls`, `damage`, `healing`, `combat`, and `movement`. Do not suggest `--stat`, `soul_sources`, or individual soul groups as public compare modes. `compare souls` prints income-source gaps first, then net worth over time; `compare souls --milestones` prints target timing. `compare damage` prints source rows first, then damage over time. `compare healing` prints healing sources, healing prevented when present, then healing over time. `compare combat` prints aim/incoming/parry aggregate counters. `compare movement` prints whole-game movement averages. `--since` filters your games; `--pool-since` filters tracked games by local match date. `--against someplayer` narrows the tracked pool; `--account someplayer` instead makes that player the subject.
@@ -301,15 +374,15 @@ For any count, rate, or total over your own matches, call `queries.summarize()` 
 
 #### Metric views
 
-- `summarize(my_games, by=["match_mode", "game_mode"], measures=["games", "wins", "win_rate"], filters={"hero": "Mirage"}, match_mode=None, game_mode=None)` — lazily group a metric view by its declared dimensions and aggregate its measures; lifting both defaults is required for an all-mode table because Street Brawl shares Standard's match mode. Call `.collect()` at the presentation boundary. `by` and `measures` take names the view declares (or a declared synonym, which resolves back to the declared name), `filters` takes a value, a list of values, or a raw expression, and everything else passes through to the view factory (`accounts=`, `tz=`, plus `days=`/`since=`/`hero=` on record_games). `parquet_dir=` is not a view parameter — it picks which files get read, so summarize makes it ambient for the whole build. An unknown name raises with the valid ones listed. Omit `by` for a single total row
+- `summarize(my_games, by=["match_mode", "game_mode"], measures=["games", "wins", "win_rate"], filters={"hero": "Mirage"}, match_mode=None, game_mode=None)` — lazily group a metric view by its declared dimensions and aggregate its measures; lifting the mode defaults AND `ranked=None` is required for an all-mode table, because Street Brawl shares Standard's match mode and the default also filters `ranked_type`. Call `.collect()` at the presentation boundary. `by` and `measures` take names the view declares (or a declared synonym, which resolves back to the declared name), `filters` takes a value, a list of values, or a raw expression, and everything else passes through to the view factory (`accounts=`, `tz=`, plus `days=`/`since=`/`hero=` on record_games). `parquet_dir=` is not a view parameter — it picks which files get read, so summarize makes it ambient for the whole build. An unknown name raises with the valid ones listed. Omit `by` for a single total row
 - `registered_views()` / `describe_views(name)` — the views summarize accepts, in code and as text (`deadlock schema --views` prints the same thing, so the names never have to be read out of the source): match/account games, record games, damage/healing sources, hero damage detail, soul sources, movement games, fight counters, compare-interval gains, cumulative marks, net-worth milestones, stack counters, and permanent buffs. Each declares its grain, parameters, dimensions, and measures. Rates go through `try_divide(numerator, denominator)` over two aggregates, so `win_rate` is total wins over total scored games at whatever grain you asked for — never the mean of per-group rates. A measure may also be written from other measures (`lambda measure: try_divide(measure["wins"], measure["scored_games"])`) so one definition is not respelled twice. Measures hold raw values: proportions are not multiplied by 100 and nothing is pre-rounded. Scale and format only where you print. Every measure declares a `unit` from `queries.UNITS`, and `measure.display_format` says how to print it — a `Format` carries `decimals`, a `scale` (100 for a proportion), `group` for thousands separators, a prefix/suffix, and `small`, which keeps decimals a whole-number column would otherwise round away. `queries.view_measure(view, name)` looks one up, and `cli/render.py` prints whole tables through them, so no report scales or rounds a number by hand
 - `view_frame(view, columns=None, parquet_dir=None)` — build a view as a frame instead of aggregating it, with its dimensions materialized as columns of their own. This is how you get rows out of a view: `view_frame(my_games(accounts, tz), parquet_dir=pq)`. Leave `columns` alone unless you want a join pruned; it names what you go on to read, it does not project. Columns a view picks up from a join are prefixed with the join alias, so match details on `my_games` are `matches.duration_s`, `matches.start_time`, `matches.not_scored`, and so on
 - `compare(damage_source_games, [Scope("you", parquet_dir=pq, arguments={"hero": "Mirage"}), Scope("them", parquet_dir=players.PARQUET_DIR, arguments={"hero": "Mirage", "accounts": pool})], by="delivery", measures=["total"])` — the sibling of summarize for a delta across two row sets, which a measure can never be: the two sides live in different groups, so the pool gap at month grain is not derivable from the day-by-day gaps. A `Scope` carries the export it reads alongside the view arguments, because the two sides of a real comparison read different parquet trees, and it can take a ready `lf=` instead. Exactly two scopes, each named, and the name prefixes that side, so the columns come back `you_total`, `them_total`, `gap_total`. The gap always reads the first scope minus the second and every group key either side has survives. A missing side stays null in its own column; counts and sums declare `missing="zero"` for the gap, while rates, means, medians, extrema, and windowed measures keep the safe `"null"` default. Use this instead of hand-rolling a full join and picking a sign
 - `direction` on a measure says which way is good — `"maximize"`, `"minimize"`, or left blank when neither holds. It describes the measure, never the delta, so a `minimize` measure with a negative gap is the good news and that reading belongs wherever you print it — `render.reading(measure, gap)` turns the pair into "better" or "worse", which is what the compare tables print after the gap (not "ahead"/"behind" — those already mean a lane soul lead). `deadlock schema --views` shows it
 - `Window` on a measure covers what plain aggregation gets wrong. `semiadditive="last"` with an `order` and a `partition` collapses every series to its final sample before the measure aggregates, which is the only safe read of a running total — `stat_snapshots` uses it. Registration enforces all-or-nothing: the collapse applies to the whole query, so on a view where one measure declares it, every measure does. `range="cumulative"` turns the grouped result into a running total down the ordered dimension, which then has to be one of the `by` names — `record_games.cum_net` uses it, and its `order` names day, week, and month so it accumulates down whichever bucket you grouped by
-- `my_games(accounts=None, tz=None, match_mode="inherit", game_mode="inherit")` — the default view for your own games: players filtered to the config accounts, joined to matches, with `start_local`/`day` already in your timezone. Standard is the standing default; the mode arguments or `mode_context` select Ranked (4), New Player Placement (8), or another mode. Returns a `MetricView`, so pass it to `summarize()` or to `view_frame()` for rows. One row per match AND account, so two of your accounts in one lobby are two rows
-- `record_games(accounts=None, tz=None, days=None, since=None, hero=None, match_mode="inherit", game_mode="inherit")` — one row per match in the winrate window (account/days/since/hero/mode filters applied), so its `wins` counts matches where my_games' counts account-games. Its readable `match_mode` and `game_mode` dimensions back `deadlock winrate --by mode`, which explicitly lifts both mode filters. daily_record, abandon_record, and unscored_record all accept a collected result via `games=` so one scan feeds all three — the winrate command does this. `summarize(record_games, ..., lf=games.lazy())` reuses that same frame
-- `stat_snapshots(games=None, accounts=None, tz=None, match_mode="inherit", game_mode="inherit")` — the `stats` table as a metric view. Standard is the standing default, including when accounts are passed directly. Every measure carries a semiadditive window, so each player-game collapses to its last sample before anything is summed and the snapshot rows can never be added up by accident. Summarize `net_worth`, `player_damage`, `shots_hit`/`shots_missed`/`accuracy`, `hero_bullets_hit`/`hero_bullets_hit_crit`/`headshot_rate`, and the K/D/A counters by hero, day, week, month, or account. `games` is an explicit match_id/account_id scope and is trusted as-is rather than filtered by mode again
+- `my_games(accounts=None, tz=None, match_mode="inherit", game_mode="inherit", ranked="inherit")` — the default view for your own games: players filtered to the config accounts, joined to matches, with `start_local`/`day` already in your timezone. Your ranked games are the standing default, spanning match_mode 1 before build 6652 and match_mode 4 after it; the mode arguments or `mode_context` select the unranked queue (`ranked=False`), New Player Placement (8), or another mode. Returns a `MetricView`, so pass it to `summarize()` or to `view_frame()` for rows. One row per match AND account, so two of your accounts in one lobby are two rows
+- `record_games(accounts=None, tz=None, days=None, since=None, hero=None, match_mode="inherit", game_mode="inherit", ranked="inherit")` — one row per match in the winrate window (account/days/since/hero/mode filters applied), so its `wins` counts matches where my_games' counts account-games. Its readable `match_mode`, `game_mode`, and `ranked_type` dimensions back `deadlock winrate --by mode`, which explicitly lifts all three mode filters (`match_mode=None, game_mode=None, ranked=None`). daily_record, abandon_record, and unscored_record all accept a collected result via `games=` so one scan feeds all three — the winrate command does this. `summarize(record_games, ..., lf=games.lazy())` reuses that same frame. `net_points` is the Rank Point measure on it: the sum over scored games of `player_rank_final_flat_progress - player_rank_initial_flat_progress`, so it counts what a game APPLIED and never the assigned change a subrank floor clamped away. It carries the `points` unit (grouped thousands, printed signed) and `missing="zero"`. Placement games add nothing (the placement bank resets every game and never reaches the placed rating) and a group with no points reading stays null instead of zero. The winrate table prints it whenever the window holds Ranked games, and `deadlock rank` prints the same applied change per game
+- `stat_snapshots(games=None, accounts=None, tz=None, match_mode="inherit", game_mode="inherit", ranked="inherit")` — the `stats` table as a metric view. Ranked play is the standing default, including when accounts are passed directly. Every measure carries a semiadditive window, so each player-game collapses to its last sample before anything is summed and the snapshot rows can never be added up by accident. Summarize `net_worth`, `player_damage`, `shots_hit`/`shots_missed`/`accuracy`, `hero_bullets_hit`/`hero_bullets_hit_crit`/`headshot_rate`, and the K/D/A counters by hero, day, week, month, or account. `games` is an explicit match_id/account_id scope and is trusted as-is rather than filtered by mode again
 - `damage_source_games(hero, stat="damage")` — one lazy row per match/account/source after duplicate total rows and non-hero targets are removed and delivery is resolved. `stat=` also covers `healing`, `heal_prevented`, and the other damage-table stats. Summarize by `source_name`, `delivery`, `day`, or account with `total`, `games`, `gun`, `abilities`, `items`, and `self`. Two families of rate sit on it and they divide by different things: `per_game`/`per_min`/`per_1k`/`per_min_owned` divide by the games, minutes, souls, or owned minutes OF THE GROUP, while `per_window_game`/`per_window_min`/`share` divide by every game of the hero the view covers — which is why heal-prevented per game counts the games that prevented nothing. Item rows carry a zero-amount row in a game where the item was owned and dealt nothing, so `per_1k` divides by every soul spent; `games` and `minutes` read those rows out
 - `hero_damage_games(accounts=None, matches=None, stat="damage")` — one lazy row per dealer, target, and source of a match, straight off `hero_damage`. The finest damage grain there is, and the one to reach for when the answer is per enemy or per bullet series rather than per source. Summarize `total`, `games`, `targets`, `per_game`, and the disjoint `gun_body`/`gun_headshot` pair that sums to `gun`. Leaving `accounts` out keeps every dealer, which is what a whole-lobby table wants — it does NOT fall back to config.toml
 - `soul_source_games(hero)` — one lazy row per nonzero final soul source per match/account. Summarize `souls`, `secured_orbs`, source-group totals, games, and orb share by source, group, date, or account
@@ -350,9 +423,10 @@ For any count, rate, or total over your own matches, call `queries.summarize()` 
 - `ability_upgrades()` — ability unlocks/upgrades in spend order with the level and soul requirement for each unlock or cumulative AP spend
 - `hero_scaling()` — per-hero-per-level reference frame (base_health, spirit_power, required_souls) with one row per patch era; `hero_scaling_asof(left)` as-of joins it by (hero_id, level) on start_time
 - `skill_rating(column)` — maps a badge level column to current labels with Roman subranks ("Emissary IV")
+- `skill_rating_asof(column, at="start_time")` — the same labels resolved per row through the committed rank history, so a pre-rename badge keeps the name its era used (what the lobby and rating columns print; Season One renamed tiers 3-7 on 2026-07-31)
 - `my_deaths()` — deaths joined to your games (hero/won/day)
 - `death_context(radius=2000)` — adds allies/enemies/solo/outnumbered at the death second (raises unless movement is exported — check `table_exists("movement")` first)
-- `hero_games(hero, accounts=, since=)` — your selected-mode games on one hero as a (match_id, account_id) frame (Standard by default; the your side of `deadlock compare`, `since` = patch-window cap)
+- `hero_games(hero, accounts=, since=)` — your selected-mode games on one hero as a (match_id, account_id) frame (ranked play by default; the your side of `deadlock compare`, `since` = patch-window cap)
 - `game_rates(games, stat)` — whole-game rate per minute of one compare stat, one row per game (the compare summary and Total rows)
 - `cumulative_at(games, stat, marks_s)` — cumulative value at given game times per game, last sample at or before the mark, only games that reach it (backs the `soul_sources` gap table)
 - `cumulative_stat_target_times(games, targets, stat="souls")` — when each game first crosses each target, interpolated between stats snapshots (backs `--milestones`)
@@ -412,7 +486,7 @@ for path in extract.iter_matches():
 
 ## Presenting results
 
-For per-day / per-interval summaries, render an aligned table: one row per period, columns like Day, Games, W, L, Win rate, Net, Cumulative net. Right-align numbers, sign the net columns (+3 / -1), say which timezone days are grouped by, and end with a one-line overall summary ("26 games, 20-6, 76.9% win rate, +14 net"). Don't dump raw dataframe reprs at the user. `deadlock winrate` prints the daily version of this ready-made — relay its output instead of rebuilding the table.
+For per-day / per-interval summaries, render an aligned table: one row per period, columns like Day, Games, W, L, Win rate, Net, Cumulative net. Right-align numbers, sign the net columns (+3 / -1), say which timezone period is grouped by, and end with a one-line overall summary ("26 games, 20-6, 76.9% win rate, +14 net"). Don't dump raw dataframe reprs at the user. `deadlock winrate` prints the weekly version of this ready-made (`--by day` for daily rows) — relay its output instead of rebuilding the table.
 
 ## Where the data is
 
@@ -455,8 +529,10 @@ Notes:
 - melee scaling, same sandbox session: Bashdown measurements (93/200/143/306) matched the bundled model within ±1.2 — spirit part `35 + 1.1 × spirit`, melee part `0.5 × heavy` with heavy keeping the hero ratio through boons (the `--melee` derivation rule, now in-game-proven). The melee STAT gains half the weapon investment % (Crushing Fists case fits 1 + 22% melee + 27% = 54%/2 exactly, the wiki's "melee scales with weapon damage by 50%"), so the stat-screen melee number `--melee` takes already includes it. On-hit riders are NOT in the stat: Crushing Fists' `bonus_heavy_melee_damage: 25` is a separate ×1.25 on heavy hits, applied after ability scaling — same category as crit, out of scope for the resolver
 - patch drift: the committed history parquets (`deadlock assets --backfill`) version every patch era, so as-of consumers (`item_events` pricing, `hero_scaling`, `ability_upgrades`, the `--as-of` cards) read the tuning live at match time. The bare `Hero`/`Item`/`Ability` helpers without a `when` describe the CURRENT patch only. `deadlock assets --backfill --confirm` OVERWRITES the committed parquets by rescanning every build since `assets.HISTORY_START` (cached, near-free) — review the diff before committing. There is deliberately no date flag on the CLI: a narrowed scan would truncate the earlier eras, `start_date` exists only as a library param for tests
 - no cast events exist ANYWHERE in the metadata: `player.ability_stats` is only the handful of stacking items/abilities (Trophy Collector trophies, Glass Cannon stacks, Sticky Bomb bonus, Restorative Locket charges, Guided Owl/Assassinate counters), exported as the `stacks` table and shown by `match --stacks`, and `custom_user_stats` is the named counter pool behind the `custom_stats` table (73 names as of 2026-07: parries, vs-hero accuracy both directions, damage by range, comeback souls, per-hero counters — see the schema caveats). Active item presses (Debuff Remover), stuns, and debuff windows live only in replay demos, which nothing here parses — don't promise cast counts. The wire `ability_id` is the murmur2 string token of the engine class name (`abilities.string_token`/`class_by_token` do the mapping; assets API ids are the same hash), so ids resolve with no lookup table
-- `match_mode` now separates the queues: `1` = Standard (the protobuf still calls it Unranked), `4` = Ranked, `8` = New Player Placement, and `2` = `PrivateLobby` such as scrims/FACEIT. `game_mode` is a SECOND enum: `4` is Street Brawl, a different map and ruleset that still carries `match_mode 1`; the normal map is `game_mode 1`. The standing filter is Standard `(1, 1)`; `--ranked`, `--placement`, `--street-brawl`, and `--private-lobby` select `(4, 1)`, `(8, 1)`, `(1, 4)`, and `(2, 1)`. Storage stays cumulative and modes never mix unless both filters are explicitly lifted. The first verified post-update Standard match (96478283) carried badge averages `0/0` (Obscurus), so do not treat Standard lobby badges as ranked skill. Names come off the compiled protobuf enum via `queries.match_mode_name` / `game_mode_name`, never a hardcoded dict. hero_id maps to names via `heroes.py`
-- New matchmaking metadata is exported, not inferred: `matches.ranked_type` / `rank_interval`; `players.player_match_outcome` and the `player_rank_*` progress/protection fields; and the repeated `hero_xp_rewards` table. The per-player starting display rank is the actual Ranked badge to label with `queries.skill_rating`; Standard has no rank-data block. Per-player outcome controls `won` and outcome 5 is excluded from scored-game measures
+- `match_mode` now separates the queues: `1` = Standard (the protobuf still calls it Unranked), `4` = Ranked, `8` = New Player Placement, and `2` = `PrivateLobby` such as scrims/FACEIT. `game_mode` is a SECOND enum: `4` is Street Brawl, a different map and ruleset that still carries `match_mode 1`; the normal map is `game_mode 1`. `match_mode 1` therefore means two different things: it WAS the ranked queue until build 6652 (2026-07-30 12:04 UTC), and it is the unranked queue after. `matches.ranked_type` is the discriminator — null on every pre-6652 game, `0` unranked, `1` Ranked — so the standing filter is ranked play, `match_mode in (1, 4)` and `game_mode 1` and `ranked_type` not `0`, which reads as one continuous competitive record. `--standard` selects the unranked queue `(1, 1, ranked_type 0)`, `--ranked` selects Ranked Season 1 alone `(4, 1)`, and `--placement`, `--street-brawl`, and `--private-lobby` select `(8, 1)`, `(1, 4)`, and `(2, 1)`. Storage stays cumulative and modes never mix unless the filters are explicitly lifted. `winrate --by mode` groups by `ranked_type` too and prints Standard as two rows, `Standard (ranked)` and `Standard (unranked)`, so the two queues never share a win rate. The first verified post-update Standard match (96478283) carried badge averages `0/0` (Obscurus), so do not treat Standard lobby badges as ranked skill. Names come off the compiled protobuf enum via `queries.match_mode_name` / `game_mode_name`, never a hardcoded dict. hero_id maps to names via `heroes.py`
+- New matchmaking metadata is exported, not inferred: `matches.ranked_type` / `rank_interval`; `players.player_match_outcome` and the `player_rank_*` progress/protection fields; and the repeated `hero_xp_rewards` table. The per-player starting display rank is the actual Ranked badge to label with `queries.skill_rating_asof`; Standard has no rank-data block. Per-player outcome controls `won` and outcome 5 is excluded from scored-game measures
+- Rank Points, verified against real Ranked games (backs `deadlock rank`, `match`, and `winrate --ranked`): `player_rank_initial_flat_progress` / `final_flat_progress` sit on ONE flat scale where every tier spans 7,000 points: subranks I-V are 1,000 points wide and VI is 2,000, so a badge floor is `(tier - 1) * 7000 + (level - 1) * 1000` (verified against the observed point spans of all 42 badges stored — NEVER `% 1000`, it misreads every VI subrank). Eternus is the exception: its subranks are percentile-based per the wiki, so no point formula places a player inside tier 11. NEVER derive a badge from points to label a player — `player_rank_initial_display_rank` is the authoritative stored rank and the only thing to label. Only the STARTING rank is recorded, so a promotion first shows on the next game. A win applies `player_rank_desired_progress_change` exactly and the amount scales with `player_rank_initial_win_streak` (the streak carried IN). A loss can be clamped at the subrank floor: applied is then 0 or a partial drop to the floor while the assigned change stays full and `player_rank_consumed_demotion_protection` is true — always report the applied difference, with the assigned figure only as context. Placement games carry `display_rank` 0 and 0 points with `player_rank_initial_calibration_games` counting DOWN; a placement win banks +125 and a placement loss costs nothing. Outcome 5 (not scored) moves nothing
+- Beta Season 1 runs 2026-07-30 to 2026-10-08 and unlocking Ranked needs 60 account wins, 3 heroes at 15 wins each, 8 placement matches, and a solo or duo queue. The numbers come from `v1/assets/ranked-seasons` (`cli.rank.season_rules`, `SEASON_FALLBACK` when the request fails). The solo/duo rule is ONLY in that season asset — the per-player party field was dropped from match metadata on 2026-03-12 and is null since, so party size is not checkable from the tables and no report should claim it
 - api.deadlock-api.com is the same data: `v1/matches/{id}/metadata` returns the identical `match_info` we decode (cross-checked field-for-field, zero diffs), so it's ground truth for decode changes; `v1/matches/{id}/metadata/raw` backfills matches Steam evicted before we archived them (wired into `download_metadata`). `v1/players/{id}/match-history` scoreboard fields equal the protobuf top-level player fields exactly (win = `match_result == player_team`); very recent matches lag there by hours, so the local cache is fresher
 
 ## Module map
@@ -466,7 +542,7 @@ Modules are organized by data source, not by layer: the `queries/` package answe
 Everything in `src/deadlock_matches/`:
 
 - `extract.py` — cache walking, archive sync, protobuf decode (`iter_matches`, `archive`, `load`, `archived_match_bodies`), local Steam accounts (`steam_accounts`), and `player_party` (recovers the removed party wire field from old matches, see the players caveats)
-- `cli/` — the `deadlock` entry point, one module per command group: `main.py` (parser, dispatch, `schema`), `data.py` (`history`, `download`, `sync`, `assets` plus the archive snapshot), `performance.py` (`compare`, `winrate`, `laning`, `deaths`, `damage`, `movement`), `items.py` (`item`, `builds`), `cards.py` (`hero`, `ability`)
+- `cli/` — the `deadlock` entry point, one module per command group: `main.py` (parser, dispatch, `schema`), `data.py` (`history`, `download`, `sync`, `assets` plus the archive snapshot), `performance.py` (`compare`, `winrate`, `laning`, `deaths`, `damage`, `movement`), `rank.py` (`rank`, plus `season_rules` over the ranked-seasons asset), `items.py` (`item`, `builds`), `cards.py` (`hero`, `ability`)
 - `config.py` — config.toml reading and the starter file (`config_accounts`, `config_account_names`, `format_accounts`, `config_players`, `config_exclude`, `config_timezone`, `ensure_config`)
 - `export.py` — parquet tables (`build_tables`), faithful decode only, judgment lives in the queries package
 - `schemas.py` — the table models: one class per parquet table, dtype + description per column
@@ -474,9 +550,9 @@ Everything in `src/deadlock_matches/`:
 - `assets.py` — downloads heroes/items/abilities json from the assets API
 - `damage.py` — per-source damage from the damage matrix
 - `api.py` — deadlock-api HTTP client with disk cache (`get_json`), the only network code; its docstring lists every endpoint in use and which function wraps it — keep that list current when adding endpoints
-- `players.py` — other players: per-hero leaderboard (`hero_leaderboard`, `top_players`), the parquet-players materialization (`download_matches` for tracked players or `matches_by_id` for specific match ids → `write_player_tables`; `match_info` is the one body loader behind all of them), and the comparison pool: `pool_members(hero)` (config players + selected-mode ledger games/rank, the report headers), `pool_games(hero)` (ledger rows joined to matches and mode-filtered at read time, what compare/movement read), `pool_builds(hero)` (build dicts from the same selected pool, offline, backs `deadlock builds`). `tracked_player_games(names, hero=, since=)` is the ad-hoc downloads→players→matches join by ledger name and intentionally exposes every stored mode. `matches_by_id` rows carry null account/hero (no tracked player brought them in)
+- `players.py` — other players: per-hero leaderboard (`hero_leaderboard`, `top_players`), the parquet-players materialization (`download_matches` for tracked players or `matches_by_id` for specific match ids → `write_player_tables`; `match_info` is the one body loader behind all of them), and the comparison pool: `pool_members(hero)` (config players + selected-mode ledger games, the report headers — it still carries the ledger `rank`, but no report prints it: the leaderboard endpoint stopped serving the badge fields after the 2026-07-30 update, so a stored ladder rank only ages), `pool_games(hero)` (ledger rows joined to matches and mode-filtered at read time, what compare/movement read), `pool_builds(hero)` (build dicts from the same selected pool, offline, backs `deadlock builds`). `tracked_player_games(names, hero=, since=)` is the ad-hoc downloads→players→matches join by ledger name and intentionally exposes every stored mode. `matches_by_id` rows carry null account/hero (no tracked player brought them in)
 - `meta.py` — item win-rate/synergy analytics on API data
 - `heroes.py` / `items.py` — id ↔ name mapping from the assets API
-- `skill_rating.py` — badge level → current skill rating label (`label(52)` = "Mystic II", Roman subranks I–VI, tiers from `data/skill_rating.json`, refreshed by `deadlock assets`)
+- `skill_rating.py` — badge level → skill rating label (`label(52)` = "Mystic II" on the current names, Roman subranks I–VI, tiers from `data/skill_rating.json`, refreshed by `deadlock assets`; `label_asof(badge, at)` and `era_labels()` resolve names through the committed rank history instead, which is what historical badges need)
 - `abilities.py` — damage-source class_name → current display name (`label()`; engine names like mirage_tornado never change, display names do), plus ability tuning numbers (`Ability.stat`/`spirit_scale` tier math, `ability_by_name`, `for_hero`, `hero_gun`)
 - `gen/` — compiled protos, checked in and never regenerated by hand; `protos/` (repo root) — Valve sources

@@ -37,6 +37,8 @@ MATCH_MODE_PRIVATE_LOBBY = pb.k_ECitadelMatchMode_PrivateLobby
 MATCH_MODE_MATCHMAKING = MATCH_MODE_STANDARD
 GAME_MODE_NORMAL = pb.k_ECitadelGameMode_Normal
 GAME_MODE_STREET_BRAWL = pb.k_ECitadelGameMode_StreetBrawl
+RANKED_TYPE_UNRANKED = pb.k_ECitadelRankedType_Invalid
+RANKED_TYPE_RANKED = pb.k_ECitadelRankedType_Normal
 
 
 def _mode_labels(enum: str, prefix: str, overrides: dict[int, str]) -> dict[int, str]:

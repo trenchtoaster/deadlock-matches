@@ -178,7 +178,7 @@ A few flags repeat across commands:
 - `--days N` filters your last N days of games (`--days 7`)
 - `--since YYYY-MM-DD` filters for data since a date (`--since 2026-07-01`)
 - `--hero Mirage` filters a report to one hero (required for the tracked player commands since players are tracked per hero). Quote names with spaces: `--hero "Mo & Krill"`, though capitals and punctuation are optional (`--hero "mo krill"` works too)
-- match reports and tracked-player downloads default to Standard. `--ranked`, `--placement`, `--street-brawl`, and `--private-lobby` select those modes instead; `--calibration` remains an alias for `--placement`. Stored matches are retained across modes, but modes never mix in a report or comparison
+- reports default to your ranked games. Build 6652 moved ranked play out of the Standard queue on 2026-07-30, so the default reads Standard before that date and Ranked after it, keeping one continuous record. `--standard` selects the unranked queue that build introduced, `--ranked` selects Ranked Season 1 alone, and `--placement`, `--street-brawl`, and `--private-lobby` select those modes; `--calibration` remains an alias for `--placement`. Tracked-player downloads default to Ranked, since match history carries no marker to split the older queue by. Stored matches are retained across modes, but modes never mix in a report or comparison
 - `--min-rating Oracle` limits public stats to lobbies at that average skill rating or higher. `winrate` and `item` default to Eternus, `meta` counts every rating, and `all` disables the filter
 
 ### Command index
@@ -187,7 +187,8 @@ A few flags repeat across commands:
 
 - `history` - one line per game with the match ID
 - `match` - the final scoreboard plus a per-5-minute breakdown of your play. Flags swap the interval table for another view of the same game: `--souls`, `--damage`, `--healing`, `--teams`, `--laning`, `--abilities`, `--items`, `--accolades`, `--buffs`, `--stacks`, `--combat`, `--melee`, `--movement`, `--deaths`, `--kills`
-- `winrate` - wins and losses per day or per stored mode, with MVP and Key Player awards and, for Standard, a hero's public win rate
+- `winrate` - wins and losses per week or per stored mode, with MVP and Key Player awards and, on the default selection, a hero's public win rate
+- `rank` - every Ranked game with the Rank Points it paid, your rating, and the season record. Accounts that have not unlocked Ranked get the wins they still need instead
 - `laning` - every game bucketed by where your lane stood at 9:00, so you can read whether winning lane wins the game
 - `deaths` - deaths bucketed by game time, who kills you, and with movement exported whether you were alone
 - `damage` - your damage sources summed across every game of a hero, then the gun/ability/item split game by game
@@ -206,7 +207,7 @@ A few flags repeat across commands:
 **Tracked players and public stats** reads games `deadlock download` fetched and the public meta. Full output in [docs/commands.md](docs/commands.md#tracked-players-and-public-stats).
 
 - `leaderboard` - top players of a hero with paste-ready config lines
-- `download` - pull recent Standard games from the players you track, or explicitly select another mode
+- `download` - pull recent Ranked games from the players you track, or explicitly select another mode
 - `compare` - your souls, damage, healing, combat, and movement vs your tracked players; `--against tracked1` narrows the pool, `--pool-since` filters their games, and `compare souls --milestones` compares the net-worth target timings
 - `builds` - what your tracked players buy in wins vs losses
 - `meta` - public win and pick rates by rating or over time
@@ -230,21 +231,21 @@ The full scoreboard for a match, then your own play in 5-minute intervals. As yo
 
 ```
 Match 12345678: Mirage, win, 2026-07-08 07:16, 36:03
-Lobby average: The Hidden King Ascendant 1, The Archmother Phantom 6
+Lobby average: The Hidden King Oracle I, The Archmother Archon VI
 
   Team             Hero                    K/D/A        Souls   Damage Obj damage  Healing Prevented Last hits Denies    Buffs
-  The Hidden King  Mo & Krill     2 (Key)  10/3/24     57,278   42,261      6,775   33,086       662       248      3       34
-  The Hidden King  Wraith                  13/4/14     54,467   34,005     31,478   10,378         0       218      9       28
-  The Hidden King  Drifter        1 (MVP)  12/2/26     48,584   44,218     11,763   17,145         0       162      2       41
-  The Hidden King  Mirage *                14/3/17     47,025   40,145      2,154   13,132     2,128       162      0       22
-  The Hidden King  Lash                    10/6/26     44,284   35,414      6,863    6,953         0       178      3       31
-  The Hidden King  Seven                   5/10/8      43,115   21,329      6,736    7,082         0       169      1       12
-  The Archmother   Vindicta       3 (Key)  15/8/7      43,969   59,793      2,674    2,312       252       144      2       19
-  The Archmother   Ivy                     2/9/7       41,936   22,826        433    7,687         0       213      0       25
-  The Archmother   Pocket                  1/9/6       41,040   37,468      4,432       28         0       186      2       15
-  The Archmother   Shiv                    4/12/8      36,762   28,261         30    8,004     1,451       123      0        9
-  The Archmother   Warden                  3/10/6      36,420   27,756      3,005    1,985         0       192     25       24
-  The Archmother   Bebop                   3/16/12     34,944   29,645      2,273   10,218         0       112      2        7
+  The Hidden King  Mo & Krill     2 (Key)  10/3/24     57,278   42,261      6,775   33,086       662       248      3       57
+  The Hidden King  Wraith                  13/4/14     54,467   34,005     31,478   10,378         0       218      9       22
+  The Hidden King  Drifter        1 (MVP)  12/2/26     48,584   44,218     11,763   17,145         0       162      2       19
+  The Hidden King  Mirage *                14/3/17     47,025   40,145      2,154   13,132     2,128       162      0       45
+  The Hidden King  Lash                    10/6/26     44,284   35,414      6,863    6,953         0       178      3       18
+  The Hidden King  Seven                   5/10/8      43,115   21,329      6,736    7,082         0       169      1       16
+  The Archmother   Vindicta       3 (Key)  15/8/7      43,969   59,793      2,674    2,312       252       144      2        4
+  The Archmother   Ivy                     2/9/7       41,936   22,826        433    7,687         0       213      0       19
+  The Archmother   Pocket                  1/9/6       41,040   37,468      4,432       28         0       186      2       16
+  The Archmother   Shiv                    4/12/8      36,762   28,261         30    8,004     1,451       123      0       34
+  The Archmother   Warden                  3/10/6      36,420   27,756      3,005    1,985         0       192     25       27
+  The Archmother   Bebop                   3/16/12     34,944   29,645      2,273   10,218         0       112      2        9
 
   Time        Souls   /min   K/D/A   Damage   Taken Obj damage  Healing  Prevented Last hits  Troopers Neutrals  Denies
   0-5m        1,764    353   0/0/0      877     636          0      244          0         8         8        0       0
@@ -324,18 +325,19 @@ Lobby average: The Hidden King Ascendant 1, The Archmother Phantom 6
    35:00  your team delivers the Soul Urn (Venator, +2,128 souls)
 ```
 
-`deadlock winrate` prints your wins and losses per day, with MVP and Key Player awards and the average lobby skill rating. `--by week` or `--by month` rolls the days up. `--by mode` instead prints one total Games/W/L/Win rate row for every stored mode; `--account`, `--hero`, `--days`, and `--since` still filter that table.
+`deadlock winrate` prints your wins and losses per week, with MVP and Key Player awards and the average lobby skill rating. Ranked games in the window add a Net points column with the Rank Points each row moved. `--by day` breaks the table into daily rows, `--by month` rolls it into monthly ones instead. `--by mode` instead prints one total Games/W/L/Win rate row for every stored mode; `--account`, `--hero`, `--days`, and `--since` still filter that table. `--by account` prints one total row per configured account instead, keeping the same mode selection as the date table.
 
 ```
-  Week          Games    W    L   Win rate         Lobby   MVP   Key  Abandons   Net wins   Cumulative net
-  2026-06-15       24   17    7      70.8%     Phantom 4     1     2         1        +10              +10
-  2026-06-22       26   14   12      53.8%     Phantom 2     1     3         2         +2              +12
-  2026-06-29        3    2    1      66.7%   Phantom III     0     1                   +1              +13
+  Week          Games    W    L   Win rate         Lobby   MVP   Key  Abandons   Net wins   Cumulative net  Net points
+  2026-07-20       18   10    8      55.6%    Phantom II     1     2         1         +2               +2           -
+  2026-07-27       14    9    5      64.3%    Phantom IV     0     0         2         +4               +6           -
+  2026-08-03       17   10    7      58.8%    Phantom VI     1     1         1         +3               +9        +640
 
-Overall: 53 games, 33-20, 62.3% win rate, +13 net wins, 2 MVP, 6 Key Player, Phantom III lobbies.
+Overall: 49 games, 29-20, 59.2% win rate, +9 net wins, 2 MVP, 3 Key Player, Phantom IV lobbies, +640 net points.
 
-Abandons: 3 games — an ally left 1 (0-1), an enemy left 2 (2-0).
-  Without them: 50 games, 31-19, 62.0% win rate.
+Abandons: 4 games. An ally left 1 (0-1), an enemy left 3 (2-1).
+  1 leaver reconnected and finished.
+  Without them: 45 games, 27-18, 60.0% win rate.
 ```
 
 `deadlock laning` buckets every game by where your lane stood at 9:00, so you can read whether winning the lane wins the game. Later tables bucket the same games by your deaths before the mark, the worst teammate death count, and the two crossed together:

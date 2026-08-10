@@ -208,8 +208,8 @@ def hero_alt_gun(hero_id: int, path: Path | None = None) -> Ability | None:
 def string_token(name: str) -> int:
     """Hash a class name the way the engine makes string tokens.
 
-    MurmurHash2 with seed 0x31415926 — ability ids on the wire and asset
-    ids are both this hash of the engine class name.
+    MurmurHash2 with seed 0x31415926. The ability ids in the match metadata
+    and the asset ids are both this hash of the engine class name.
     """
     m = 0x5BD1E995
     h = (0x31415926 ^ len(name)) & 0xFFFFFFFF

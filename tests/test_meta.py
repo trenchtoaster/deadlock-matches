@@ -50,13 +50,19 @@ def test_verdict_unknown_item_raises():
 
 def test_min_badge():
     assert meta.min_badge("Eternus") == 111
-    assert meta.min_badge("archon") == 71
+    assert meta.min_badge("emissary") == 71
+    assert meta.min_badge("Mystic") == 51
     assert meta.min_badge("all") is None
 
 
 def test_min_badge_unknown_rank_raises():
     with pytest.raises(ValueError, match="Unknown rank"):
         meta.min_badge("Gold")
+
+
+def test_min_badge_rejects_retired_names():
+    with pytest.raises(ValueError, match="Unknown rank"):
+        meta.min_badge("Archon")
 
 
 def test_item_stats_url_carries_badge_and_since(monkeypatch):

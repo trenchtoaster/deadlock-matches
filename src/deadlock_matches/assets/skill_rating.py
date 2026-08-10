@@ -61,6 +61,19 @@ def badge_from_subrank(index: int) -> int:
     return tier * 10 + index - tier * 6
 
 
+def _compose(badge: int, name: str | None) -> str:
+    """Format a badge level with its tier name or badge<N> for an unknown tier."""
+    if name is None:
+        return f"badge{badge}"
+
+    tier, level = divmod(badge, 10)
+
+    if tier == 0:
+        return name
+
+    return f"{name} {SUBRANK_LABELS.get(level, level)}"
+
+
 def label(badge: int | None, path: Path | None = None) -> str | None:
     """Turn a badge level into a label.
 
@@ -71,13 +84,51 @@ def label(badge: int | None, path: Path | None = None) -> str | None:
     if badge is None:
         return None
 
-    tier, level = divmod(badge, 10)
-    name = tier_map(path).get(tier)
+    return _compose(badge, tier_map(path).get(badge // 10))
 
-    if name is None:
-        return f"badge{badge}"
 
-    if tier == 0:
-        return name
+def label_asof(
+    badge: int | None, at: dt.datetime | dt.date, path: Path | None = None
+) -> str | None:
+    """Turn a badge level into a label with the rank names in effect at the given time.
 
-    return f"{name} {SUBRANK_LABELS.get(level, level)}"
+    - same shape as label with the tier name read through rank_asof
+    - a historical badge keeps the name its era used instead of the current one
+    """
+    if badge is None:
+        return None
+
+    return _compose(badge, rank_asof(badge // 10, at, path))
+
+
+def era_labels(path: Path | None = None) -> list[tuple[dt.datetime, dict[int, str]]]:
+    """Return each rank era start with its badge label table, oldest first.
+
+    - era starts are UTC datetimes from the committed rank history
+    - each table maps badge levels to labels the way label builds them
+    """
+    src = Path(path) if path is not None else store.read_path("rank_history.parquet")
+
+    if not history.has_history(src):
+        return []
+
+    out = []
+
+    for state in history.read_states(src):
+        start = dt.datetime.fromisoformat(state["from"])
+
+        if start.tzinfo is None:
+            start = start.replace(tzinfo=dt.UTC)
+
+        labels = {}
+
+        for tier_text, rec in state["records"].items():
+            tier = int(tier_text)
+
+            for level in range(7):
+                badge = tier * 10 + level
+                labels[badge] = _compose(badge, rec["name"])
+
+        out.append((start, labels))
+
+    return out

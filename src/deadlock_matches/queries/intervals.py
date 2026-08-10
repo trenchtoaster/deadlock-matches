@@ -61,7 +61,7 @@ INTERVAL_GAIN_DIMENSIONS = {
     "account_id": Dimension(pl.col("account_id")),
     "interval": Dimension(
         pl.col("interval"),
-        comment="Zero-based interval bucket; its duration comes from the source interval_s.",
+        comment="Zero-based interval bucket with its duration from the source interval_s.",
     ),
 }
 

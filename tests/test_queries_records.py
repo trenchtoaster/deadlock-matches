@@ -94,6 +94,46 @@ def test_daily_record_lobby_label(tmp_path):
     assert df.get_column("rated_games").to_list() == [1]
 
 
+def _rated_day_match(match_id, day, *, won=True, badges=(63, 63)):
+    info = build_day_match(match_id, day, won=won)
+    info.average_badge_team0, info.average_badge_team1 = badges
+
+    return info
+
+
+def test_daily_record_lobby_label_uses_the_era_names(tmp_path):
+    infos = [_rated_day_match(1, 0), _rated_day_match(2, 32)]
+
+    for name, df in export.build_tables(infos, exclude=("movement",)).items():
+        df.write_parquet(tmp_path / f"{name}.parquet")
+
+    df = queries.daily_record(tmp_path, accounts=[42], tz="America/Chicago")
+
+    assert df.get_column("lobby").to_list() == ["Emissary III", "Ritualist III"]
+
+
+def test_daily_record_lobby_label_follows_the_newest_rated_game(tmp_path):
+    infos = [_rated_day_match(1, 28), _rated_day_match(2, 29)]
+
+    for name, df in export.build_tables(infos, exclude=("movement",)).items():
+        df.write_parquet(tmp_path / f"{name}.parquet")
+
+    df = queries.daily_record(tmp_path, accounts=[42], tz="America/Chicago", by="month")
+
+    assert df.get_column("lobby").to_list() == ["Ritualist III"]
+
+
+def test_daily_record_lobby_label_ignores_unrated_games(tmp_path):
+    infos = [_rated_day_match(1, 28), build_day_match(2, 29, won=True)]
+
+    for name, df in export.build_tables(infos, exclude=("movement",)).items():
+        df.write_parquet(tmp_path / f"{name}.parquet")
+
+    df = queries.daily_record(tmp_path, accounts=[42], tz="America/Chicago", by="month")
+
+    assert df.get_column("lobby").to_list() == ["Emissary III"]
+
+
 @pytest.mark.parametrize("badges", [(0, 0), (0, 95), (95, 0)])
 def test_daily_record_lobby_requires_both_team_badges(tmp_path, badges):
     info = build_day_match(1, 0, won=True)
@@ -113,6 +153,65 @@ def test_daily_record_lobby_null_without_badges(record_pq):
 
     assert df.get_column("lobby").to_list() == [None, None]
     assert df.get_column("rated_games").to_list() == [0, 0]
+
+
+def _season_one_match(match_id, day, *, badges, won=True):
+    info = build_day_match(match_id, day, won=won)
+    info.match_mode = extract.pb.k_ECitadelMatchMode_Ranked
+    info.ranked_type = extract.pb.k_ECitadelRankedType_Normal
+
+    for slot in range(3, 13):
+        p = info.players.add()
+        p.account_id = 100 + slot
+        p.hero_id = 3
+        p.player_slot = slot
+        p.team = (
+            extract.pb.k_ECitadelLobbyTeam_Team1
+            if slot % 2
+            else extract.pb.k_ECitadelLobbyTeam_Team0
+        )
+
+    for player, badge in zip(info.players, badges, strict=True):
+        player.player_rank_data.initial_display_rank = badge
+
+    return info
+
+
+def test_daily_record_lobby_averages_the_placed_players(tmp_path):
+    info = _season_one_match(1, 0, badges=[95] * 6 + [91] * 4 + [0, 0])
+
+    for name, df in export.build_tables([info], exclude=("movement",)).items():
+        df.write_parquet(tmp_path / f"{name}.parquet")
+
+    df = queries.daily_record(tmp_path, accounts=[42], tz="America/Chicago")
+
+    assert df.get_column("lobby").to_list() == ["Phantom III"]
+    assert df.get_column("rated_games").to_list() == [1]
+
+
+def test_daily_record_lobby_needs_half_the_lobby_placed(tmp_path):
+    info = _season_one_match(1, 0, badges=[95] * 5 + [0] * 7)
+
+    for name, df in export.build_tables([info], exclude=("movement",)).items():
+        df.write_parquet(tmp_path / f"{name}.parquet")
+
+    df = queries.daily_record(tmp_path, accounts=[42], tz="America/Chicago")
+
+    assert df.get_column("lobby").to_list() == [None]
+    assert df.get_column("rated_games").to_list() == [0]
+
+
+def test_daily_record_lobby_prefers_the_published_averages(tmp_path):
+    info = _season_one_match(1, 0, badges=[11] * 12)
+    info.average_badge_team0 = 95
+    info.average_badge_team1 = 91
+
+    for name, df in export.build_tables([info], exclude=("movement",)).items():
+        df.write_parquet(tmp_path / f"{name}.parquet")
+
+    df = queries.daily_record(tmp_path, accounts=[42], tz="America/Chicago")
+
+    assert df.get_column("lobby").to_list() == ["Phantom III"]
 
 
 def test_daily_record_since_cutoff(record_pq):

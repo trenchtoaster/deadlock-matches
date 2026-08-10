@@ -17,6 +17,7 @@ Endpoints in use, one named wrapper each:
 - v1/assets/heroes -> snapshots.refresh_heroes
 - v1/assets/items/by-type/{kind} -> snapshots.refresh_items / refresh_abilities
 - v1/assets/ranks -> snapshots.refresh_skill_rating
+- v1/assets/ranked-seasons -> cli.rank.season_rules
 - v1/assets/accolades -> snapshots.refresh_accolades
 - v1/assets/misc-entities -> snapshots.refresh_statues
 - v1/assets/steam-info/all -> snapshots.client_version_dates

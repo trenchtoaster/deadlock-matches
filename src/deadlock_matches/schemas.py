@@ -175,7 +175,7 @@ class Players(Table):
     player_match_outcome = Column(
         pl.Int64,
         "Per-player EPlayerMatchOutcome: 1 = win, 2 = loss, 3 = penalized, "
-        "4 = penalized party, 5 = not scored; null in older metadata",
+        "4 = penalized party, 5 = not scored. Null in older metadata",
     )
     player_rank_initial_display_rank = Column(
         pl.Int64,
@@ -449,11 +449,11 @@ class DamageSources(Table):
     )
     time_stamp_s = Column(
         pl.Int64,
-        "Sample game time in seconds, damage is cumulative; samples are sparse (about every three minutes plus match end)",
+        "Sample game time in seconds where damage is cumulative. Samples are sparse (about every three minutes plus match end)",
     )
     damage = Column(
         pl.Int64,
-        "Cumulative running total at this sample; never sum across time_stamp_s (that multiplies by the sample count) — take the last sample, or use the damage table for totals and queries.source_intervals for a timeline",
+        "Cumulative running total at this sample. Never sum across time_stamp_s because that multiplies by the sample count. Take the last sample, or use the damage table for totals and queries.source_intervals for a timeline",
     )
 
 
@@ -475,11 +475,11 @@ class DamageTargets(Table):
     )
     time_stamp_s = Column(
         pl.Int64,
-        "Sample game time in seconds, damage is cumulative; samples are sparse (about every three minutes plus match end)",
+        "Sample game time in seconds where damage is cumulative. Samples are sparse (about every three minutes plus match end)",
     )
     damage = Column(
         pl.Int64,
-        "Cumulative running total at this sample; never sum across time_stamp_s (that multiplies by the sample count) — take the last sample, or use the damage table for totals",
+        "Cumulative running total at this sample. Never sum across time_stamp_s because that multiplies by the sample count. Take the last sample, or use the damage table for totals",
     )
 
 

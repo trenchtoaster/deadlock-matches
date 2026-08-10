@@ -10,21 +10,7 @@ import datetime as dt
 from typing import Any
 
 from deadlock_matches import api
-from deadlock_matches.assets import items
-
-RANKS = {
-    "initiate": 1,
-    "seeker": 2,
-    "alchemist": 3,
-    "arcanist": 4,
-    "ritualist": 5,
-    "emissary": 6,
-    "archon": 7,
-    "oracle": 8,
-    "phantom": 9,
-    "ascendant": 10,
-    "eternus": 11,
-}
+from deadlock_matches.assets import items, skill_rating
 
 
 def min_badge(rank: str) -> int | None:
@@ -32,10 +18,11 @@ def min_badge(rank: str) -> int | None:
     if rank.lower() == "all":
         return None
 
-    tier = RANKS.get(rank.lower())
+    tiers = skill_rating.tier_map()
+    tier = next((t for t, name in tiers.items() if name.lower() == rank.lower()), None)
 
     if tier is None:
-        known = ", ".join(r.capitalize() for r in RANKS)
+        known = ", ".join(name for _, name in sorted(tiers.items()))
         msg = f"Unknown rank {rank!r}, ranks: {known} or all"
         raise ValueError(msg)
 

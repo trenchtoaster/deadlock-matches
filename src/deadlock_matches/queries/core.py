@@ -44,26 +44,40 @@ _AMBIENT_PARQUET_DIR: contextvars.ContextVar[str | Path | None] = contextvars.Co
 
 INHERIT: Literal["inherit"] = "inherit"
 
-type ModeArg = int | Literal["inherit"] | None
+type ModeArg = int | Sequence[int] | Literal["inherit"] | None
+type RankedArg = bool | Literal["inherit"] | None
 
-_AMBIENT_MODES: contextvars.ContextVar[tuple[int | None, int | None]] = contextvars.ContextVar(
-    "deadlock_modes", default=(extract.MATCH_MODE_STANDARD, extract.GAME_MODE_NORMAL)
+RANKED_MODES = (extract.MATCH_MODE_STANDARD, extract.MATCH_MODE_RANKED)
+
+type Modes = tuple[int | Sequence[int] | None, int | Sequence[int] | None, bool | None]
+
+RANKED_PLAY: Modes = (RANKED_MODES, extract.GAME_MODE_NORMAL, True)
+
+_AMBIENT_MODES: contextvars.ContextVar[Modes] = contextvars.ContextVar(
+    "deadlock_modes", default=RANKED_PLAY
 )
 
 
 @contextlib.contextmanager
 def mode_context(
-    match_mode: int | None = extract.MATCH_MODE_STANDARD,
-    game_mode: int | None = extract.GAME_MODE_NORMAL,
+    match_mode: int | Sequence[int] | None = RANKED_MODES,
+    game_mode: int | Sequence[int] | None = extract.GAME_MODE_NORMAL,
+    *,
+    ranked: bool | None = True,
 ) -> Iterator[None]:
-    """Make one pair of match and game modes the default for every view inside the block.
+    """Make one queue the default for every view inside the block.
 
-    - a report picks its games this way instead of every helper growing two
+    - a report picks its games this way instead of every helper growing three
       more arguments
-    - the standing default is Standard games
-    - None on either argument lifts that half of the filter
+    - the standing default is ranked play across both queue eras
+    - build 6652 moved ranked play from match_mode 1 to match_mode 4, so a
+      single match mode covers only one side of 2026-07-30
+    - match_mode and game_mode each take one mode or several
+    - ranked True keeps ranked play and False keeps the unranked queue build
+      6652 introduced
+    - None on any argument lifts that part of the filter
     """
-    token = _AMBIENT_MODES.set((match_mode, game_mode))
+    token = _AMBIENT_MODES.set((match_mode, game_mode, ranked))
 
     try:
         yield
@@ -71,13 +85,14 @@ def mode_context(
         _AMBIENT_MODES.reset(token)
 
 
-def _resolved_modes(match_mode: ModeArg, game_mode: ModeArg) -> tuple[int | None, int | None]:
+def _resolved_modes(match_mode: ModeArg, game_mode: ModeArg, ranked: RankedArg) -> Modes:
     """Fall back to the ambient modes for whichever argument was left to inherit."""
-    ambient_match, ambient_game = _AMBIENT_MODES.get()
+    ambient_match, ambient_game, ambient_ranked = _AMBIENT_MODES.get()
 
     return (
         ambient_match if match_mode == INHERIT else match_mode,
         ambient_game if game_mode == INHERIT else game_mode,
+        ambient_ranked if ranked == INHERIT else ranked,
     )
 
 
@@ -170,7 +185,7 @@ def player_rows(parquet_dir: str | Path | None = None) -> pl.LazyFrame:
     """Read players with hero, lane, and starting Ranked badge labels derived from ids."""
     rows = with_lane_name(with_hero_name(scan("players", parquet_dir)))
 
-    return rows.with_columns(skill_rating("player_rank_initial_display_rank").alias("rank"))
+    return rows.with_columns(skill_rating_asof("player_rank_initial_display_rank").alias("rank"))
 
 
 def _asof_era_join(
@@ -247,7 +262,8 @@ MY_GAMES_DIMENSIONS = {
     "match_mode": Dimension(
         match_mode_name("matches.match_mode"),
         comment="Standard, Ranked, New Player Placement, or Private Lobby. "
-        "Views keep Standard alone unless match_mode= says otherwise.",
+        "Views keep ranked play unless match_mode= says otherwise. Ranked play "
+        "spans Standard before build 6652 and Ranked after it.",
     ),
     "game_mode": Dimension(
         game_mode_name("matches.game_mode"),
@@ -323,27 +339,39 @@ MY_GAMES_MEASURES = {
 def mode_filter(
     match_mode: ModeArg = INHERIT,
     game_mode: ModeArg = INHERIT,
+    ranked: RankedArg = INHERIT,
     *,
     prefix: str = "matches.",
 ) -> pl.Expr | None:
     """Build the mode filter every report over your own games starts from.
 
-    - both arguments inherit from mode_context, which stands at ordinary
-      matchmaking games
+    - every argument inherits from mode_context, which stands at ranked play
+      across both queue eras
+    - match_mode and game_mode each take one mode or several
     - Street Brawl runs a different map and ruleset while still carrying
       match_mode 1, so game_mode has to be pinned separately
-    - None on either side lifts that half of the filter
+    - ranked reads ranked_type, which build 6652 started recording. It is null
+      on every earlier game, when match_mode 1 was itself the ranked queue, so
+      null counts as ranked
+    - None on any side lifts that part of the filter
     - prefix names the joined match-column namespace; use an empty prefix
       after joining a raw matches frame
     """
-    match_mode, game_mode = _resolved_modes(match_mode, game_mode)
+    match_mode, game_mode, ranked = _resolved_modes(match_mode, game_mode, ranked)
     clauses = []
 
-    if match_mode is not None:
-        clauses.append(pl.col(f"{prefix}match_mode") == match_mode)
+    for column, selected in (("match_mode", match_mode), ("game_mode", game_mode)):
+        if selected is None:
+            continue
 
-    if game_mode is not None:
-        clauses.append(pl.col(f"{prefix}game_mode") == game_mode)
+        modes = (selected,) if isinstance(selected, int) else tuple(selected)
+        clauses.append(pl.col(f"{prefix}{column}").is_in(modes))
+
+    if ranked is not None:
+        unranked = pl.col(f"{prefix}ranked_type").fill_null(extract.RANKED_TYPE_RANKED) == (
+            extract.RANKED_TYPE_UNRANKED
+        )
+        clauses.append(~unranked if ranked else unranked)
 
     if not clauses:
         return None
@@ -351,22 +379,60 @@ def mode_filter(
     return functools.reduce(operator.and_, clauses)
 
 
+def mode_label(
+    match_mode: ModeArg = INHERIT,
+    game_mode: ModeArg = INHERIT,
+    ranked: RankedArg = INHERIT,
+) -> str:
+    """Name the queue a mode selection reads, the way the game names it.
+
+    - the counterpart to mode_filter, which lets an empty result name the
+      queue that came back empty
+    - every argument inherits from mode_context like the filter does
+    - ranked play reads as Ranked across both queue eras, since its match mode
+      is a pair rather than the single mode each explicit selection pins
+    - a fully lifted selection has no queue to name and reads as empty
+    """
+    match_mode, game_mode, ranked = _resolved_modes(match_mode, game_mode, ranked)
+
+    if isinstance(match_mode, int):
+        if match_mode == extract.MATCH_MODE_RANKED:
+            return "Ranked"
+
+        if match_mode == extract.MATCH_MODE_PLACEMENT:
+            return "New Player Placement"
+
+        if match_mode == extract.MATCH_MODE_PRIVATE_LOBBY:
+            return "Private Lobby"
+
+        if game_mode == extract.GAME_MODE_STREET_BRAWL:
+            return "Street Brawl"
+
+        return "Standard"
+
+    if ranked:
+        return "Ranked"
+
+    return ""
+
+
 def _played_matches(
     accounts: Sequence[int] | None,
     tz: str | None,
     match_mode: ModeArg = INHERIT,
     game_mode: ModeArg = INHERIT,
+    ranked: RankedArg = INHERIT,
 ) -> MetricView:
     """Join player rows to their match and carry the local start time.
 
     - the timezone lands inside an expression, so the local start has to be
       built where the parameter is known, and everything derived from it
       then reads one column
-    - match_mode and game_mode inherit from mode_context, which stands at
-      Standard games
+    - the mode arguments inherit from mode_context, which stands at
+      ranked play
     """
     zone = config.config_timezone() if tz is None else tz
-    modes = mode_filter(match_mode, game_mode)
+    modes = mode_filter(match_mode, game_mode, ranked)
     accounts_filter = pl.col("account_id").is_in(_resolved_accounts(accounts))
 
     return MetricView(
@@ -392,19 +458,21 @@ def my_games(
     tz: str | None = None,
     match_mode: ModeArg = INHERIT,
     game_mode: ModeArg = INHERIT,
+    ranked: RankedArg = INHERIT,
 ) -> MetricView:
     """One row per match the player appeared in, joined to match details.
 
     - grouping by day or week uses the local date, not the UTC date
     - accounts (Steam32 account IDs) and tz default to config.toml and
       the detected zone
-    - only Standard games count by default, so Ranked, Street Brawl, and
-      private lobbies stay out of every rate built on this view
-    - match_mode and game_mode inherit from mode_context unless passed
+    - ranked play across both queue eras is the default, so the unranked
+      Standard queue, Street Brawl, and private lobbies stay out of every
+      rate built on this view
+    - the mode arguments inherit from mode_context unless passed
     - game_mode=extract.GAME_MODE_STREET_BRAWL gives the brawl games alone
-    - None on either argument lifts that half of the filter
+    - None on any argument lifts that part of the filter
     """
-    return MetricView(source=_played_matches(accounts, tz, match_mode, game_mode))
+    return MetricView(source=_played_matches(accounts, tz, match_mode, game_mode, ranked))
 
 
 def _local_day(frame: pl.LazyFrame, tz: str | None) -> pl.LazyFrame:
@@ -439,3 +507,26 @@ def skill_rating(column: str) -> pl.Expr:
     }
 
     return pl.col(column).replace_strict(mapping, default=None, return_dtype=pl.String)
+
+
+def skill_rating_asof(column: str, at: str = "start_time") -> pl.Expr:
+    """Skill rating labels for a badge level column, resolved at a datetime column.
+
+    - each row takes the rank names in effect at its own time, so a
+      historical badge keeps the name its era used
+    - no committed rank history falls back to skill_rating
+    """
+    eras = sr.era_labels()
+
+    if not eras:
+        return skill_rating(column)
+
+    def mapped(labels: dict[int, str]) -> pl.Expr:
+        return pl.col(column).replace_strict(labels, default=None, return_dtype=pl.String)
+
+    expr = mapped(eras[0][1])
+
+    for start, labels in eras[1:]:
+        expr = pl.when(pl.col(at) >= start).then(mapped(labels)).otherwise(expr)
+
+    return expr

@@ -125,7 +125,9 @@ class Format:
 _UNIT_FORMATS = {
     "badge": Format(),
     "count": Format(group=True),
+    "datetime": Format(),
     "minutes": Format(decimals=1),
+    "points": Format(group=True),
     "proportion": Format(decimals=1, scale=100, suffix="%"),
     "ratio": Format(decimals=2),
     "souls": Format(group=True),

@@ -14,6 +14,7 @@ from deadlock_matches.assets import heroes
 from deadlock_matches.queries.core import (
     INHERIT,
     ModeArg,
+    RankedArg,
     _local_day,
     mode_filter,
     my_games,
@@ -379,10 +380,11 @@ def _snapshot_series(
     tz: str | None,
     match_mode: ModeArg,
     game_mode: ModeArg,
+    ranked: RankedArg,
 ) -> MetricView:
     """Join snapshot rows to their player and match and carry the local start time."""
     zone = config.config_timezone() if tz is None else tz
-    filters = None if games is not None else mode_filter(match_mode, game_mode)
+    filters = None if games is not None else mode_filter(match_mode, game_mode, ranked)
 
     if accounts is not None:
         account_filter = pl.col("account_id").is_in(list(accounts))
@@ -415,6 +417,7 @@ def stat_snapshots(
     tz: str | None = None,
     match_mode: ModeArg = INHERIT,
     game_mode: ModeArg = INHERIT,
+    ranked: RankedArg = INHERIT,
 ) -> MetricView:
     """One row per stats snapshot.
 
@@ -427,10 +430,10 @@ def stat_snapshots(
       sample and the biggest sample are not the same number
     - games cuts the rows to an explicit frame of match_id/account_id pairs
       and is trusted as-is instead of applying another mode filter
-    - Standard is the default; the two mode arguments inherit
+    - ranked play is the default and the mode arguments inherit
       from mode_context
     """
-    return MetricView(source=_snapshot_series(games, accounts, tz, match_mode, game_mode))
+    return MetricView(source=_snapshot_series(games, accounts, tz, match_mode, game_mode, ranked))
 
 
 def final_stats(parquet_dir: str | Path | None = None, tz: str | None = None) -> pl.LazyFrame:
@@ -574,10 +577,11 @@ def hero_games(
     since: dt.date | None = None,
     match_mode: ModeArg = INHERIT,
     game_mode: ModeArg = INHERIT,
+    ranked: RankedArg = INHERIT,
 ) -> pl.LazyFrame:
     """List your games on one hero as match and account pairs.
 
-    - only Standard games count, matching the downloaded pool
+    - ranked play is the only thing counted, which matches the downloaded pool
     - since keeps games from that local day onward
     """
     hero_id = heroes.hero_id_by_name(hero)
@@ -587,7 +591,7 @@ def hero_games(
         raise ValueError(msg)
 
     games = view_frame(
-        my_games(accounts, match_mode=match_mode, game_mode=game_mode),
+        my_games(accounts, match_mode=match_mode, game_mode=game_mode, ranked=ranked),
         parquet_dir=parquet_dir,
     ).filter(pl.col("hero_id") == hero_id)
 

@@ -219,7 +219,7 @@ MOVEMENT_GAME_MEASURES = {
     "tracked_games": Measure(
         pl.col("distance_min").count(),
         "count",
-        comment="Games with movement rows; null-metric games stay out of metric means.",
+        comment="Games with movement rows. A game with a null metric stays out of metric means.",
         missing="zero",
     ),
     **{

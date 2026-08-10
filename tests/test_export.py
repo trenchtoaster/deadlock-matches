@@ -752,8 +752,8 @@ def test_export_all_writes_parquet(tmp_path):
 
     df = queries.player_rows(out).collect()
 
-    assert df.filter(pl.col("account_id") == 42)["hero"][0] == "Mirage"
-    assert df.filter(pl.col("account_id") == 42)["rank"][0] == "Mystic II"
+    assert df.filter(pl.col("account_id") == 42).get_column("hero").item(0) == "Mirage"
+    assert df.filter(pl.col("account_id") == 42).get_column("rank").item(0) == "Ritualist II"
 
     result = export.export_all(arc, out, exclude=("movement",))
 

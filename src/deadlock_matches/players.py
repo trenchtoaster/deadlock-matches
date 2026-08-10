@@ -154,26 +154,39 @@ def salts(match_id: int) -> dict[str, Any] | None:
         return None
 
 
+def _mode_set(mode: int | Sequence[int] | None) -> tuple[int, ...] | None:
+    """Normalize one mode or several into a tuple to test membership against."""
+    if mode is None:
+        return None
+
+    return (mode,) if isinstance(mode, int) else tuple(mode)
+
+
 def recent_hero_matches(
     account_id: int,
     hero_id: int,
     n: int = 10,
     *,
-    match_mode: int | None = extract.MATCH_MODE_STANDARD,
-    game_mode: int | None = extract.GAME_MODE_NORMAL,
+    match_mode: int | Sequence[int] | None = extract.MATCH_MODE_RANKED,
+    game_mode: int | Sequence[int] | None = extract.GAME_MODE_NORMAL,
 ) -> list[dict[str, Any]]:
     """List the N most recent selected-mode match-history rows for a player on a hero.
 
-    - Standard is the default
+    - Ranked is the default because it is the queue the ladder plays
+    - each mode takes one value or several
     - pass the Street Brawl or Private Lobby enum pair to fetch those instead
     - None on either mode lifts that half of the filter
+    - match-history rows carry no ranked_type, so the split between ranked
+      play and the unranked queue is not available here
     """
+    match_modes = _mode_set(match_mode)
+    game_modes = _mode_set(game_mode)
     ms = [
         m
         for m in match_history(account_id)
         if m.get("hero_id") == hero_id
-        and (match_mode is None or m.get("match_mode") == match_mode)
-        and (game_mode is None or m.get("game_mode") == game_mode)
+        and (match_modes is None or m.get("match_mode") in match_modes)
+        and (game_modes is None or m.get("game_mode") in game_modes)
     ]
     ms.sort(key=lambda m: -m["start_time"])
 
@@ -311,8 +324,9 @@ def pool_games(
 ) -> pl.LazyFrame:
     """List the pool of a hero as one downloads ledger row per downloaded game.
 
-    - Standard is the ambient default; mode_context selects Ranked,
-      New Player Placement, Street Brawl, or Private Lobby instead
+    - ranked play across both queue eras is the ambient default and
+      mode_context selects the unranked queue, New Player Placement, Street
+      Brawl, or Private Lobby instead
     - the mode check happens at read time, so old off-mode ledger rows stay out
     - keeps match_id, account_id, rank, and downloaded_at
     - comes back empty when nothing is tracked or downloaded yet
@@ -339,7 +353,9 @@ def pool_games(
             pl.col("account_id").is_in(list(watchlist.values())),
         )
         .join(
-            queries.scan("matches", parquet_dir).select("match_id", "match_mode", "game_mode"),
+            queries.scan("matches", parquet_dir).select(
+                "match_id", "match_mode", "game_mode", "ranked_type"
+            ),
             on="match_id",
         )
     )
@@ -417,13 +433,13 @@ def download_matches(
     n: int = 10,
     archive_dir: str | Path = extract.ARCHIVE_DIR,
     *,
-    match_mode: int | None = extract.MATCH_MODE_STANDARD,
-    game_mode: int | None = extract.GAME_MODE_NORMAL,
+    match_mode: int | Sequence[int] | None = extract.MATCH_MODE_RANKED,
+    game_mode: int | Sequence[int] | None = extract.GAME_MODE_NORMAL,
 ) -> list[dict[str, Any]]:
     """Download recent selected-mode games from tracked players.
 
     - one row per (match, player)
-    - Standard is the default
+    - Ranked is the default because it is the queue the ladder plays
     - tracked rows need account_id and name, leaderboard entries also carry rank/region
     - bodies land in the archive as raw .bin files, a shared match downloads once
     - downloaded_at is the mtime of the body file, which re-runs never touch

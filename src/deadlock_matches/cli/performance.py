@@ -33,6 +33,7 @@ from deadlock_matches.cli.cards import UNITS_PER_METER
 from deadlock_matches.cli.data import MVP_LABELS, TEAMS, final_stats, no_pool_hint
 from deadlock_matches.config import (
     account_labels,
+    config_account_names,
     config_timezone,
     format_accounts,
 )
@@ -115,6 +116,17 @@ LOWER_IS_BETTER = ("deaths", "damage_taken")
 COUNT_STATS = ("kills", "deaths")
 
 WIN_RATE = queries.view_measure(queries.record_games, "win_rate").display_format
+
+NET_POINTS = queries.view_measure(queries.record_games, "net_points").display_format
+
+NET_POINTS_WIDTH = 12
+
+RANKED_LABEL = "Ranked"
+
+
+def _net_points_cell(points: int | None) -> str:
+    """Print a Rank Point change the way record_games declares it."""
+    return NET_POINTS.render(points, render.BLANK, sign=True).rjust(NET_POINTS_WIDTH)
 
 
 def _win_rate(wins: int, games: int) -> str:
@@ -491,7 +503,7 @@ def compare_report(args: argparse.Namespace, config: str | Path | None = None) -
     pool_window = f" since {args.pool_since}" if args.pool_since else ""
 
     if mine.is_empty():
-        print(f"No {_selected_mode_label(args)} games for accounts {ids} on {args.hero}{window}")
+        print(_no_games_line(args, config))
         return
 
     hero = heroes.hero_name(hero_id)
@@ -545,12 +557,11 @@ def compare_report(args: argparse.Namespace, config: str | Path | None = None) -
     )
 
     if args.stat in ("combat", "movement"):
-        print(f"\n  {'Player':<18} {'Games':>5} {'Rank':>5}  Last download")
+        print(f"\n  {'Player':<18} {'Games':>5}  Last download")
 
         for m in members:
-            rank = "-" if m["rank"] is None else str(m["rank"])
             when = f"{m['downloaded_at']:%Y-%m-%d}" if m["downloaded_at"] else "never"
-            print(f"  {m['name']:<18} {m['games']:>5} {rank:>5}  {when}")
+            print(f"  {m['name']:<18} {m['games']:>5}  {when}")
 
         if args.stat == "combat":
             _combat_compare(mine, pool, args)
@@ -605,17 +616,16 @@ def compare_report(args: argparse.Namespace, config: str | Path | None = None) -
 
     unit = "game" if args.stat in COUNT_STATS else "min"
     print(
-        f"\n  {'Player':<18} {'Games':>5} {'Rank':>5}  {'Last download':>13}"
+        f"\n  {'Player':<18} {'Games':>5}  {'Last download':>13}"
         f"  {f'Avg/{unit}':>8} {f'Med/{unit}':>8}"
     )
-    _summary_line("you", len(mine), "-", "-", my_rates.get_column("rate").to_list())
+    _summary_line("you", len(mine), "-", my_rates.get_column("rate").to_list())
 
     for m in members:
-        rank = "-" if m["rank"] is None else str(m["rank"])
         when = f"{m['downloaded_at']:%Y-%m-%d}" if m["downloaded_at"] else "never"
         rates = pool_rates.filter(pl.col("account_id") == m["account_id"])
 
-        _summary_line(m["name"], m["games"], rank, when, rates.get_column("rate").to_list())
+        _summary_line(m["name"], m["games"], when, rates.get_column("rate").to_list())
 
     _interval_table(args, my_medians, pool_medians, my_rates, pool_rates)
 
@@ -717,12 +727,12 @@ def _interval_table(
         print(f"  No {args.stat} gap at any interval, you keep pace or better")
 
 
-def _summary_line(name: str, games: int, rank: str, when: str, rates: list[float]) -> None:
+def _summary_line(name: str, games: int, when: str, rates: list[float]) -> None:
     """Print one player row of the compare summary table."""
     avg = _cell(st.mean(rates)) if rates else _cell(None)
     med = _cell(st.median(rates)) if rates else _cell(None)
 
-    print(f"  {name:<18} {games:>5} {rank:>5}  {when:>13}  {avg} {med}")
+    print(f"  {name:<18} {games:>5}  {when:>13}  {avg} {med}")
 
 
 def _span(row: dict[str, Any]) -> str:
@@ -773,23 +783,68 @@ def _match_player(match_id: int, args: argparse.Namespace, tz: str) -> pl.DataFr
     )
 
 
+def _rating_label(badge: int | None, at: dt.datetime) -> str:
+    """Label the rating a player carried into a Ranked match or Placing before the first badge."""
+    if badge is None:
+        return render.BLANK
+
+    if badge == 0:
+        return "Placing"
+
+    return skill_rating.label_asof(badge, at) or render.BLANK
+
+
+def _applied_points(p: dict[str, Any]) -> str:
+    """Show the points a Ranked match moved for one player on the scoreboard."""
+    before = p.get("player_rank_initial_flat_progress")
+    after = p.get("player_rank_final_flat_progress")
+
+    if before is None or after is None:
+        return render.BLANK
+
+    return f"{after - before:+,}"
+
+
+def _points_line(row: dict[str, Any]) -> str | None:
+    """Say what a Ranked match paid the resolved player.
+
+    - the assigned change prints when the points stopped at a subrank floor
+    """
+    before = row.get("player_rank_initial_flat_progress")
+    after = row.get("player_rank_final_flat_progress")
+
+    if before is None or after is None:
+        return None
+
+    applied = after - before
+    assigned = row.get("player_rank_desired_progress_change")
+    change = f"{applied:+,}"
+
+    if assigned is not None and assigned != applied:
+        change += f", {assigned:+,} assigned"
+
+    notes = [f"Points: {before:,} -> {after:,} ({change})"]
+    placements = row.get("player_rank_initial_calibration_games")
+
+    if placements:
+        notes.append(f"{placements} placement{'' if placements == 1 else 's'} left")
+
+    if row.get("player_rank_consumed_demotion_protection"):
+        notes.append("demotion protection used")
+
+    return ", ".join(notes) + "."
+
+
 def _final_scoreboard(row: dict[str, Any], args: argparse.Namespace) -> None:
     """Print the 12-player post-game scoreboard with the resolved player starred."""
-    rank = skill_rating.label(row.get("player_rank_initial_display_rank"))
-
-    if rank is not None:
-        print(f"Rank at match start: {rank}")
-
-    initial_points = row.get("player_rank_initial_flat_progress")
-    final_points = row.get("player_rank_final_flat_progress")
-
-    if initial_points is not None and final_points is not None:
-        change = final_points - initial_points
-        print(f"Rank Points: {initial_points:,} -> {final_points:,} ({change:+,})")
-
+    ranked = row.get("match_mode") == extract.MATCH_MODE_RANKED
     badge_values = [row.get(f"average_badge_team{team}") for team in (0, 1)]
     badges = (
-        [f"{TEAMS[team]} {skill_rating.label(row[f'average_badge_team{team}'])}" for team in (0, 1)]
+        [
+            f"{TEAMS[team]} "
+            f"{skill_rating.label_asof(row[f'average_badge_team{team}'], row['start_time'])}"
+            for team in (0, 1)
+        ]
         if all(badge is not None and badge > 0 for badge in badge_values)
         else []
     )
@@ -831,6 +886,9 @@ def _final_scoreboard(row: dict[str, Any], args: argparse.Namespace) -> None:
     if with_buffs:
         header += f" {'Buffs':>8}"
 
+    if ranked:
+        header += f"  {'Rating':<12} {'Points':>8}"
+
     print()
     print(header)
 
@@ -847,8 +905,20 @@ def _final_scoreboard(row: dict[str, Any], args: argparse.Namespace) -> None:
         if with_buffs:
             line += f" {p['buffs']:>8}"
 
-        print(line)
+        if ranked:
+            line += (
+                f"  {_rating_label(p['player_rank_initial_display_rank'], row['start_time']):<12} "
+            )
+            line += f"{_applied_points(p):>8}"
+
+        print(line.rstrip())
     print()
+
+    if ranked:
+        points = _points_line(row)
+
+        if points is not None:
+            print(f"{points}\n")
 
 
 def _killer_meters(d: dict[str, Any]) -> float | None:
@@ -1181,9 +1251,13 @@ def match_report(args: argparse.Namespace, config: str | Path | None = None) -> 
 
         if picked.is_empty():
             if args.ago:
-                print(f"Only fewer than {args.ago + 1} games for the configured accounts")
+                label = _selected_mode_label(args)
+                print(
+                    f"Only fewer than {args.ago + 1} {label} games "
+                    f"for accounts {format_accounts(args.account, config)}"
+                )
             else:
-                print("No games found for the configured accounts")
+                print(_no_games_line(args, config))
 
             return
 
@@ -2682,6 +2756,10 @@ def winrate_report(args: argparse.Namespace, config: str | Path | None = None) -
         _winrate_mode_report(args, tz)
         return
 
+    if args.by == "account":
+        _winrate_account_report(args, tz, config)
+        return
+
     try:
         games = queries.view_frame(
             queries.record_games(
@@ -2699,31 +2777,35 @@ def winrate_report(args: argparse.Namespace, config: str | Path | None = None) -
         return
 
     if df.is_empty():
-        print("No games found for the configured accounts")
+        print(_no_games_line(args, config))
         _unscored_line(games)
 
-        if args.hero is not None and _standard_mode(args):
+        if args.hero is not None and _default_mode(args):
             _hero_baseline_line(args.hero, args.min_rating, args.since)
 
         return
+
+    ranked = _has_ranked_games(games)
+    points_heading = f"{'Net points':>{NET_POINTS_WIDTH}}" if ranked else ""
 
     print(f"Dates below are grouped by {tz} {args.by}.\n")
     print(
         f"  {args.by.capitalize():<12}{'Games':>7}{'W':>5}{'L':>5}"
         f"{'Win rate':>11}{'Lobby':>14}{'MVP':>6}{'Key':>6}{'Abandons':>10}"
-        f"{'Net wins':>11}{'Cumulative net':>17}"
+        f"{'Net wins':>11}{'Cumulative net':>17}{points_heading}"
     )
 
     for r in df.iter_rows(named=True):
         day = f"{r['day']:%Y-%m}" if args.by == "month" else r["day"]
         left = str(r["abandons"]) if r["abandons"] else ""
         lobby = r["lobby"] or ""
+        points = _net_points_cell(r["net_points"]) if ranked else ""
 
         print(
             f"  {day!s:<12}{r['games']:>7}{r['wins']:>5}{r['losses']:>5}"
             f"{WIN_RATE.render(r['win_rate'], render.BLANK):>11}{lobby:>14}"
             f"{r['mvps']:>6}{r['key_players']:>6}{left:>10}"
-            f"{r['net']:>+11}{r['cum_net']:>+17}"
+            f"{r['net']:>+11}{r['cum_net']:>+17}{points}"
         )
 
     overall = queries.summarize(
@@ -2737,6 +2819,8 @@ def winrate_report(args: argparse.Namespace, config: str | Path | None = None) -
             "key_players",
             "subrank_sum",
             "rated_games",
+            "last_rated_at",
+            "net_points",
         ),
         lf=games.lazy(),
     ).collect()
@@ -2751,12 +2835,22 @@ def winrate_report(args: argparse.Namespace, config: str | Path | None = None) -
 
     if rated:
         subrank = round(float(overall.item(0, "subrank_sum")) / rated)
-        average = skill_rating.label(skill_rating.badge_from_subrank(subrank))
+        average = skill_rating.label_asof(
+            skill_rating.badge_from_subrank(subrank), overall.item(0, "last_rated_at")
+        )
         lobbies = f", {average} lobbies"
+
+    season = ""
+
+    net_points = overall.item(0, "net_points")
+
+    if ranked and net_points is not None:
+        points = NET_POINTS.render(net_points, render.BLANK, sign=True)
+        season = f", {points} net points"
 
     print(
         f"\nOverall: {total_games} games, {wins}-{total_games - wins}, {rate} win rate, "
-        f"{net:+} net wins, {mvps} MVP, {keys} Key Player{lobbies}."
+        f"{net:+} net wins, {mvps} MVP, {keys} Key Player{lobbies}{season}."
     )
 
     abandons = queries.abandon_record(args.parquet, accounts=args.account, games=games)
@@ -2766,14 +2860,14 @@ def winrate_report(args: argparse.Namespace, config: str | Path | None = None) -
 
     _unscored_line(games)
 
-    if args.hero is not None and _standard_mode(args):
+    if args.hero is not None and _default_mode(args):
         _hero_baseline_line(args.hero, args.min_rating, args.since)
 
 
 def _winrate_mode_report(args: argparse.Namespace, tz: str) -> None:
     """Print scored-game totals for every stored match/game mode pair."""
-    if not _standard_mode(args):
-        print("--by mode already includes every mode; remove the mode-selection flag")
+    if not _default_mode(args):
+        print("--by mode already includes every mode. Remove the mode-selection flag")
         return
 
     try:
@@ -2786,13 +2880,14 @@ def _winrate_mode_report(args: argparse.Namespace, tz: str) -> None:
                 hero=args.hero,
                 match_mode=None,
                 game_mode=None,
+                ranked=None,
             ),
             parquet_dir=args.parquet,
         ).collect()
         modes = queries.summarize(
             queries.record_games,
-            by=("match_mode", "game_mode"),
-            measures=("games", "wins", "losses", "win_rate"),
+            by=("match_mode", "game_mode", "ranked_type"),
+            measures=("games", "wins", "losses", "win_rate", "net_points"),
             filters={"scored": True},
             lf=games.lazy(),
         ).collect()
@@ -2805,39 +2900,138 @@ def _winrate_mode_report(args: argparse.Namespace, tz: str) -> None:
         _unscored_line(games)
         return
 
-    rows = [
+    rows: list[dict[str, Any]] = [
         {
             **row,
-            "mode": _mode_pair_label(row["match_mode"], row["game_mode"]),
+            "mode": _mode_pair_label(row["match_mode"], row["game_mode"], row["ranked_type"]),
         }
         for row in modes.iter_rows(named=True)
     ]
     order = {
-        "Standard": 0,
+        "Standard (ranked)": 0,
         "New Player Placement": 1,
-        "Ranked": 2,
-        "Street Brawl": 3,
-        "Private Lobby": 4,
+        RANKED_LABEL: 2,
+        "Standard (unranked)": 3,
+        "Street Brawl": 4,
+        "Private Lobby": 5,
     }
     rows.sort(key=lambda row: (order.get(row["mode"], len(order)), row["mode"]))
     width = max(12, *(len(row["mode"]) for row in rows))
 
-    print(f"  {'Mode':<{width}}{'Games':>8}{'W':>6}{'L':>6}{'Win rate':>11}")
+    print(
+        f"  {'Mode':<{width}}{'Games':>8}{'W':>6}{'L':>6}{'Win rate':>11}"
+        f"{'Net points':>{NET_POINTS_WIDTH}}"
+    )
 
     for row in rows:
         rate = None if row["win_rate"] is None else float(row["win_rate"])
+        ranked = row["mode"] == RANKED_LABEL
+        points = _net_points_cell(row["net_points"]) if ranked else " " * NET_POINTS_WIDTH
         print(
             f"  {row['mode']:<{width}}{row['games']:>8}{row['wins']:>6}{row['losses']:>6}"
-            f"{WIN_RATE.render(rate, render.BLANK):>11}"
+            f"{WIN_RATE.render(rate, render.BLANK):>11}{points}".rstrip()
         )
 
     _unscored_line(games)
 
 
-def _mode_pair_label(match_mode: str | None, game_mode: str | None) -> str:
-    """Collapse the two wire mode names into the label people use."""
+def _winrate_account_report(
+    args: argparse.Namespace, tz: str, config: str | Path | None = None
+) -> None:
+    """Print scored-game totals for every account in the window.
+
+    - rows follow the config.toml account order and unlisted IDs go last
+    - the mode selection applies like the daily table and stands at ranked
+      play unless a mode flag says otherwise
+    """
+    try:
+        games = queries.view_frame(
+            queries.record_games(
+                accounts=args.account,
+                tz=tz,
+                days=args.days,
+                since=args.since,
+                hero=args.hero,
+            ),
+            parquet_dir=args.parquet,
+        ).collect()
+        totals = queries.summarize(
+            queries.record_games,
+            by="account_id",
+            measures=(
+                "games",
+                "wins",
+                "losses",
+                "win_rate",
+                "lobby_badge",
+                "last_rated_at",
+                "mvps",
+                "key_players",
+                "net_points",
+            ),
+            filters={"scored": True},
+            lf=games.lazy(),
+        ).collect()
+    except ValueError as e:
+        print(e)
+        return
+
+    if totals.is_empty():
+        print("No games found for the configured accounts")
+        _unscored_line(games)
+        return
+
+    names = account_labels(config)
+    order = {account: index for index, account in enumerate(config_account_names(config).values())}
+    rows = sorted(
+        totals.iter_rows(named=True),
+        key=lambda row: (order.get(row["account_id"], len(order)), row["account_id"]),
+    )
+    ranked = _has_ranked_games(games)
+    points_heading = f"{'Net points':>{NET_POINTS_WIDTH}}" if ranked else ""
+    width = max(12, *(len(names.get(row["account_id"], str(row["account_id"]))) for row in rows))
+
+    print(
+        f"  {'Account':<{width}}{'Games':>8}{'W':>6}{'L':>6}{'Win rate':>11}"
+        f"{'Lobby':>14}{'MVP':>6}{'Key':>6}{points_heading}"
+    )
+
+    for row in rows:
+        label = names.get(row["account_id"], str(row["account_id"]))
+        rate = None if row["win_rate"] is None else float(row["win_rate"])
+        badge = row["lobby_badge"]
+        lobby = "" if badge is None else skill_rating.label_asof(int(badge), row["last_rated_at"])
+        points = _net_points_cell(row["net_points"]) if ranked else ""
+
+        print(
+            f"  {label:<{width}}{row['games']:>8}{row['wins']:>6}{row['losses']:>6}"
+            f"{WIN_RATE.render(rate, render.BLANK):>11}{lobby:>14}"
+            f"{row['mvps']:>6}{row['key_players']:>6}{points}".rstrip()
+        )
+
+    _unscored_line(games)
+
+
+def _mode_pair_label(
+    match_mode: str | None,
+    game_mode: str | None,
+    ranked_type: int | None = None,
+) -> str:
+    """Collapse the wire mode names into the label people use.
+
+    Standard covers two different queues, so ranked_type splits them: it went
+    unrecorded while Standard was itself the ranked queue, and reads 0 once
+    build 6652 made Standard unranked.
+    """
     match_label = match_mode or "Unknown match mode"
     game_label = game_mode or "Unknown game mode"
+
+    if match_label == "Standard" and game_label == "Normal":
+        return (
+            "Standard (unranked)"
+            if ranked_type == extract.RANKED_TYPE_UNRANKED
+            else ("Standard (ranked)")
+        )
 
     if game_label == "Normal":
         return match_label
@@ -2848,36 +3042,70 @@ def _mode_pair_label(match_mode: str | None, game_mode: str | None) -> str:
     return f"{match_label} / {game_label}"
 
 
-def _standard_mode(args: argparse.Namespace) -> bool:
-    """Whether a report is reading the default Standard mode."""
-    return getattr(
-        args,
-        "mode",
-        (extract.MATCH_MODE_STANDARD, extract.GAME_MODE_NORMAL),
-    ) == (extract.MATCH_MODE_STANDARD, extract.GAME_MODE_NORMAL)
+def _args_mode(args: argparse.Namespace) -> queries.Modes:
+    """Take the mode triple a command parsed, falling back to the standing default."""
+    return getattr(args, "mode", queries.RANKED_PLAY)
+
+
+def _default_mode(args: argparse.Namespace) -> bool:
+    """Whether a report is reading the standing ranked-play selection.
+
+    - the default spans both queue eras, so its match mode is a group rather
+      than the single mode every explicit flag pins
+    """
+    match_mode, _, ranked = _args_mode(args)
+
+    return ranked is True and not isinstance(match_mode, int)
+
+
+def _has_ranked_games(games: pl.DataFrame) -> bool:
+    """Whether the window actually holds Ranked games, which are the only ones with points.
+
+    Read from the games rather than the mode flag, because the default
+    selection spans both queue eras and a window entirely before build 6652
+    has no points column to show.
+    """
+    if games.is_empty() or "match_mode" not in games.columns:
+        return False
+
+    return bool((games.get_column("match_mode") == RANKED_LABEL).any())
 
 
 def _selected_mode_label(args: argparse.Namespace) -> str:
-    """Label the selected match and game mode pair for output."""
-    match_mode, game_mode = getattr(
-        args,
-        "mode",
-        (extract.MATCH_MODE_STANDARD, extract.GAME_MODE_NORMAL),
-    )
+    """Label the mode a command was given, for output."""
+    return queries.mode_label(*_args_mode(args))
 
-    if match_mode == extract.MATCH_MODE_RANKED:
-        return "Ranked"
 
-    if match_mode == extract.MATCH_MODE_PLACEMENT:
-        return "New Player Placement"
+def _window_phrase(args: argparse.Namespace) -> str:
+    """Name the day window a command was given, for lines that report nothing found."""
+    since = getattr(args, "since", None)
 
-    if game_mode == extract.GAME_MODE_STREET_BRAWL:
-        return "Street Brawl"
+    if since:
+        return f" since {since}"
 
-    if match_mode == extract.MATCH_MODE_PRIVATE_LOBBY:
-        return "Private Lobby"
+    days = getattr(args, "days", None)
 
-    return "Standard"
+    if days:
+        return f" in the last {days} days"
+
+    return ""
+
+
+def _no_games_line(
+    args: argparse.Namespace,
+    config: str | Path | None,
+    subject: str = "games",
+) -> str:
+    """Say which queue, accounts, and window came back empty.
+
+    An empty report reads as missing data unless the line names the queue.
+    """
+    hero = getattr(args, "hero", None)
+    on_hero = f" on {hero}" if hero else ""
+    named = " ".join(part for part in (_selected_mode_label(args), subject) if part)
+    accounts = format_accounts(args.account, config)
+
+    return f"No {named} for accounts {accounts}{on_hero}{_window_phrase(args)}"
 
 
 def _abandon_lines(abandons: pl.DataFrame, games: int, wins: int) -> None:
@@ -2899,7 +3127,8 @@ def _abandon_lines(abandons: pl.DataFrame, games: int, wins: int) -> None:
 
     total = len(abandons)
     plural = "s" if total != 1 else ""
-    print(f"\nAbandons: {total} game{plural} — {', '.join(sides)}.")
+    who = ", ".join(sides)
+    print(f"\nAbandons: {total} game{plural}. {who[0].upper()}{who[1:]}.")
 
     returned = int(abandons.get_column("returned").cast(pl.Int32).sum())
 
@@ -3013,7 +3242,7 @@ def laning_games_report(args: argparse.Namespace, config: str | Path | None = No
         return
 
     if games.is_empty():
-        print("No games found for the configured accounts")
+        print(_no_games_line(args, config))
         return
 
     mark = f"{args.minutes}:00"
@@ -3216,6 +3445,9 @@ def damage_games_report(args: argparse.Namespace, config: str | Path | None = No
             matches=games.get_column("match_id").to_list(),
             parquet_dir=args.parquet,
         )
+    except queries.NoGames:
+        print(_no_games_line(args, config))
+        return
     except ValueError as e:
         print(e)
         return
@@ -3260,6 +3492,9 @@ def healing_games_report(args: argparse.Namespace, config: str | Path | None = N
             parquet_dir=args.parquet,
             stat="healing",
         )
+    except queries.NoGames:
+        print(_no_games_line(args, config))
+        return
     except ValueError as e:
         print(e)
         return
@@ -3359,6 +3594,9 @@ def souls_games_report(args: argparse.Namespace, config: str | Path | None = Non
             since=args.since,
         )
         hero = games.item(0, "hero")
+    except queries.NoGames:
+        print(_no_games_line(args, config))
+        return
     except ValueError as e:
         print(e)
         return
@@ -3547,6 +3785,9 @@ def combat_games_report(args: argparse.Namespace, config: str | Path | None = No
             days=args.days,
             since=args.since,
         )
+    except queries.NoGames:
+        print(_no_games_line(args, config))
+        return
     except ValueError as e:
         print(e)
         return
@@ -3641,7 +3882,7 @@ def deaths_report(args: argparse.Namespace, config: str | Path | None = None) ->
         return
 
     if df.is_empty():
-        print("No deaths found for the configured accounts")
+        print(_no_games_line(args, config, subject="deaths"))
         return
 
     games = df["match_id"].n_unique()
@@ -3824,6 +4065,9 @@ def movement_games_report(args: argparse.Namespace, config: str | Path | None = 
             days=args.days,
             since=args.since,
         )
+    except queries.NoGames:
+        print(_no_games_line(args, config))
+        return
     except ValueError as e:
         print(e)
         return
@@ -3897,7 +4141,7 @@ def _movement_compare(
         print(f"  {label:<24}{cells}")
 
     print()
-    _movement_by_player(you, top, pool, {m["account_id"]: m["name"] for m in members})
+    _movement_by_player(you, top, {m["account_id"]: m["name"] for m in members})
 
 
 def _fit_name(name: str, width: int) -> str:
@@ -3920,41 +4164,29 @@ def _fit_name(name: str, width: int) -> str:
 NAME_WIDTH = 14
 
 
-def _movement_by_player(
-    you: pl.DataFrame, top: pl.DataFrame, tracked: pl.DataFrame, labels: dict[int, str]
-) -> None:
+def _movement_by_player(you: pl.DataFrame, top: pl.DataFrame, labels: dict[int, str]) -> None:
     """Print one movement row per tracked player and a you row for contrast.
 
     - each row averages the per game metrics of that player
     - names are the labels from [players.<hero>] in config.toml
-    - Rank is the best hero ladder rank at download time, "-" when they were
-      never on the ladder
     """
     columns = [col for _, col in MOVEMENT_METRICS]
     rows = (
-        top.join(
-            tracked.select("match_id", "account_id", "rank"),
-            on=["match_id", "account_id"],
-        )
-        .group_by("account_id")
-        .agg(
-            pl.len().alias("games"),
-            pl.col("rank").min().alias("rank"),
-            pl.col(columns).mean(),
-        )
+        top.group_by("account_id")
+        .agg(pl.len().alias("games"), pl.col(columns).mean())
         .sort("meters_min", descending=True)
         .to_dicts()
     )
 
     print(
-        f"  {_fit_name('Player', NAME_WIDTH)}{'Account':>11}{'Games':>7}{'Rank':>8}"
+        f"  {_fit_name('Player', NAME_WIDTH)}{'Account':>11}{'Games':>7}"
         f"{'m /min':>9}{'Stationary':>12}{'Slide':>8}{'In air':>8}{'Zipline':>9}"
         f"{'Fighting':>10}{'Dash/min':>10}{'Air dash':>10}"
     )
 
-    def line(label: str, account: str, games: int, rank: str, r: dict[str, Any]) -> str:
+    def line(label: str, account: str, games: int, r: dict[str, Any]) -> str:
         return (
-            f"  {_fit_name(label, NAME_WIDTH)}{account:>11}{games:>7,}{rank:>8}"
+            f"  {_fit_name(label, NAME_WIDTH)}{account:>11}{games:>7,}"
             f"{r['meters_min']:>9,.1f}"
             f"{r['stationary_percent']:>11,.1f}%{r['slide_percent']:>7,.1f}%"
             f"{r['in_air_percent']:>7,.1f}%{r['zipline_percent']:>8,.1f}%"
@@ -3962,10 +4194,9 @@ def _movement_by_player(
         )
 
     yours = {col: _mean(you, col) for col in columns}
-    print(line("you", "-", len(you), "-", yours))
+    print(line("you", "-", len(you), yours))
 
     for r in rows:
         name = labels.get(r["account_id"], str(r["account_id"]))
-        rank = "-" if r["rank"] is None else str(r["rank"])
 
-        print(line(name, str(r["account_id"]), r["games"], rank, r))
+        print(line(name, str(r["account_id"]), r["games"], r))

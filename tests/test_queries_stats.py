@@ -241,6 +241,7 @@ def melee_pq(tmp_path):
             "team": [1, 0, 1],
             "assigned_lane": [1, 1, 4],
             "player_rank_initial_display_rank": [None, None, None],
+            "start_time": [dt.datetime.fromtimestamp(START, dt.UTC)] * 3,
         }
     )
 
@@ -525,5 +526,93 @@ def test_mode_dimensions_read_as_names(mode_pq):
     ]
 
 
-def test_mode_filter_is_none_when_both_halves_are_lifted():
-    assert queries.mode_filter(match_mode=None, game_mode=None) is None
+def test_mode_filter_is_none_when_every_part_is_lifted():
+    assert queries.mode_filter(match_mode=None, game_mode=None, ranked=None) is None
+
+
+def test_mode_label_names_each_selection():
+    assert queries.mode_label() == "Ranked"
+    assert queries.mode_label(extract.MATCH_MODE_RANKED, extract.GAME_MODE_NORMAL, None) == "Ranked"
+    assert (
+        queries.mode_label(extract.MATCH_MODE_PLACEMENT, extract.GAME_MODE_NORMAL, None)
+        == "New Player Placement"
+    )
+    assert (
+        queries.mode_label(extract.MATCH_MODE_PRIVATE_LOBBY, extract.GAME_MODE_NORMAL, None)
+        == "Private Lobby"
+    )
+    assert (
+        queries.mode_label(extract.MATCH_MODE_STANDARD, extract.GAME_MODE_STREET_BRAWL, None)
+        == "Street Brawl"
+    )
+    assert (
+        queries.mode_label(extract.MATCH_MODE_STANDARD, extract.GAME_MODE_NORMAL, False)
+        == "Standard"
+    )
+
+
+def test_mode_label_is_empty_when_every_part_is_lifted():
+    assert queries.mode_label(match_mode=None, game_mode=None, ranked=None) == ""
+
+
+def test_mode_label_follows_the_mode_context():
+    with queries.mode_context(match_mode=extract.MATCH_MODE_PLACEMENT):
+        assert queries.mode_label() == "New Player Placement"
+
+    assert queries.mode_label() == "Ranked"
+
+
+def _mode_rows():
+    """One row per queue era, matching what each side of build 6652 records."""
+    return pl.LazyFrame(
+        {
+            "match_id": [1, 2, 3, 4],
+            "match_mode": [
+                extract.MATCH_MODE_STANDARD,
+                extract.MATCH_MODE_STANDARD,
+                extract.MATCH_MODE_RANKED,
+                extract.MATCH_MODE_PRIVATE_LOBBY,
+            ],
+            "game_mode": [extract.GAME_MODE_NORMAL] * 4,
+            "ranked_type": [
+                None,
+                extract.RANKED_TYPE_UNRANKED,
+                extract.RANKED_TYPE_RANKED,
+                extract.RANKED_TYPE_UNRANKED,
+            ],
+        }
+    )
+
+
+def test_mode_filter_default_counts_an_unrecorded_ranked_type_as_ranked():
+    kept = _mode_rows().filter(queries.mode_filter(prefix="")).collect()
+
+    assert kept.get_column("match_id").to_list() == [1, 3]
+
+
+def test_mode_filter_unranked_keeps_only_the_queue_build_6652_introduced():
+    kept = (
+        _mode_rows()
+        .filter(
+            queries.mode_filter(match_mode=extract.MATCH_MODE_STANDARD, ranked=False, prefix="")
+        )
+        .collect()
+    )
+
+    assert kept.get_column("match_id").to_list() == [2]
+
+
+def test_mode_filter_takes_several_match_modes():
+    kept = (
+        _mode_rows()
+        .filter(
+            queries.mode_filter(
+                match_mode=(extract.MATCH_MODE_RANKED, extract.MATCH_MODE_PRIVATE_LOBBY),
+                ranked=None,
+                prefix="",
+            )
+        )
+        .collect()
+    )
+
+    assert kept.get_column("match_id").to_list() == [3, 4]

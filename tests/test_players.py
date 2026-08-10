@@ -103,7 +103,7 @@ def _match_json(
     return json_format.MessageToDict(info, preserving_proto_field_name=True)
 
 
-def _history_row(match_id, hero_id=52, mode=1, start=1, game_mode=1):
+def _history_row(match_id, hero_id=52, mode=pb.k_ECitadelMatchMode_Ranked, start=1, game_mode=1):
     return {
         "match_id": match_id,
         "hero_id": hero_id,

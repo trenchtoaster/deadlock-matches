@@ -24,6 +24,7 @@ from deadlock_matches.assets import (
     history,
     items,
     snapshots,
+    store,
 )
 from deadlock_matches.cli import cards, data, performance
 from deadlock_matches.cli import items as cli_items
@@ -72,7 +73,9 @@ def write_cache_entry(
     paths=False,
     game_mode=None,
     match_mode=None,
+    ranked_type=None,
     hero_id=52,
+    rank_points=None,
 ):
     contents = pb.CMsgMatchMetaDataContents()
     info = contents.match_info
@@ -84,6 +87,9 @@ def write_cache_entry(
     info.match_mode = pb.k_ECitadelMatchMode_Unranked if match_mode is None else match_mode
     info.game_mode = pb.k_ECitadelGameMode_Normal if game_mode is None else game_mode
 
+    if ranked_type is not None:
+        info.ranked_type = ranked_type
+
     if badges is not None:
         info.average_badge_team0, info.average_badge_team1 = badges
 
@@ -94,6 +100,12 @@ def write_cache_entry(
 
     if abandon_s is not None:
         p.abandon_match_time_s = abandon_s
+
+    if rank_points is not None:
+        p.player_rank_data.initial_display_rank = 15
+        p.player_rank_data.initial_flat_progress, p.player_rank_data.final_flat_progress = (
+            rank_points
+        )
 
     mates = []
 
@@ -358,6 +370,67 @@ def test_heal_assets_offline_reports_the_retry(tmp_path, monkeypatch, capsys):
 
     assert "Game updated, extending the asset history to build 6700" in out
     assert "Asset update failed, the next sync retries" in out
+
+
+def _stub_history_builders(monkeypatch, tmp_path, builder):
+    monkeypatch.setattr(snapshots, "client_version_dates", lambda **kw: {})
+    monkeypatch.setattr(history, "eras", lambda path: [("2026-06-01T00:00:00", 6600)])
+    monkeypatch.setattr(store, "read_path", lambda name: tmp_path / name)
+    monkeypatch.setattr(store, "write_path", lambda name: tmp_path / name)
+
+    for _name, _path, fn in data.HISTORY_BUILDERS:
+        monkeypatch.setattr(snapshots, fn, builder)
+
+
+def test_extend_asset_history_reports_progress_per_table(tmp_path, monkeypatch, capsys):
+    def builder(*, path, resume_from, progress, full):
+        progress(1, 2, [])
+        progress(2, 2, [])
+
+        return 2
+
+    _stub_history_builders(monkeypatch, tmp_path, builder)
+
+    assert data._extend_asset_history() is True
+
+    out = capsys.readouterr().out
+
+    for name, _path, _fn in data.HISTORY_BUILDERS:
+        assert f"{name:<9} 2/2 builds" in out
+        assert f"{name:<9} 1 -> 2 eras" in out
+
+
+def test_extend_asset_history_reports_skipped_builds(tmp_path, monkeypatch, capsys):
+    def builder(*, path, resume_from, progress, full):
+        progress(1, 1, [6665])
+
+        return 1
+
+    _stub_history_builders(monkeypatch, tmp_path, builder)
+
+    assert data._extend_asset_history() is False
+
+    out = capsys.readouterr().out
+
+    assert "no asset data for client build 6665, skipped" in out
+
+
+def test_extend_asset_history_ends_the_progress_line_on_failure(tmp_path, monkeypatch, capsys):
+    def builder(*, path, resume_from, progress, full):
+        progress(1, 2, [])
+
+        raise OSError("offline")
+
+    _stub_history_builders(monkeypatch, tmp_path, builder)
+    monkeypatch.setattr(extract, "installed_client_version", lambda cache_dir=None: 6700)
+    (tmp_path / "pq").mkdir()
+
+    data.heal_assets(_heal_args(tmp_path), [42], ())
+
+    out = capsys.readouterr().out
+
+    assert "\nAsset update failed, the next sync retries" in out
+    assert export.read_stamp(tmp_path / "pq") == {}
 
 
 def test_heal_assets_reexports_past_the_old_horizon(tmp_path, monkeypatch, capsys):
@@ -710,7 +783,7 @@ def test_download_command_defaults_to_the_watchlist(tmp_path, monkeypatch, capsy
     assert seen["tracked"][1]["rank"] == 1
     assert seen["tracked"][1]["name"] == "ladderer"
     assert seen["n"] == 3
-    assert seen["modes"] == {"match_mode": 1, "game_mode": 1}
+    assert seen["modes"] == {"match_mode": 4, "game_mode": 1}
 
     out = capsys.readouterr().out
 
@@ -971,6 +1044,7 @@ def test_builds_command_prints_shared_core(tmp_path, monkeypatch, capsys):
 
     assert "Tracked Mirage players (2 downloaded games):" in out
     assert "lead" in out
+    assert "Rank" not in out
     assert "1W 1L" in out
     assert "Healbane" in out
     assert "Win %" in out
@@ -1205,19 +1279,25 @@ def test_compare_reports_are_subcommands(tmp_path):
 def test_mode_flags_default_and_select_alternatives(tmp_path):
     parser = build_parser(tmp_path / "config.toml")
 
-    standard = parser.parse_args(["download", "--hero", "Mirage"])
+    default = parser.parse_args(["download", "--hero", "Mirage"])
+    standard = parser.parse_args(["download", "--hero", "Mirage", "--standard"])
     ranked = parser.parse_args(["download", "--hero", "Mirage", "--ranked"])
     placement = parser.parse_args(["download", "--hero", "Mirage", "--placement"])
     calibration_alias = parser.parse_args(["download", "--hero", "Mirage", "--calibration"])
     brawl = parser.parse_args(["download", "--hero", "Mirage", "--street-brawl"])
     private = parser.parse_args(["download", "--hero", "Mirage", "--private-lobby"])
 
-    assert standard.mode == (extract.MATCH_MODE_STANDARD, extract.GAME_MODE_NORMAL)
-    assert ranked.mode == (extract.MATCH_MODE_RANKED, extract.GAME_MODE_NORMAL)
-    assert placement.mode == (extract.MATCH_MODE_PLACEMENT, extract.GAME_MODE_NORMAL)
+    assert default.mode == (
+        (extract.MATCH_MODE_STANDARD, extract.MATCH_MODE_RANKED),
+        extract.GAME_MODE_NORMAL,
+        True,
+    )
+    assert standard.mode == (extract.MATCH_MODE_STANDARD, extract.GAME_MODE_NORMAL, False)
+    assert ranked.mode == (extract.MATCH_MODE_RANKED, extract.GAME_MODE_NORMAL, None)
+    assert placement.mode == (extract.MATCH_MODE_PLACEMENT, extract.GAME_MODE_NORMAL, None)
     assert calibration_alias.mode == placement.mode
-    assert brawl.mode == (extract.MATCH_MODE_STANDARD, extract.GAME_MODE_STREET_BRAWL)
-    assert private.mode == (extract.MATCH_MODE_PRIVATE_LOBBY, extract.GAME_MODE_NORMAL)
+    assert brawl.mode == (extract.MATCH_MODE_STANDARD, extract.GAME_MODE_STREET_BRAWL, None)
+    assert private.mode == (extract.MATCH_MODE_PRIVATE_LOBBY, extract.GAME_MODE_NORMAL, None)
 
     with pytest.raises(SystemExit):
         parser.parse_args(["download", "--hero", "Mirage", "--street-brawl", "--private-lobby"])
@@ -1226,14 +1306,15 @@ def test_mode_flags_default_and_select_alternatives(tmp_path):
 @pytest.mark.parametrize(
     ("mode", "flag"),
     [
-        ((extract.MATCH_MODE_RANKED, extract.GAME_MODE_NORMAL), "--ranked"),
-        ((extract.MATCH_MODE_PLACEMENT, extract.GAME_MODE_NORMAL), "--placement"),
+        ((extract.MATCH_MODE_STANDARD, extract.GAME_MODE_NORMAL, False), "--standard"),
+        ((extract.MATCH_MODE_RANKED, extract.GAME_MODE_NORMAL, None), "--ranked"),
+        ((extract.MATCH_MODE_PLACEMENT, extract.GAME_MODE_NORMAL, None), "--placement"),
         (
-            (extract.MATCH_MODE_STANDARD, extract.GAME_MODE_STREET_BRAWL),
+            (extract.MATCH_MODE_STANDARD, extract.GAME_MODE_STREET_BRAWL, None),
             "--street-brawl",
         ),
         (
-            (extract.MATCH_MODE_PRIVATE_LOBBY, extract.GAME_MODE_NORMAL),
+            (extract.MATCH_MODE_PRIVATE_LOBBY, extract.GAME_MODE_NORMAL, None),
             "--private-lobby",
         ),
     ],
@@ -1389,8 +1470,8 @@ def test_compare_command_reads_the_downloaded_pool(tmp_path, monkeypatch, capsys
     out = capsys.readouterr().out
 
     assert "You (you, 3 Mirage games) vs 1 tracked Mirage player (3 Mirage games): souls" in out
-    assert re.search(r"you\s+3\s+-\s+-\s+67\s+67", out)
-    assert re.search(r"pro\s+3\s+2\s+2026-07-01\s+200\s+200", out)
+    assert re.search(r"you\s+3\s+-\s+67\s+67", out)
+    assert re.search(r"pro\s+3\s+2026-07-01\s+200\s+200", out)
     assert re.search(r"0-5\s+200\s+600\s+-400\s+-2,000\s+3/3", out)
     assert re.search(r"5-10\s+200\s+600\s+-400\s+-4,000\s+3/3", out)
     assert re.search(r"10-15\s+0\s+0\s+\+0\s+-4,000\s+3/3", out)
@@ -1551,7 +1632,7 @@ def test_compare_command_pool_since_filters_the_pool(tmp_path, monkeypatch, caps
     out = capsys.readouterr().out
 
     assert "vs 1 tracked Mirage player (3 Mirage games since 2026-07-15): souls" in out
-    assert re.search(r"pro\s+3\s+2\s+2026-07-01\s+200\s+200", out)
+    assert re.search(r"pro\s+3\s+2026-07-01\s+200\s+200", out)
     assert re.search(r"0-5\s+200\s+600\s+-400\s+-2,000\s+3/3", out)
 
 
@@ -1845,15 +1926,16 @@ def test_compare_command_movement_stat(tmp_path, monkeypatch, capsys):
 
     assert "You (you, 1 Mirage game) vs 1 tracked Mirage player (3 Mirage games): movement" in out
     assert "Last download" in out
-    assert re.search(r"pro\s+3\s+2\s+2026-07-01", out)
+    assert "Rank" not in out
+    assert re.search(r"pro\s+3\s+2026-07-01", out)
     assert "meters /min" in out
     assert "fighting players %" in out
     assert re.search(r"Metric\s+You\s+Tracked\s+Gap", out)
     assert re.search(r"meters /min\s+152\.4\s+304\.8\s+-152\.4", out)
     assert re.search(r"slide %\s+20\.0\s+20\.0\s+\+0\.0", out)
     assert re.search(r"m /min\s+Stationary\s+Slide", out)
-    assert re.search(r"you\s+-\s+1\s+-", out)
-    assert re.search(r"pro\s+11\s+3\s+2", out)
+    assert re.search(r"you\s+-\s+1\s+152\.4", out)
+    assert re.search(r"pro\s+11\s+3\s+304\.8", out)
 
 
 def test_compare_command_without_tracked_players_prints_hint(tmp_path, monkeypatch, capsys):
@@ -1970,7 +2052,34 @@ def test_history_account_filter(capsys, tmp_path):
 
     run_main(tmp_path, "history", "--account", "99")
 
-    assert "No match metadata found" in capsys.readouterr().out
+    assert "No games found for accounts 99" in capsys.readouterr().out
+
+
+def test_history_empty_mode_names_the_mode(capsys, tmp_path):
+    cache = tmp_path / "cache"
+    cache.mkdir()
+    write_cache_entry(cache, match_id=100)
+
+    run_main(tmp_path, "history", "--placement")
+
+    out = capsys.readouterr().out
+
+    assert "No New Player Placement games for accounts you" in out
+    assert "cache" not in out
+
+    run_main(tmp_path, "history", "--street-brawl", "--days", "3")
+
+    assert "No Street Brawl games for accounts you in the last 3 days" in capsys.readouterr().out
+
+    run_main(tmp_path, "history", "--since", "2100-01-01")
+
+    assert "No Ranked games for accounts you since 2100-01-01" in capsys.readouterr().out
+
+
+def test_history_without_an_archive_still_blames_the_cache(capsys, tmp_path):
+    run_main(tmp_path, "history")
+
+    assert "No match metadata found in cache" in capsys.readouterr().out
 
 
 def test_history_defaults_to_matchmaking_and_can_select_private(capsys, tmp_path):
@@ -2292,7 +2401,7 @@ def test_match_ago_past_history_reports_the_count(capsys, tmp_path):
 
     run_main(tmp_path, "match", "--account", "42", "--ago", "5")
 
-    assert "Only fewer than 6 games" in capsys.readouterr().out
+    assert "Only fewer than 6 Ranked games" in capsys.readouterr().out
 
 
 def test_match_ago_with_a_match_id_is_rejected(capsys, tmp_path):
@@ -2695,24 +2804,15 @@ def test_movement_by_player_table(capsys):
             {"match_id": 902, "account_id": 33, **metrics},
         ]
     )
-    tracked = pl.DataFrame(
-        [
-            {"match_id": 900, "account_id": 11, "rank": 5},
-            {"match_id": 901, "account_id": 22, "rank": None},
-            {"match_id": 902, "account_id": 33, "rank": None},
-        ]
-    )
-
-    performance._movement_by_player(
-        you, top, tracked, labels={11: "Someone", 22: "other", 33: "스노우맨"}
-    )
+    performance._movement_by_player(you, top, labels={11: "Someone", 22: "other", 33: "스노우맨"})
 
     out = capsys.readouterr().out
 
-    assert re.search(r"you\s+-\s+1\s+-\s+350\.0", out)
-    assert re.search(r"Someone\s+11\s+1\s+5\s+400\.0", out)
-    assert re.search(r"other\s+22\s+1\s+-\s+400\.0", out)
-    assert re.search(r"스노우맨\s+33\s+1\s+-\s+400\.0", out)
+    assert "Rank" not in out
+    assert re.search(r"you\s+-\s+1\s+350\.0", out)
+    assert re.search(r"Someone\s+11\s+1\s+400\.0", out)
+    assert re.search(r"other\s+22\s+1\s+400\.0", out)
+    assert re.search(r"스노우맨\s+33\s+1\s+400\.0", out)
 
 
 def test_fit_name_counts_wide_characters_double():
@@ -3559,7 +3659,7 @@ def test_match_views_mutually_exclusive(tmp_path):
         build_parser(tmp_path / "config.toml").parse_args(["match", "--buffs", "--souls"])
 
 
-def test_winrate_prints_daily_table(capsys, tmp_path):
+def test_winrate_prints_weekly_table_by_default(capsys, tmp_path):
     cache = tmp_path / "cache"
     cache.mkdir()
     write_cache_entry(cache, match_id=100, won=False)
@@ -3570,8 +3670,25 @@ def test_winrate_prints_daily_table(capsys, tmp_path):
 
     out = capsys.readouterr().out
 
-    assert "grouped by America/Chicago day" in out
+    assert "grouped by America/Chicago week" in out
     assert "Cumulative net" in out
+    assert "Overall: 3 games, 2-1, 66.7% win rate, +1 net wins, 0 MVP, 0 Key Player." in out
+
+
+def test_winrate_by_day_prints_one_row_per_day(capsys, tmp_path):
+    cache = tmp_path / "cache"
+    cache.mkdir()
+    write_cache_entry(cache, match_id=100, won=False)
+    write_cache_entry(cache, match_id=101, start_time=1783000000 + 86400)
+    write_cache_entry(cache, match_id=102, start_time=1783000000 + 86400)
+
+    run_main(tmp_path, "winrate", "--account", "42", "--by", "day")
+
+    out = capsys.readouterr().out
+    rows = [line for line in out.splitlines() if line.startswith("  2026-")]
+
+    assert "grouped by America/Chicago day" in out
+    assert len(rows) == 2
     assert "Overall: 3 games, 2-1, 66.7% win rate, +1 net wins, 0 MVP, 0 Key Player." in out
 
 
@@ -3632,6 +3749,111 @@ def test_winrate_private_lobby_flag_swaps_the_games_in(capsys, tmp_path):
     assert "Overall: 1 games, 0-1, 0.0% win rate" in out
 
 
+def _split_era_cache(tmp_path):
+    """Write one game from each side of the build 6652 queue split.
+
+    Before 6652 match_mode 1 was the ranked queue and ranked_type went
+    unrecorded. After it, ranked play moved to match_mode 4 and match_mode 1
+    became the unranked queue.
+    """
+    cache = tmp_path / "cache"
+    cache.mkdir()
+    write_cache_entry(cache, match_id=100, start_time=1783000000, stats=[(300, 3000)])
+    write_cache_entry(
+        cache,
+        match_id=101,
+        start_time=1784000000,
+        won=False,
+        ranked_type=extract.RANKED_TYPE_UNRANKED,
+        stats=[(300, 4000)],
+    )
+    write_cache_entry(
+        cache,
+        match_id=102,
+        start_time=1784100000,
+        match_mode=pb.k_ECitadelMatchMode_Ranked,
+        ranked_type=extract.RANKED_TYPE_RANKED,
+        stats=[(300, 5000)],
+    )
+
+    return cache
+
+
+def test_winrate_default_spans_both_queue_eras(capsys, tmp_path):
+    _split_era_cache(tmp_path)
+
+    run_main(tmp_path, "winrate", "--account", "42")
+
+    out = capsys.readouterr().out
+
+    assert "Overall: 2 games, 2-0, 100.0% win rate" in out
+
+
+def test_winrate_standard_flag_keeps_only_the_unranked_queue(capsys, tmp_path):
+    _split_era_cache(tmp_path)
+
+    run_main(tmp_path, "winrate", "--account", "42", "--standard")
+
+    out = capsys.readouterr().out
+
+    assert "Overall: 1 games, 0-1, 0.0% win rate" in out
+
+
+def test_winrate_ranked_flag_leaves_out_the_older_ranked_queue(capsys, tmp_path):
+    _split_era_cache(tmp_path)
+
+    run_main(tmp_path, "winrate", "--account", "42", "--ranked")
+
+    out = capsys.readouterr().out
+
+    assert "Overall: 1 games, 1-0, 100.0% win rate" in out
+
+
+def test_winrate_by_mode_splits_standard_on_the_queue_split(capsys, tmp_path):
+    _split_era_cache(tmp_path)
+
+    run_main(tmp_path, "winrate", "--by", "mode", "--account", "42")
+
+    out = capsys.readouterr().out
+
+    assert re.search(r"Standard \(ranked\)\s+1\s+1\s+0\s+100\.0%", out)
+    assert re.search(r"Standard \(unranked\)\s+1\s+0\s+1\s+0\.0%", out)
+    assert re.search(r"Ranked\s+1\s+1\s+0\s+100\.0%", out)
+
+
+def test_winrate_points_column_follows_the_games_not_the_flag(capsys, tmp_path):
+    cache = tmp_path / "cache"
+    cache.mkdir()
+    write_cache_entry(cache, match_id=100, start_time=1783000000)
+
+    run_main(tmp_path, "winrate", "--account", "42")
+
+    out = capsys.readouterr().out
+
+    assert "Net points" not in out
+    assert "net points" not in out
+
+
+def test_match_without_an_id_picks_the_latest_across_the_split(capsys, tmp_path):
+    _split_era_cache(tmp_path)
+
+    run_main(tmp_path, "match", "--account", "42")
+
+    out = capsys.readouterr().out
+
+    assert "Match 102" in out
+
+
+def test_match_standard_flag_picks_the_latest_unranked_game(capsys, tmp_path):
+    _split_era_cache(tmp_path)
+
+    run_main(tmp_path, "match", "--account", "42", "--standard")
+
+    out = capsys.readouterr().out
+
+    assert "Match 101" in out
+
+
 def test_winrate_by_mode_honors_account_and_hero(capsys, tmp_path, monkeypatch):
     cache = tmp_path / "cache"
     cache.mkdir()
@@ -3669,7 +3891,7 @@ def test_winrate_by_mode_honors_account_and_hero(capsys, tmp_path, monkeypatch):
 
     out = capsys.readouterr().out
 
-    assert re.search(r"Standard\s+2\s+1\s+1\s+50\.0%", out)
+    assert re.search(r"Standard \(ranked\)\s+2\s+1\s+1\s+50\.0%", out)
     assert re.search(r"Street Brawl\s+3\s+2\s+1\s+66\.7%", out)
     assert re.search(r"Private Lobby\s+3\s+2\s+1\s+66\.7%", out)
     assert "Overall:" not in out
@@ -3722,6 +3944,184 @@ def test_winrate_by_mode_rejects_a_mode_selection(capsys, tmp_path):
     assert "--by mode already includes every mode" in capsys.readouterr().out
 
 
+def test_winrate_by_account_prints_one_row_per_account(capsys, tmp_path):
+    cache = tmp_path / "cache"
+    cache.mkdir()
+    write_cache_entry(cache, match_id=100)
+    write_cache_entry(cache, match_id=101, won=False)
+    write_cache_entry(cache, match_id=102, account=43)
+
+    run_main(tmp_path, "winrate", "--by", "account", accounts="you = 42\nalt = 43")
+
+    out = capsys.readouterr().out
+
+    assert re.search(r"you\s+2\s+1\s+1\s+50\.0%", out)
+    assert re.search(r"alt\s+1\s+1\s+0\s+100\.0%", out)
+    assert "Overall:" not in out
+
+
+def test_winrate_by_account_follows_the_config_order(capsys, tmp_path):
+    cache = tmp_path / "cache"
+    cache.mkdir()
+    write_cache_entry(cache, match_id=100)
+    write_cache_entry(cache, match_id=101, account=43)
+
+    run_main(tmp_path, "winrate", "--by", "account", accounts="alt = 43\nyou = 42")
+
+    out = capsys.readouterr().out
+
+    assert out.index("\n  alt") < out.index("\n  you")
+
+
+def test_winrate_by_account_prints_ids_without_config_names(capsys, tmp_path):
+    cache = tmp_path / "cache"
+    cache.mkdir()
+    write_cache_entry(cache, match_id=100, teammates=1)
+
+    run_main(tmp_path, "winrate", "--by", "account", "--account", "43")
+
+    out = capsys.readouterr().out
+
+    assert re.search(r"43\s+1\s+1\s+0\s+100\.0%", out)
+
+
+def test_winrate_by_account_honors_a_mode_flag(capsys, tmp_path):
+    _split_era_cache(tmp_path)
+
+    run_main(tmp_path, "winrate", "--by", "account", "--account", "42", "--ranked")
+
+    out = capsys.readouterr().out
+
+    assert re.search(r"you\s+1\s+1\s+0\s+100\.0%", out)
+
+
+def test_winrate_by_account_points_column_follows_the_games(capsys, tmp_path):
+    cache = tmp_path / "cache"
+    cache.mkdir()
+    ranked = pb.k_ECitadelMatchMode_Ranked
+    write_cache_entry(cache, match_id=100, match_mode=ranked, rank_points=(5000, 5250))
+    write_cache_entry(cache, match_id=101, account=43)
+
+    run_main(tmp_path, "winrate", "--by", "account", accounts="you = 42\nalt = 43")
+
+    out = capsys.readouterr().out
+
+    assert "Net points" in out
+    assert re.search(r"you\s+1\s+1\s+0\s+100\.0%\s+0\s+0\s+\+250", out)
+    assert re.search(r"alt\s+1\s+1\s+0\s+100\.0%\s+0\s+0\s+-", out)
+
+
+def test_winrate_by_account_leaves_the_points_column_out_without_ranked_games(capsys, tmp_path):
+    cache = tmp_path / "cache"
+    cache.mkdir()
+    write_cache_entry(cache, match_id=100)
+
+    run_main(tmp_path, "winrate", "--by", "account")
+
+    out = capsys.readouterr().out
+
+    assert "Net points" not in out
+
+
+def _write_ranked_games(cache):
+    """Write two Ranked wins and a loss the floor clamped to no change."""
+    ranked = pb.k_ECitadelMatchMode_Ranked
+    write_cache_entry(cache, match_id=100, match_mode=ranked, rank_points=(5000, 5250))
+    write_cache_entry(
+        cache,
+        match_id=101,
+        start_time=1783000000 + 86400,
+        won=False,
+        match_mode=ranked,
+        rank_points=(5250, 5100),
+    )
+    write_cache_entry(
+        cache,
+        match_id=102,
+        start_time=1783000000 + 86400,
+        won=False,
+        match_mode=ranked,
+        rank_points=(5100, 5100),
+    )
+
+
+def test_winrate_ranked_table_totals_the_applied_points(capsys, tmp_path):
+    cache = tmp_path / "cache"
+    cache.mkdir()
+    _write_ranked_games(cache)
+
+    run_main(tmp_path, "winrate", "--ranked", "--account", "42", "--by", "day")
+
+    out = capsys.readouterr().out
+    rows = [line for line in out.splitlines() if line.startswith("  2026-")]
+
+    assert "Net points" in out.splitlines()[3]
+    assert rows[0].endswith("+250")
+    assert rows[1].endswith("-150")
+    assert "+100 net points." in out
+
+
+def test_winrate_ranked_thousands_separator(capsys, tmp_path):
+    cache = tmp_path / "cache"
+    cache.mkdir()
+    write_cache_entry(
+        cache,
+        match_id=100,
+        match_mode=pb.k_ECitadelMatchMode_Ranked,
+        rank_points=(5000, 8500),
+    )
+
+    run_main(tmp_path, "winrate", "--ranked", "--account", "42")
+
+    out = capsys.readouterr().out
+
+    assert "+3,500" in out
+    assert "+3,500 net points." in out
+
+
+def test_winrate_standard_table_leaves_the_points_column_out(capsys, tmp_path):
+    cache = tmp_path / "cache"
+    cache.mkdir()
+    write_cache_entry(cache, match_id=100)
+
+    run_main(tmp_path, "winrate", "--account", "42")
+
+    out = capsys.readouterr().out
+
+    assert "Net points" not in out
+    assert "net points" not in out
+    assert "Net wins" in out
+
+
+def test_winrate_ranked_without_ranked_games(capsys, tmp_path):
+    cache = tmp_path / "cache"
+    cache.mkdir()
+    write_cache_entry(cache, match_id=100)
+
+    run_main(tmp_path, "winrate", "--ranked", "--account", "42")
+
+    out = capsys.readouterr().out
+
+    assert "No Ranked games for accounts you" in out
+    assert "Net points" not in out
+
+
+def test_winrate_by_mode_gives_the_ranked_row_its_points(capsys, tmp_path):
+    cache = tmp_path / "cache"
+    cache.mkdir()
+    _write_ranked_games(cache)
+    write_cache_entry(cache, match_id=103, start_time=1783000000 + 2 * 86400)
+
+    run_main(tmp_path, "winrate", "--by", "mode", "--account", "42")
+
+    out = capsys.readouterr().out
+    rows = {line.split()[0]: line for line in out.splitlines() if line.startswith("  ")}
+
+    assert "Net points" in rows["Mode"]
+    assert rows["Ranked"].endswith("+100")
+    assert rows["Standard"].endswith("100.0%")
+
+
 def test_winrate_abandon_footer(capsys, tmp_path):
     cache = tmp_path / "cache"
     cache.mkdir()
@@ -3733,7 +4133,7 @@ def test_winrate_abandon_footer(capsys, tmp_path):
     out = capsys.readouterr().out
 
     assert "Abandons" in out.splitlines()[3]
-    assert "Abandons: 1 game — you left 1 (0-1)." in out
+    assert "Abandons: 1 game. You left 1 (0-1)." in out
     assert "Without them: 1 games, 1-0, 100.0% win rate." in out
 
 
@@ -3754,7 +4154,7 @@ def test_winrate_abandon_footer_notes(capsys, tmp_path):
     out = capsys.readouterr().out
 
     assert "Overall: 1 games, 1-0" in out
-    assert "Abandons: 1 game — you left 1 (1-0)." in out
+    assert "Abandons: 1 game. You left 1 (1-0)." in out
     assert "1 leaver reconnected and finished." in out
     assert "Not scored: 1 game left out of the table (safe to leave), 0-1 in match history." in out
     assert "Without them" not in out
@@ -3769,7 +4169,7 @@ def test_winrate_unscored_only_window(capsys, tmp_path):
 
     out = capsys.readouterr().out
 
-    assert "No games found for the configured accounts" in out
+    assert "No Ranked games for accounts you" in out
     assert "Not scored: 1 game left out of the table (safe to leave), 1-0 in match history." in out
 
 
@@ -3797,6 +4197,46 @@ def test_winrate_lobby_blank_without_badges(capsys, tmp_path):
     out = capsys.readouterr().out
 
     assert "lobbies" not in out
+
+
+def test_winrate_lobby_names_follow_the_game_era(capsys, tmp_path):
+    cache = tmp_path / "cache"
+    cache.mkdir()
+    write_cache_entry(cache, match_id=100, badges=(63, 63))
+    write_cache_entry(cache, match_id=101, start_time=1783000000 + 32 * 86400, badges=(63, 63))
+
+    run_main(tmp_path, "winrate", "--account", "42")
+
+    out = capsys.readouterr().out
+
+    assert "Emissary III" in out
+    assert "Ritualist III" in out
+    assert "Ritualist III lobbies." in out
+
+
+def test_winrate_account_lobby_names_follow_the_game_era(capsys, tmp_path):
+    cache = tmp_path / "cache"
+    cache.mkdir()
+    write_cache_entry(cache, match_id=100, badges=(63, 63))
+
+    run_main(tmp_path, "winrate", "--account", "42", "--by", "account")
+
+    out = capsys.readouterr().out
+
+    assert "Emissary III" in out
+    assert "Mystic" not in out
+
+
+def test_match_lobby_average_uses_the_era_names(capsys, tmp_path):
+    cache = tmp_path / "cache"
+    cache.mkdir()
+    write_cache_entry(cache, match_id=100, stats=[(300, 3000)], badges=(63, 61))
+
+    run_main(tmp_path, "match", "--account", "42")
+
+    assert "Lobby average: The Hidden King Emissary III, The Archmother Emissary I" in (
+        capsys.readouterr().out
+    )
 
 
 def test_winrate_no_abandon_footer_without_abandons(capsys, tmp_path):
@@ -3979,6 +4419,19 @@ def test_damage_command_unknown_hero_prints_error(capsys, tmp_path):
     out = capsys.readouterr().out
 
     assert "Unknown hero 'Nobody'" in out
+
+
+def test_damage_command_empty_mode_names_the_mode_and_accounts(capsys, tmp_path):
+    cache = tmp_path / "cache"
+    cache.mkdir()
+    write_cache_entry(cache, match_id=100, stats=((300, 3000),))
+
+    run_main(tmp_path, "damage", "--hero", "Mirage", "--placement")
+
+    out = capsys.readouterr().out
+
+    assert "No New Player Placement games for accounts you on Mirage" in out
+    assert "[42]" not in out
 
 
 def test_damage_command_without_account_prints_hint(capsys, tmp_path):
@@ -4398,7 +4851,7 @@ def test_winrate_baseline_prints_without_games(capsys, tmp_path, monkeypatch):
 
     out = capsys.readouterr().out
 
-    assert "No games found" in out
+    assert "No Ranked games for accounts 99 on Mirage" in out
     assert "Mirage in Eternus+ lobbies: 55.0% win rate over 100 games (deadlock-api.com)" in out
 
 
@@ -4409,7 +4862,7 @@ def test_winrate_since(capsys, tmp_path):
 
     run_main(tmp_path, "winrate", "--account", "42", "--since", "2100-01-01")
 
-    assert "No games found" in capsys.readouterr().out
+    assert "No Ranked games for accounts you since 2100-01-01" in capsys.readouterr().out
 
 
 def test_winrate_no_games_for_account(capsys, tmp_path):
@@ -4419,7 +4872,7 @@ def test_winrate_no_games_for_account(capsys, tmp_path):
 
     run_main(tmp_path, "winrate", "--account", "7")
 
-    assert "No games found" in capsys.readouterr().out
+    assert "No Ranked games for accounts 7" in capsys.readouterr().out
 
 
 def test_assets_subcommand_reports_counts(monkeypatch, capsys):
@@ -5238,6 +5691,31 @@ def test_accounts_command_lists_logins(capsys, tmp_path):
     assert "mainlogin" in out
     assert "Main Guy" in out
     assert "main" in out
+
+
+def test_accounts_command_shows_the_local_game_span(capsys, tmp_path):
+    cache = write_steam_tree(tmp_path, deadlock=(42, 43))
+    write_cache_entry(cache, match_id=100, start_time=1783044000, stats=[(300, 3000)])
+    write_cache_entry(cache, match_id=101, salt=2, start_time=1783684800, stats=[(300, 3000)])
+    cfg = tmp_path / "config.toml"
+    cfg.write_text('timezone = "America/Chicago"\n[accounts]\nmain = 42\nalt1 = 43\n')
+
+    base = ["--cache", str(cache), "--archive", str(tmp_path / "arc")]
+    base += ["--parquet", str(tmp_path / "pq")]
+    main([*base, "history", "--account", "42"], config=cfg)
+    capsys.readouterr()
+
+    main([*base, "accounts"], config=cfg)
+
+    out = capsys.readouterr().out
+    played = next(line for line in out.splitlines() if line.startswith("  42 "))
+    empty = next(line for line in out.splitlines() if line.startswith("  43 "))
+
+    assert "First game" in out
+    assert "Last game" in out
+    assert "2026-07-02" in played
+    assert "2026-07-10" in played
+    assert "2026-" not in empty
 
 
 def test_accounts_command_suggests_unconfigured_alts(capsys, tmp_path):

@@ -29,6 +29,64 @@ def test_rank_asof_without_history_falls_back_to_bundled(tmp_path):
     assert skill_rating.rank_asof(999, dt.date(2026, 7, 2), missing) is None
 
 
+def test_label_asof_uses_the_era_names(tmp_path):
+    path = tmp_path / "rank_history.parquet"
+
+    def era(name):
+        return {"6": {"tier": 6, "name": name}}
+
+    history.write(
+        path,
+        [
+            {"from": "2026-01-01T00:00:00", "build": 1, "records": era("Emissary")},
+            {"from": "2026-07-31T00:00:00", "build": 2, "records": era("Ritualist")},
+        ],
+    )
+
+    assert skill_rating.label_asof(63, dt.date(2026, 7, 20), path) == "Emissary III"
+    assert skill_rating.label_asof(63, dt.date(2026, 8, 2), path) == "Ritualist III"
+
+
+def test_label_asof_none_passes_through():
+    assert skill_rating.label_asof(None, dt.date(2026, 8, 2)) is None
+
+
+def test_label_asof_without_history_falls_back_to_bundled(tmp_path):
+    missing = tmp_path / "none.parquet"
+
+    assert skill_rating.label_asof(76, dt.date(2026, 8, 2), missing) == skill_rating.label(76)
+    assert skill_rating.label_asof(996, dt.date(2026, 8, 2), missing) == "badge996"
+
+
+def test_era_labels_composes_badges_per_era(tmp_path):
+    path = tmp_path / "rank_history.parquet"
+
+    def era(name):
+        return {"0": {"tier": 0, "name": "Obscurus"}, "6": {"tier": 6, "name": name}}
+
+    history.write(
+        path,
+        [
+            {"from": "2026-01-01T00:00:00", "build": 1, "records": era("Emissary")},
+            {"from": "2026-07-31T00:00:00", "build": 2, "records": era("Ritualist")},
+        ],
+    )
+
+    eras = skill_rating.era_labels(path)
+
+    assert [start for start, _ in eras] == [
+        dt.datetime(2026, 1, 1, tzinfo=dt.UTC),
+        dt.datetime(2026, 7, 31, tzinfo=dt.UTC),
+    ]
+    assert eras[0][1][63] == "Emissary III"
+    assert eras[1][1][63] == "Ritualist III"
+    assert eras[0][1][0] == "Obscurus"
+
+
+def test_era_labels_without_history_is_empty(tmp_path):
+    assert skill_rating.era_labels(tmp_path / "none.parquet") == []
+
+
 RANK_REC = {
     "tier": 7,
     "name": "Archon",

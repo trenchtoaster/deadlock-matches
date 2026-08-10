@@ -36,11 +36,12 @@ from deadlock_matches.config import (
     config_players_all,
     config_timezone,
     find_config,
+    format_accounts,
 )
 
 if TYPE_CHECKING:
     import argparse
-    from collections.abc import Collection, Iterable
+    from collections.abc import Callable, Collection, Iterable, Sequence
 
 
 def _tilde(path: str | Path) -> str:
@@ -144,6 +145,23 @@ def skill_report(args: argparse.Namespace) -> None:
         print("Start a new agent session to load it.")
 
 
+def _api_modes(
+    mode: queries.Modes,
+) -> tuple[int | Sequence[int] | None, int | Sequence[int] | None]:
+    """Turn a CLI mode triple into the match and game mode pair the API can filter on.
+
+    - match-history rows carry no ranked_type, so the ranked play default
+      becomes Ranked instead of spanning both queue eras
+    - a download always asks for recent games and recent ranked play is Ranked
+    """
+    match_mode, game_mode, ranked = mode
+
+    if ranked and not isinstance(match_mode, int):
+        return extract.MATCH_MODE_RANKED, game_mode
+
+    return match_mode, game_mode
+
+
 def final_stats(match_ids: pl.LazyFrame, parquet_dir: str | Path) -> pl.LazyFrame:
     """Return the end-of-match damage and healing totals per player from the stats snapshots.
 
@@ -195,6 +213,34 @@ def refresh_tables(
         print(f"Added {result.decoded:,} new matches to the parquet tables\n")
 
 
+def _no_history_line(
+    mine: pl.LazyFrame,
+    args: argparse.Namespace,
+    config: str | Path | None,
+    *,
+    since: dt.date | None,
+    days: int | None,
+) -> str:
+    """Say whether the accounts or the queue and window asked for came back empty.
+
+    An empty queue reads as missing data unless the line names the queue.
+    """
+    if mine.select("match_id").head(1).collect().is_empty():
+        return f"No games found for accounts {format_accounts(args.account, config)}"
+
+    if since is not None:
+        window = f" since {since}"
+    elif days is not None:
+        window = f" in the last {days} days"
+    else:
+        window = ""
+
+    return (
+        f"No {queries.mode_label()} games for "
+        f"accounts {format_accounts(args.account, config)}{window}"
+    )
+
+
 def match_history(args: argparse.Namespace, config: str | Path | None = None) -> None:
     """Print one line per game of yours, newest last, with the match ID for the other commands.
 
@@ -209,6 +255,10 @@ def match_history(args: argparse.Namespace, config: str | Path | None = None) ->
         if accounts:
             refresh_tables(args.archive, args.parquet, accounts, config_exclude(config))
 
+    if not all(queries.table_exists(table, args.parquet) for table in ("matches", "players")):
+        print("No match metadata found in cache")
+        return
+
     since = getattr(args, "since", None)
     since = dt.date.fromisoformat(since) if since else None
     days = getattr(args, "days", None)
@@ -216,12 +266,13 @@ def match_history(args: argparse.Namespace, config: str | Path | None = None) ->
     accounts = args.account
     players_lf = queries.player_rows(args.parquet).filter(pl.col("account_id").is_in(accounts))
 
-    matches_lf = (
+    mine_lf = (
         queries.scan("matches", args.parquet)
         .join(players_lf.select("match_id").unique(), on="match_id")
         .with_columns(pl.col("start_time").dt.convert_time_zone(tz).alias("start_local"))
         .with_columns(pl.col("start_local").dt.date().alias("day"))
     )
+    matches_lf = mine_lf
     modes = queries.mode_filter(prefix="")
 
     if modes is not None:
@@ -233,11 +284,11 @@ def match_history(args: argparse.Namespace, config: str | Path | None = None) ->
     matches = matches_lf.sort("start_time").select("match_id", "start_local", "day").collect()
 
     if days is not None:
-        keep = matches["day"].unique().sort().tail(days).implode()
+        keep = matches.get_column("day").unique().sort().tail(days).implode()
         matches = matches.filter(pl.col("day").is_in(keep))
 
     if matches.is_empty():
-        print("No match metadata found in cache")
+        print(_no_history_line(mine_lf, args, config, since=since, days=days))
         return
 
     games = (
@@ -291,20 +342,27 @@ def match_history(args: argparse.Namespace, config: str | Path | None = None) ->
         )
 
 
-def _archived_games(parquet_dir: str | Path, ids: list[int]) -> dict[int, int] | None:
-    """Count archived games per account, None before the first export."""
+def _archived_games(
+    parquet_dir: str | Path, ids: list[int], tz: str
+) -> dict[int, tuple[int, dt.date, dt.date]] | None:
+    """Count archived games per account with the local first and last game day."""
     if not queries.table_exists("players", parquet_dir):
         return None
 
     rows = (
         queries.player_rows(parquet_dir)
         .filter(pl.col("account_id").is_in(ids))
+        .with_columns(pl.col("start_time").dt.convert_time_zone(tz).dt.date().alias("day"))
         .group_by("account_id")
-        .agg(pl.len().alias("games"))
+        .agg(
+            pl.len().alias("games"),
+            pl.col("day").min().alias("first"),
+            pl.col("day").max().alias("last"),
+        )
         .collect()
     )
 
-    return dict(rows.iter_rows())
+    return {row[0]: (row[1], row[2], row[3]) for row in rows.iter_rows()}
 
 
 def _suggest_names(count: int, taken: Iterable[str]) -> list[str]:
@@ -336,15 +394,25 @@ def list_accounts(args: argparse.Namespace, config: str | Path | None = None) ->
         print("Your Steam32 ID is the folder name under Steam's userdata/ directory")
         return
 
-    games = _archived_games(args.parquet, [a.account_id for a in found])
+    games = _archived_games(args.parquet, [a.account_id for a in found], config_timezone(config))
     names = {a: name for name, a in config_account_names(config).items()}
 
     print("Steam accounts on this PC that have run Deadlock, newest login first:\n")
-    games_head = f" {'Archived games':>14}" if games is not None else ""
+    games_head = (
+        f" {'Archived games':>14}  {'First game':<10}  {'Last game':<10}"
+        if games is not None
+        else ""
+    )
     print(f"  {'Account':<12} {'Account name':<18} {'Profile name':<18}{games_head}  config.toml")
 
     for a in found:
-        games_cell = f" {games.get(a.account_id, 0):>14,}" if games is not None else ""
+        games_cell = ""
+
+        if games is not None:
+            count, first, last = games.get(a.account_id, (0, None, None))
+            span = (f"{first:%Y-%m-%d}", f"{last:%Y-%m-%d}") if first else ("", "")
+            games_cell = f" {count:>14,}  {span[0]:<10}  {span[1]:<10}"
+
         print(
             f"  {a.account_id:<12} {a.login or '?':<18} {a.persona or '?':<18}"
             f"{games_cell}  {names.get(a.account_id, '')}"
@@ -520,6 +588,22 @@ HISTORY_BUILDERS = (
 )
 
 
+def _history_progress(name: str, missing: list[int]) -> Callable[[int, int, list[int]], None]:
+    """Return a progress printer for one asset history build that keeps skips in missing."""
+
+    def show(done: int, total: int, skipped: list[int]) -> None:
+        missing[:] = skipped
+        cached = api.fetch_counts["cached"]
+        downloaded = api.fetch_counts["downloaded"]
+        line = (
+            f"  {name:<9} {done}/{total} builds"
+            f" ({cached} cached, {downloaded} downloaded, {len(skipped)} missing)"
+        )
+        print(f"\r{line:<76}", end="", flush=True)
+
+    return show
+
+
 def rebuild_history(args: argparse.Namespace) -> None:
     """Build the item, hero, ability, rank, and statue history from the assets API.
 
@@ -576,23 +660,7 @@ def rebuild_history(args: argparse.Namespace) -> None:
         before = len(history.eras(resume))
         api.fetch_counts.clear()
         missing: list[int] = []
-
-        def show(
-            done: int,
-            total: int,
-            skipped: list[int],
-            name: str = name,
-            missing: list[int] = missing,
-        ) -> None:
-            missing[:] = skipped
-            cached = api.fetch_counts["cached"]
-            downloaded = api.fetch_counts["downloaded"]
-            line = (
-                f"  {name:<9} {done}/{total} builds"
-                f" ({cached} cached, {downloaded} downloaded, {len(skipped)} missing)"
-            )
-            print(f"\r{line:<76}", end="", flush=True)
-
+        show = _history_progress(name, missing)
         eras = build(path=target, resume_from=resume, progress=show, full=args.full)
         size = target.stat().st_size / 1024 if target.is_file() else 0.0
         line = f"  {name:<9} {before} -> {eras} eras  {size:.0f} KB at {_tilde(target)}"
@@ -610,23 +678,26 @@ def rebuild_history(args: argparse.Namespace) -> None:
     print(f"\n{tail}")
 
 
+MODE_FLAGS = {
+    (extract.MATCH_MODE_STANDARD, extract.GAME_MODE_NORMAL, False): " --standard",
+    (extract.MATCH_MODE_RANKED, extract.GAME_MODE_NORMAL, None): " --ranked",
+    (extract.MATCH_MODE_PLACEMENT, extract.GAME_MODE_NORMAL, None): " --placement",
+    (extract.MATCH_MODE_STANDARD, extract.GAME_MODE_STREET_BRAWL, None): " --street-brawl",
+    (extract.MATCH_MODE_PRIVATE_LOBBY, extract.GAME_MODE_NORMAL, None): " --private-lobby",
+}
+
+
 def no_pool_hint(
     hero: str,
     *,
     tracked_in_config: bool,
-    mode: tuple[int, int] | None = None,
+    mode: queries.Modes | None = None,
 ) -> str:
-    """Pick the hint that matches how far the tracking setup got for a hero."""
-    mode_flag = ""
+    """Pick the hint that matches how far the tracking setup got for a hero.
 
-    if mode == (extract.MATCH_MODE_RANKED, extract.GAME_MODE_NORMAL):
-        mode_flag = " --ranked"
-    elif mode == (extract.MATCH_MODE_PLACEMENT, extract.GAME_MODE_NORMAL):
-        mode_flag = " --placement"
-    elif mode == (extract.MATCH_MODE_STANDARD, extract.GAME_MODE_STREET_BRAWL):
-        mode_flag = " --street-brawl"
-    elif mode == (extract.MATCH_MODE_PRIVATE_LOBBY, extract.GAME_MODE_NORMAL):
-        mode_flag = " --private-lobby"
+    The ranked play default needs no flag and gets an empty one.
+    """
+    mode_flag = "" if mode is None else MODE_FLAGS.get(mode, "")
 
     if tracked_in_config:
         return (
@@ -722,7 +793,7 @@ def _download_players(
 
         print(f"  {t['name']:<18} {where}")
 
-    match_mode, game_mode = args.mode
+    match_mode, game_mode = _api_modes(args.mode)
     rows = players.download_matches(
         tracked,
         hero_id,
@@ -768,7 +839,7 @@ def leaderboard_report(args: argparse.Namespace, config: str | Path | None = Non
         print(f"  {name} {m['account_id']:<12} {where}")
 
         if args.matches:
-            match_mode, game_mode = args.mode
+            match_mode, game_mode = _api_modes(args.mode)
             for row in players.recent_hero_matches(
                 m["account_id"],
                 hero_id,
@@ -799,10 +870,32 @@ def _extend_asset_history() -> bool:
     snapshots.client_version_dates(max_age=0)
     grew = False
 
-    for _, file, builder in HISTORY_BUILDERS:
+    for name, file, builder in HISTORY_BUILDERS:
         build = getattr(snapshots, builder)
         before = len(history.eras(store.read_path(file)))
-        eras = build(path=store.write_path(file), resume_from=store.read_path(file), full=False)
+        api.fetch_counts.clear()
+        missing: list[int] = []
+        show = _history_progress(name, missing)
+
+        try:
+            eras = build(
+                path=store.write_path(file),
+                resume_from=store.read_path(file),
+                progress=show,
+                full=False,
+            )
+
+        except Exception:
+            print()
+
+            raise
+
+        line = f"  {name:<9} {before} -> {eras} eras"
+        print(f"\r{line:<76}")
+
+        if missing:
+            builds = ", ".join(str(b) for b in missing)
+            print(f"    no asset data for client build {builds}, skipped")
 
         if eras > before:
             grew = True

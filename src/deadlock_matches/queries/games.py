@@ -11,6 +11,7 @@ import polars as pl
 from deadlock_matches.assets import heroes, items
 from deadlock_matches.queries.core import (
     _resolved_accounts,
+    mode_label,
     my_games,
     scan,
     table_exists,
@@ -43,6 +44,10 @@ if TYPE_CHECKING:
     from collections.abc import Sequence
 
 
+class NoGames(ValueError):
+    """The error a hero window raises when it holds no games."""
+
+
 FLAT = Format(group=True, small=2)
 
 STACK_GAME_DIMENSIONS = {
@@ -59,7 +64,7 @@ STACK_GAME_MEASURES = {
     "total": Measure(
         pl.col("value").sum(),
         "count",
-        comment="Sum of final counters; the counter meaning depends on the ability or item.",
+        comment="Sum of final counters. The counter meaning depends on the ability or item.",
         missing="zero",
     ),
     "games": Measure(
@@ -746,8 +751,10 @@ def _collect_game_records(games: pl.LazyFrame, hero: str, accounts: Sequence[int
     df = games.sort("start_local", "match_id").collect()
 
     if df.is_empty():
-        msg = f"no games of {hero} on accounts {accounts}"
-        raise ValueError(msg)
+        subject = " ".join(part for part in (mode_label(), f"games of {hero}") if part)
+        ids = ", ".join(str(account) for account in accounts)
+        msg = f"No {subject} on accounts {ids}"
+        raise NoGames(msg)
 
     return df
 
@@ -897,7 +904,7 @@ SOUL_SOURCE_DIMENSIONS = {
     "source_name": Dimension(pl.col("source_name")),
     "group": Dimension(
         pl.col("group"),
-        comment="Waves, roaming, combat, or objectives; rare and catch-up sources are null.",
+        comment="Waves, roaming, combat, or objectives. Rare and catch-up sources are null.",
     ),
 }
 

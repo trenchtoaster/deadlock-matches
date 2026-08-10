@@ -12,7 +12,7 @@ The sections below group the commands by what they read. **Match analysis** read
 
 Jump to:
 
-- [Match history](#match-history), [one match](#one-match), [win rate](#win-rate-by-day-or-mode)
+- [Match history](#match-history), [one match](#one-match), [win rate](#win-rate-over-time-or-by-mode), [Ranked progress](#ranked-progress)
 - [Historical performance](#does-winning-the-lane-win-the-game): laning, deaths, damage, healing, souls, combat, movement
 - [Compare against other players](#compare-against-your-tracked-players)
 - [Items](#item-card), [abilities](#ability-card), [heroes](#hero-card)
@@ -29,7 +29,7 @@ A few flags repeat across commands:
 - `--days N` filters your last N days of games (`--days 7`)
 - `--since YYYY-MM-DD` filters for data since a date (`--since 2026-07-01`)
 - `--hero Mirage` filters a report to one hero (required for the tracked player commands since players are tracked per hero). Quote names with spaces: `--hero "Mo & Krill"`, though capitals and punctuation are optional (`--hero "mo krill"` works too)
-- Standard is the default for reports, comparisons, and tracked-player downloads. `--ranked`, `--placement`, `--street-brawl`, and `--private-lobby` select those modes instead; `--calibration` remains an alias for `--placement`. The archive and player store retain every downloaded mode, but a report never mixes them
+- your ranked games are the default for reports and comparisons. Build 6652 moved ranked play out of the Standard queue on 2026-07-30, so the default reads Standard before that date and Ranked after it, keeping one continuous record. `--standard` selects the unranked queue that build introduced, `--ranked` selects Ranked Season 1 alone, and `--placement`, `--street-brawl`, and `--private-lobby` select those modes; `--calibration` remains an alias for `--placement`. Tracked-player downloads default to Ranked, because match history carries no `ranked_type` to split the older queue by. The archive and player store retain every downloaded mode, but a report never mixes them
 - `--min-rating Oracle` limits public stats to lobbies at that average skill rating or higher. `winrate` and `item` default to Eternus, `meta` counts every rating, and `all` disables the filter
 
 ## Match analysis
@@ -42,7 +42,7 @@ deadlock history
 
 - one line per game of yours with the match ID, newest last
 - shows your last 10 games, `--days` and `--since` reach further back
-- Standard is shown by default; use `--ranked`, `--placement`, `--street-brawl`, or `--private-lobby` for those histories
+- your ranked games are shown by default, spanning both queue eras; use `--standard`, `--ranked`, `--placement`, `--street-brawl`, or `--private-lobby` for those histories
 - the ID feeds the other commands: `match 12345678`, `download --match 12345678`
 - matches you only viewed in game stay hidden unless you name their players with `--account`
 
@@ -61,9 +61,10 @@ deadlock match
 
 - the final scoreboard of a single match and the per-5-minute interval data for your character by default
 - `deadlock match 12345678` reads THAT match from your tables, `deadlock match` your most recent one. `--ago 1` steps back to the game before that (`--ago 2` two back, and so on) without needing the ID. `--hero Wraith` follows another player from the match instead (your games keep all 12 players), and `--interval 10` changes the bucket size
-- without a match ID, Standard is the default; `--ranked`, `--placement`, `--street-brawl`, and `--private-lobby` select the latest game in those modes. An explicit match ID is always read regardless of mode
+- without a match ID, your latest ranked game is the default, whichever queue era it came from; `--standard`, `--ranked`, `--placement`, `--street-brawl`, and `--private-lobby` select the latest game in those modes. An explicit match ID is always read regardless of mode
 - the scoreboard shows the match screen numbers while the interval columns come from the minute snapshots, so the Last hits totals can differ slightly. Troopers and Neutrals split the interval Last hits column
 - a game that is not yours works too: `deadlock download --match <id>` pulls it into the players tables once, and `deadlock match <id> --hero Wraith` reads it from there automatically
+- a Ranked match adds two columns to the scoreboard, shown further down: the skill rating each of the 12 players carried into the game and the Rank Points it paid them. Other modes print the scoreboard unchanged
 
 ```
 Match 12345678: Mirage, win, 2026-07-08 07:16, 36:03
@@ -94,6 +95,31 @@ Lobby average: The Hidden King Oracle I, The Archmother Emissary VI
   35-37m      2,162  2,059   4/0/2    3,570   1,232          0      427         90         0         0        0       0
   Total      47,025  1,304 14/3/17   40,145  34,065      2,154   13,132      2,128       103        90       13       0
 ```
+
+The same scoreboard in a Ranked match, where every player carries a rating and the game pays out Rank Points:
+
+```
+  Team             Hero                    K/D/A        Souls   Damage Obj damage  Healing Prevented Last hits Denies    Buffs  Rating         Points
+  The Hidden King  Mo & Krill     2 (Key)  10/3/24     57,278   42,261      6,775   33,086       662       248      3       34  Oracle I         +325
+  The Hidden King  Wraith                  13/4/14     54,467   34,005     31,478   10,378         0       218      9       28  Emissary VI      +350
+  The Hidden King  Drifter        1 (MVP)  12/2/26     48,584   44,218     11,763   17,145         0       162      2       41  Oracle I         +300
+  The Hidden King  Mirage *                14/3/17     47,025   40,145      2,154   13,132     2,128       162      0       22  Emissary VI      +375
+  The Hidden King  Lash                    10/6/26     44,284   35,414      6,863    6,953         0       178      3       31  Emissary V       +325
+  The Hidden King  Seven                   5/10/8      43,115   21,329      6,736    7,082         0       169      1       12  Oracle II        +275
+  The Archmother   Vindicta       3 (Key)  15/8/7      43,969   59,793      2,674    2,312       252       144      2       19  Oracle I         -300
+  The Archmother   Ivy                     2/9/7       41,936   22,826        433    7,687         0       213      0       25  Emissary VI      -325
+  The Archmother   Pocket                  1/9/6       41,040   37,468      4,432       28         0       186      2       15  Emissary VI      -350
+  The Archmother   Shiv                    4/12/8      36,762   28,261         30    8,004     1,451       123      0        9  Oracle I         -275
+  The Archmother   Warden                  3/10/6      36,420   27,756      3,005    1,985         0       192     25       24  Emissary V       -375
+  The Archmother   Bebop                   3/16/12     34,944   29,645      2,273   10,218         0       112      2        7  Oracle II        -250
+
+Points: 48,300 -> 48,675 (+375).
+```
+
+- Rating is the rating the player started the match on. The game records no rating for the end of a match, so a promotion shows up on the next game
+- Points is what the match actually moved, so a loss clamped at a subrank floor reads `+0` even though the matchmaker assigned a full drop
+- the line under the scoreboard is your own progress: the points before and after, the assigned change when a clamp held it back, the placement matches you have left, and whether demotion protection absorbed the loss
+- `deadlock rank` puts the same numbers side by side across every Ranked game you have stored
 
 Each flag below swaps the interval table for a different view of the same match.
 
@@ -538,39 +564,43 @@ Kills per enemy, 5-minute intervals
   35:39   Ivy                23.6s        6m      78s
 ```
 
-### Win rate by day or mode
+### Win rate over time, by mode, or by account
 
 ```
 deadlock winrate
 ```
 
-- wins and losses per day, with your MVP and Key Player awards
-- `--by week` or `--by month` rolls the table into weekly or monthly rows, weeks start on Monday
+- wins and losses per week, with your MVP and Key Player awards
+- `--by day` breaks the table into daily rows, `--by month` rolls it into monthly ones instead; weeks (the default) start on Monday
 - `--by mode` replaces the date table with one total row per stored game mode. It deliberately
   reads every mode, while `--account`, `--hero`, `--days`, and `--since` still narrow the games.
   Do not combine it with a mode-selection flag
-- `--hero Mirage` filters to one hero and, for Standard, also adds the public win rate from `deadlock-api.com` under the table, scoped by `--min-rating` (Eternus+ by default). Ranked, New Player Placement, Street Brawl, and Private Lobby omit that line because the public analytics endpoint has no matching mode filter
-- Lobby is the average lobby skill rating of the day, averaged in subrank steps
+- `--by account` replaces the date table with one total row per account, in config.toml order.
+  Unlike `--by mode` it keeps the standing selection, and the mode flags narrow it as usual.
+  Ranked games in the window add the Net points column here too
+- `--hero Mirage` filters to one hero and, on the default selection, also adds the public win rate from `deadlock-api.com` under the table, scoped by `--min-rating` (Eternus+ by default). Every explicit mode flag omits that line because the public analytics endpoint has no matching mode filter
+- Lobby is the average lobby skill rating of the row, averaged in subrank steps. Games before build 6652 read the average Valve published with each match. Season One Ranked publishes none, so the average there is computed from the starting ranks of the placed players in the lobby and needs at least half of them placed. The label uses the rank names in effect at the row's newest rated game, so rows from before a rank rename keep the names their era used
+- Ranked games in the window add a Net points column, the Rank Points that bucket won minus the ones it lost, and the Overall line ends with the net for the whole window. The default selection includes Ranked games, so the column appears without any flag. A bucket without a points reading leaves the column blank, and placement games add nothing because their bank resets every game. `--by mode` always prints the column and only the Ranked row fills it, since no other mode moves points
 - games where someone abandoned stay in the table (they are still wins and losses), a footer separates them: who left with each record, how many leavers reconnected and finished, and your record without them
 - games Valve flagged as not scored are left out of the table and reported under it, match history still shows their result
 
 ```
-Dates below are grouped by America/Chicago day.
+Dates below are grouped by America/Chicago week.
 
-  Day           Games    W    L   Win rate         Lobby   MVP   Key  Abandons   Net wins   Cumulative net
-  2026-04-06        4    3    1      75.0%     Phantom 4     1     0                   +2               +2
-  2026-04-07        5    2    3      40.0%     Phantom 5     0     1         1         -1               +1
-  2026-04-08        3    2    1      66.7%   Ascendant 1     0     0                   +1               +2
-  2026-04-09        6    4    2      66.7%     Phantom 5     0     2         1         +2               +4
-  2026-04-10        4    1    3      25.0%     Phantom 6     0     0                   -2               +2
+  Week          Games    W    L   Win rate         Lobby   MVP   Key  Abandons   Net wins   Cumulative net
+  2026-06-01        5    3    2      60.0%   Ritualist I     0     0         1         +1               +1
+  2026-06-08        7    5    2      71.4%  Ritualist II     0     0                   +3               +4
+  2026-06-15        3    1    2      33.3%  Ritualist IV     0     0                   -1               +3
 
-Overall: 22 games, 12-10, 54.5% win rate, +2 net wins, 1 MVP, 3 Key Player, Phantom 5 lobbies.
+Overall: 15 games, 9-6, 60.0% win rate, +3 net wins, 0 MVP, 0 Key Player, Ritualist II lobbies.
 
-Abandons: 2 games — an ally left 1 (0-1), an enemy left 1 (1-0).
-  Without them: 20 games, 11-9, 55.0% win rate.
+Abandons: 1 game. You left 1 (0-1).
+  Without them: 14 games, 9-5, 64.3% win rate.
 
 Not scored: 1 game left out of the table (safe to leave), 0-1 in match history.
 ```
+
+`--by day` prints the same table broken into daily rows instead of weekly ones.
 
 To audit the modes without mixing them into one rate:
 
@@ -581,11 +611,86 @@ deadlock winrate --by mode --account main --hero Mirage
 Synthetic example:
 
 ```
-  Mode            Games     W     L   Win rate
-  Standard          128    72    56      56.3%
-  Street Brawl       18    11     7      61.1%
-  Private Lobby       9     6     3      66.7%
+  Mode                  Games     W     L   Win rate  Net points
+  Standard (ranked)       128    72    56      56.3%
+  Ranked                   46    26    20      56.5%      +2,150
+  Standard (unranked)      21    10    11      47.6%
+  Street Brawl             18    11     7      61.1%
+  Private Lobby             9     6     3      66.7%
 ```
+
+Standard gets two rows because the queue changed meaning: it was the ranked queue until build 6652, and unranked after. `matches.ranked_type` tells them apart, so the merged total is never presented as one win rate.
+
+The same column on the date table, for a Ranked window:
+
+```
+deadlock winrate --ranked --days 2
+```
+
+```
+Dates below are grouped by America/Chicago week.
+
+  Week          Games    W    L   Win rate         Lobby   MVP   Key  Abandons   Net wins   Cumulative net  Net points
+  2026-07-27        3    2    1      66.7%  Ritualist II     0     0                   +1               +1        +375
+
+Overall: 3 games, 2-1, 66.7% win rate, +1 net wins, 0 MVP, 0 Key Player, Ritualist II lobbies, +375 net points.
+```
+
+### Ranked progress
+
+```
+deadlock rank
+```
+
+- every Ranked game of the current season you have stored, oldest first, with the Rank Points it paid
+- `--account`, `--days`, and `--since` narrow the table. The lines under it always read your whole stored season, so a short window never rewrites your record
+- Rating is the rating you started the match on, `Placing` while the placement matches run
+- Points is your total before and after the game, Change is what the game actually moved
+- a loss stops at the floor of your subrank. The number in parentheses is the change the matchmaker assigned before the clamp, so `+0 (-375)` is a loss that cost nothing
+- Streak is the win streak you carried into the game. A longer streak pays more for a win
+- the Note column marks the placement matches you have left, the losses demotion protection absorbed, and games Valve did not score
+- the footer holds your current rating, how far into the subrank you are (subranks I to V span 1,000 points, VI spans 2,000, so a full rank is 7,000), your season record, and the net points over the window shown
+- Eternus subranks are percentile-based instead of point-based, so an Eternus footer shows the points without the subrank progress
+- placement games bank points that reset every game, so they never count toward the net and the footer shows no point total while you are placing
+- a game that starts on different points than the game before it ended on means the archive skipped games in between. The row gets an `archive gap before this` note and the footer says how many games are affected, `deadlock sync --source api` backfills what the API still has
+
+```
+  Day         Time   Account    Hero           Result  Rating                   Points       Change  Streak  Note
+  2026-07-30  20:28  main       Mirage         win     Placing                0 -> 125         +125       0  8 placements left
+              21:22  main       Mirage         loss    Placing                  0 -> 0    +0 (-125)       1  7 placements left
+              22:37  main       Mirage         win     Placing                0 -> 125         +125       0  6 placements left
+  2026-07-31  19:05  main       Mirage         win     Emissary IV    45,000 -> 45,300         +300       0
+              20:11  main       Mirage         win     Emissary IV    45,300 -> 45,675         +375       1
+              21:30  main       Mirage         loss    Emissary IV    45,675 -> 45,375         -300       2
+              22:15  main       Mirage         loss    Emissary IV    45,375 -> 45,000         -375       0
+              23:02  main       Mirage         loss    Emissary IV    45,000 -> 45,000    +0 (-375)       0  demotion protection used
+
+Rating: Emissary IV at 45,000 points, 0 of 1,000 into the subrank.
+Season record: 4-4. Net over the 5 games since placing: +0 points.
+```
+
+An account with no Ranked games gets the unlock requirements instead, counted from your own archive:
+
+```
+No Ranked games stored for alt1.
+
+Ranked eligibility (Beta Season 1)
+  Wins                    41 of 60
+  Heroes at 15 wins        2 of 3
+
+  Hero              Wins
+  Mirage              19  qualified
+  Warden              16  qualified
+  Infernus             4
+  Lash                 2
+
+Counts come from the local archive, so games missing from it are not counted.
+```
+
+- the wins count scored Standard and Ranked games, the way the in-game panel counts them
+- the thresholds and the season start come from the season data on `deadlock-api.com`, with the shipped numbers as a fallback when the request fails
+- games you played before you started archiving are not in your tables, so the count can read lower than the game shows
+- several accounts without Ranked games print one line each with their win counts instead of the full panel
 
 ### Does winning the lane win the game
 
@@ -672,7 +777,7 @@ deadlock damage --hero Mirage
 ```
 
 - every game of a hero rolled into one table: a row per gun, ability, or item source with the games it appeared in, its total, per minute, and share of your hero damage
-- the delivery block on top splits the total into gun, abilities, and item procs (bullet procs fire when your shot lands, standalone items bring their own trigger). The grouping follows what carries the damage, not the shop color — Siphon Bullets is a vitality item but procs on hit, so it counts as a bullet proc
+- the delivery block on top splits the total into gun, abilities, and item procs (bullet procs fire when your shot lands, standalone items bring their own trigger). The grouping follows what carries the damage, not the shop color. Siphon Bullets is a vitality item but procs on hit, so it counts as a bullet proc
 - Mercurial Magnum sits under standalone: its on-cast proc has its own trigger, and while the until-next-reload bonus rides on bullets, the game reports both under one line, so it groups by its primary mechanic
 - `/game` divides a delivery row by every listed game and a source row by the games it appeared in, so an item bought in a handful of games is not averaged over the whole window
 - `/min` divides a delivery row by the combined length of every listed game and a source row by the minutes of its own games. `/min owned` divides item rows by the minutes the item was owned instead, so a late buy is not diluted by the minutes before it existed
@@ -1103,9 +1208,9 @@ The comparison commands (`compare`, `builds`, and the top player part of `item`)
 
 2. **Track the ones you want.** Paste their lines under `[players.<Hero>]` in `config.toml`. The name is just a label for reports, keep theirs or write your own.
 
-3. **Download their games.** `deadlock download --hero Mirage` pulls recent Standard games from everyone tracked for the hero. Nothing is ever downloaded from the leaderboard on its own. Re-running adds new games without downloading old ones again. Add `--ranked`, `--placement`, `--street-brawl`, or `--private-lobby` when you deliberately want those games.
+3. **Download their games.** `deadlock download --hero Mirage` pulls recent Ranked games from everyone tracked for the hero. Nothing is ever downloaded from the leaderboard on its own. Re-running adds new games without downloading old ones again. Add `--standard`, `--placement`, `--street-brawl`, or `--private-lobby` when you deliberately want those games.
 
-To stop comparing against someone, delete their line from `config.toml`. The downloaded matches stay on disk (they cost little space and a game can contain more than one tracked player), they just stop being read, and tracking the player again later needs no new downloads. Mode selection works the same way: old Ranked, New Player Placement, Street Brawl, or scrim rows remain safely stored but do not join the default Standard pool. `deadlock compare movement --hero Mirage` shows who is in the selected pool with their games and account IDs.
+To stop comparing against someone, delete their line from `config.toml`. The downloaded matches stay on disk (they cost little space and a game can contain more than one tracked player), they just stop being read, and tracking the player again later needs no new downloads. Mode selection works the same way: unranked, New Player Placement, Street Brawl, or scrim rows remain safely stored but do not join the default ranked pool. `deadlock compare movement --hero Mirage` shows who is in the selected pool with their games and account IDs.
 
 ### Hero meta by rating
 
@@ -1125,15 +1230,13 @@ deadlock meta --hero Mirage --by rating
 Mirage public data (Oracle+ lobbies, deadlock-api.com)
 
   Rating            Matches Win rate Pick rate
-  Oracle 1            5,523    47.4%     21.2%
-  Oracle 2            5,586    48.5%     21.3%
-  Oracle III          5,317    47.8%     21.2%
-  Oracle 4            4,958    48.1%     21.0%
-  Oracle 5            4,847    48.3%     21.1%
-  Oracle 6            4,357    48.4%     21.1%
-  Phantom 1           2,849    48.1%     20.9%
-  Phantom 2           2,822    47.1%     21.5%
-  Phantom III         2,695    50.5%     22.1%
+  Oracle I            6,009    48.1%     24.8%
+  Oracle II           6,656    45.9%     23.9%
+  Oracle III          5,553    47.6%     24.3%
+  Oracle IV           6,850    47.4%     24.5%
+  Oracle V            6,249    48.0%     25.5%
+  Oracle VI           4,901    48.3%     25.1%
+  ...
 ```
 
 ### Tracked player builds
@@ -1144,16 +1247,16 @@ deadlock builds --hero Mirage
 
 - items your tracked players buy (in wins vs losses), from their downloaded games
 - `--min-percent 30` hides items bought in fewer than 30% of the builds
-- Standard is the default; `--ranked`, `--placement`, `--street-brawl`, or `--private-lobby` reads builds from that mode alone
+- your ranked games are the default pool, spanning both queue eras. `--standard`, `--ranked`, `--placement`, `--street-brawl`, or `--private-lobby` reads builds from that mode alone
 - an expensive late item with a big win/loss gap usually just means the winner got rich enough to buy it
 
 ```
 Tracked Mirage players (30 downloaded games):
 
-  Player             Games  Rank  Record
-  tracked2            10     1  8W 2L
-  tracked3           10    14  6W 4L
-  tracked4             10     -  7W 3L
+  Player             Games  Record
+  tracked2              10  8W 2L
+  tracked3              10  6W 4L
+  tracked4              10  7W 3L
 
 Shared core across 21 winning builds:
 
@@ -1176,9 +1279,9 @@ deadlock compare souls --hero Mirage
 - `compare souls` starts with income-source gaps, then net worth over time. `--milestones` flips it to the median minute each side reaches each net-worth mark
 - `compare damage` and `compare healing` start with the source breakdown, grouped like the standalone commands, then print the interval table underneath. Healing includes a healing-prevented section when anti-heal rows exist
 - `compare combat` compares aim, incoming fire, and parries as whole-window counters. `compare movement` prints whole-game movement averages and has its own section below
-- the interval reports use the same 5-minute windows the `match` command uses (`--interval 10` for wider rows). Standard is the default on both sides; `--ranked`, `--placement`, `--street-brawl`, or `--private-lobby` swaps both sides to that mode
+- the interval reports use the same 5-minute windows the `match` command uses (`--interval 10` for wider rows). Ranked play is the default on both sides, spanning both queue eras. `--standard`, `--ranked`, `--placement`, `--street-brawl`, or `--private-lobby` swaps both sides to that mode
 - the summary table shows each player as one row with their whole-game rate, you first for contrast
-- every interval cell is the median of the per-game rates inside that window, so a game only counts while it lasts. The cumulative gap column keeps the running total of the gap column — positive means you are ahead by that point in a typical game, negative means you trail
+- every interval cell is the median of the per-game rates inside that window, so a game only counts while it lasts. The cumulative gap column keeps the running total of the gap column. Positive means you are ahead by that point in a typical game, negative means you trail
 - late intervals are not shown once too few games reach them on either side, sparse records would skew the medians
 - `--since 2026-06-30` keeps only your games from that date, useful when a patch changed the soul economy and old games would drag your median
 - `--pool-since 2026-06-30` also filters the tracked comparison pool by match date. Use both flags when you want recent form vs recent form
@@ -1205,11 +1308,11 @@ You (111222333, 50 Mirage games) vs 3 tracked Mirage players (30 Mirage games): 
 
 Souls over time
 
-  Player             Games  Rank  Last download   Avg/min  Med/min
-  you                   50     -              -       978      961
-  tracked2            10     1     2026-07-10     1,102    1,056
-  tracked3           10    14     2026-07-10       989    1,004
-  tracked4             10     -     2026-07-08     1,041    1,022
+  Player             Games  Last download   Avg/min  Med/min
+  you                   50              -       978      961
+  tracked2              10     2026-07-10     1,102    1,056
+  tracked3              10     2026-07-10       989    1,004
+  tracked4              10     2026-07-08     1,041    1,022
 
   Min       You/min  Them/min   Gap/min Cumulative gap    Games
   0-5           544       561       -17            -85    50/30
@@ -1274,10 +1377,10 @@ deadlock compare combat --hero Mirage
 
 You (111222333, 50 Mirage games) vs 3 tracked Mirage players (30 Mirage games): combat
 
-  Player             Games  Rank  Last download
-  tracked1            10     1  2026-07-18
-  tracked2            10     -  2026-07-01
-  tracked3            10     -  2026-07-11
+  Player             Games  Last download
+  tracked1              10  2026-07-18
+  tracked2              10  2026-07-01
+  tracked3              10  2026-07-11
 
   Metric                        You       Them        Gap
   Hero hit %                  43.1%      42.2%      +1.0%  better
@@ -1300,17 +1403,16 @@ deadlock compare movement --hero Mirage
 
 - whole-game movement averages instead of intervals: the tracked player list, the pooled gap table, and one row per tracked player
 - the Tracked column comes from past `deadlock download` runs for the players you track on the hero, nothing is fetched by this command
-- Rank is their hero ladder rank when they were downloaded, `-` for players who were never on the board
 - long or wide names (Korean, Cyrillic) are cut to a fixed width so the table stays aligned
 - the Tracked averages can blend playstyles: here every tracked player beats the you row on meters and stationary, while in air ranges from 13% to 31% because ground and air Mirages are both viable
 
 ```
 You (111222333, 50 Mirage games) vs 3 tracked Mirage players (34 Mirage games): movement
 
-  Player             Games  Rank  Last download
-  tracked1            14     1  2026-07-01
-  tracked2            10     -  2026-07-01
-  tracked3             10    23  2026-07-01
+  Player             Games  Last download
+  tracked1              14  2026-07-01
+  tracked2              10  2026-07-01
+  tracked3              10  2026-07-01
 
   Metric                        You  Tracked      Gap
   meters /min                 388.3    430.0    -41.7
@@ -1322,11 +1424,11 @@ You (111222333, 50 Mirage games) vs 3 tracked Mirage players (34 Mirage games): 
   ground dashes /min            1.7      2.4     -0.7
   air dashes /min               0.2      0.8     -0.6
 
-  Player            Account  Games    Rank   m /min  Stationary   Slide  In air  Zipline  Fighting  Dash/min  Air dash
-  you                     -     50       -    388.3        9.9%    3.9%    8.1%     6.7%     24.3%       1.7       0.2
-  tracked1      111222333     14       1    453.2        5.4%    7.0%   13.3%     8.8%     26.4%       2.8       0.3
-  tracked2      444555666     10       -    451.7        7.2%    9.2%   31.0%     8.2%     28.2%       1.8       1.8
-  tracked3       555666777     10      23    420.1        7.2%    7.4%   23.1%     8.6%     30.3%       1.9       1.9
+  Player            Account  Games   m /min  Stationary   Slide  In air  Zipline  Fighting  Dash/min  Air dash
+  you                     -     50    388.3        9.9%    3.9%    8.1%     6.7%     24.3%       1.7       0.2
+  tracked1        111222333     14    453.2        5.4%    7.0%   13.3%     8.8%     26.4%       2.8       0.3
+  tracked2        444555666     10    451.7        7.2%    9.2%   31.0%     8.2%     28.2%       1.8       1.8
+  tracked3        555666777     10    420.1        7.2%    7.4%   23.1%     8.6%     30.3%       1.9       1.9
 ```
 
 ### Download matches from other players
@@ -1336,7 +1438,7 @@ deadlock download --hero Mirage
 ```
 
 - downloads recent games from the players you track into their own parquet tables (see below). Nothing is ever downloaded from the leaderboard on its own
-- Standard is the default. `--ranked`, `--placement`, `--street-brawl`, and `--private-lobby` download only the selected mode
+- Ranked is the default, because match history carries no `ranked_type` to split the older queue by. `--standard`, `--placement`, `--street-brawl`, and `--private-lobby` download only the selected mode
 - without `--account` it downloads everyone under `[players.<Hero>]` in your config.toml
 - `--account 111222333` downloads a specific player without tracking them (still needs `--hero`, comma-separated for several). Their games archive and `deadlock match` reads them, but only players in config.toml join the comparisons
 - `--match 12345678` fetches one match by ID (comma-separated for several), no `--hero` needed: it stores every player in the match, so `match --hero <anyone>` then works on it
@@ -1345,7 +1447,7 @@ deadlock download --hero Mirage
 - read downloaded player games by name or ID, for example `deadlock damage --hero Mirage --account tracked2` or `deadlock damage --hero Mirage --account 111222333`
 - add the same mode flag when reading an alternate download, for example `deadlock damage --hero Mirage --account tracked2 --private-lobby`
 - read a specific downloaded match directly by ID, for example `deadlock match 12345678 --hero Mirage`
-- players still on the ladder get their current rank noted when downloaded, so the comparison reports can show it later
+- players still on the ladder get their current ladder position noted on the download ledger. The reports stopped printing it after the 2026-07-30 update, which dropped the rating fields from the leaderboard endpoint and left the stored value frozen at whatever it was on download day
 
 ### Is an item worth buying
 
@@ -1396,7 +1498,7 @@ deadlock leaderboard --hero Mirage
 ```
 
 - the current top players of a hero from the per-hero leaderboard, with their account IDs and paste-ready config lines for the ones you are not tracking yet ([Tracked players](#tracked-players-and-public-stats))
-- `--matches` (optionally `--matches 10`) lists each one's recent Standard match IDs, win or loss, so you can pick a game to pull. `--ranked`, `--placement`, `--street-brawl`, or `--private-lobby` selects those IDs instead
+- `--matches` (optionally `--matches 10`) lists each one's recent Ranked match IDs, win or loss, so you can pick a game to pull. `--standard`, `--placement`, `--street-brawl`, or `--private-lobby` selects those IDs instead
 - tracked `[players.<Hero>]` entries show up too, marked `tracked`
 
 ```
@@ -1424,6 +1526,8 @@ deadlock sync
   - it prints a line per match as it lands and lists the ids the API does not have, so those can be opened in game instead
   - a short rate limit wait is slept through, a long one defers the rest of the downloads and the next sync picks them up
 - after a game update, sync pulls the new item data once and re-exports the matches that came in with the old data, printing a line for each step. It reads the installed version from steam.inf, so between patches it never calls the assets API, and offline it just skips
+  - each history table reports its own progress while it builds, counting the client builds walked so far and how many came from the cache instead of the network, then settles into the eras it ended with. Most patches only move the tables the patch actually touched
+  - a client build the assets API has no data for is named and skipped, as `no asset data for client build 6698, skipped`. The remaining builds still go in, so a gap never stops the run
 - `--full` rebuilds every table from scratch, needed after a schema change or a backfill. Full
   rebuilds print archive progress every 50 files, then say when the bundled asset-history tables
   are being written, so a long rebuild never looks stuck
@@ -1446,6 +1550,19 @@ Archive: 814 matches (+1 new) at ~/.local/share/deadlock-matches/matches
 Exported 1 new match and skipped 813 already exported
 ```
 
+The first sync after a patch extends the asset history before it exports anything, one line per table:
+
+```
+Game updated, extending the asset history to build 6702
+  items     39 -> 40 eras
+  heroes    29 -> 29 eras
+  abilities 92 -> 93 eras
+  ranks     2 -> 2 eras
+  statues   3 -> 3 eras
+```
+
+Each line counts builds while it works, so a slow fetch shows `items     4/12 builds (3 cached, 1 downloaded, 0 missing)` until it finishes and the era count replaces it.
+
 The API holds at least a subset of an account's matches, and it is possible to have it retrieve all of them, so the sync grabs whatever it has. To fill the gaps yourself you can click each game in the in-game match history, though the game only lets you open roughly 50 before making you wait and try again. Check out [deadlock-api.com](https://deadlock-api.com) for more details.
 
 ### Your Steam accounts
@@ -1456,15 +1573,16 @@ deadlock accounts
 
 - the Steam accounts on this PC that have run Deadlock, with the account IDs you put in `config.toml`
 - reads Steam's `userdata/` folders and remembered logins, so it works before any matches are processed
+- the game count and the first and last game day come from your archive, in your local timezone, and only show up once matches are processed
 - ends with a ready-to-paste `[accounts]` block for the accounts `config.toml` does not name yet
 - the suggested names are neutral on purpose: your account name (the private login) is best kept out of `config.toml`, since the names you pick there are printed in report headers
 
 ```
 Steam accounts on this PC that have run Deadlock, newest login first:
 
-  Account      Account name       Profile name       Archived games  config.toml
-  111222333    mainlogin          tracked2                     36  main
-  123456789    oldalt             tracked2                      3
+  Account      Account name       Profile name       Archived games  First game  Last game   config.toml
+  111222333    mainlogin          tracked2                       36  2026-04-11  2026-07-28  main
+  123456789    oldalt             tracked2                        3  2025-11-02  2025-11-09
 
 Add the ones that are you to config.toml, the names are yours to change:
 

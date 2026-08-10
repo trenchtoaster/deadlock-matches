@@ -13,11 +13,12 @@ from deadlock_matches.queries.core import (
     INHERIT,
     SCORED,
     ModeArg,
+    RankedArg,
     hero_filter,
     my_games,
     player_rows,
     scan,
-    skill_rating,
+    skill_rating_asof,
 )
 from deadlock_matches.queries.semantic import (
     Dimension,
@@ -35,6 +36,8 @@ if TYPE_CHECKING:
 
 
 _SCORED = ~pl.col("not_scored").fill_null(value=False)
+
+_MIN_PLACED = 6
 
 
 def daily_record(
@@ -60,7 +63,15 @@ def daily_record(
     - abandons counts the games where anyone abandoned
     - win_rate is a proportion, not a percent, like the measure it comes from
     - lobby is the average lobby rating label, averaged in subrank steps
+    - the average Valve published supplies it before build 6652
+    - the published fields read 0/0 from that build on, so Season One Ranked
+      averages the starting badges of the placed players instead
+    - lobby names resolve as of the newest rated game in the bucket, so a
+      bucket from before a rank rename keeps the names its era used
     - subrank_sum and rated_games are the raw pieces, for an overall average
+    - net_points is the applied Rank Point change over the scored games
+    - placements move no points and a bucket without a points reading stays
+      null instead of zero
     """
     if by not in ("day", "week", "month"):
         msg = f"Unknown bucket {by!r}, use day, week, or month"
@@ -110,6 +121,8 @@ def daily_record(
             "subrank_sum",
             "rated_games",
             "lobby_badge",
+            "last_rated_at",
+            "net_points",
         ),
         lf=games.lazy(),
     )
@@ -129,7 +142,7 @@ def daily_record(
             ).cast(pl.Int32),
             pl.col("abandons").fill_null(0).cast(pl.Int32),
         )
-        .with_columns(skill_rating("lobby_badge").alias("lobby"))
+        .with_columns(skill_rating_asof("lobby_badge", "last_rated_at").alias("lobby"))
         .drop("lobby_badge")
     )
 
@@ -149,6 +162,7 @@ def daily_record(
         "win_rate",
         "net",
         "cum_net",
+        "net_points",
         "lobby",
     ).collect()
 
@@ -176,6 +190,8 @@ def _lobby_subrank() -> pl.Expr:
 
     - observed unrated modes carry an explicit 0/0 instead of absent fields
     - a partial 0/positive pair is not a complete lobby rating either
+    - Season One games carry 0/0 here and take their lobby rating from
+      _placed_lobby instead
     """
     team0 = pl.col("matches.average_badge_team0")
     team1 = pl.col("matches.average_badge_team1")
@@ -190,6 +206,56 @@ def _lobby_subrank() -> pl.Expr:
         )
         .otherwise(None)
     )
+
+
+def _placed_lobby() -> pl.LazyFrame:
+    """Average the starting badges the placed players carried into each match.
+
+    - Season One Ranked publishes no team badge averages but records every
+      starting badge, so the lobby rating comes from the players themselves
+    - placing players carry badge 0 and stay out of the average
+    - fewer than _MIN_PLACED placed players is no lobby rating at all, so an
+      early season lobby full of placing players gets none
+    """
+    placed = pl.col("player_rank_initial_display_rank") > 0
+
+    return (
+        scan("players")
+        .group_by("match_id")
+        .agg(
+            pl.when(placed)
+            .then(_subrank("player_rank_initial_display_rank"))
+            .mean()
+            .alias("subrank"),
+            placed.sum().alias("placed"),
+        )
+        .select(
+            "match_id",
+            pl.when(pl.col("placed") >= _MIN_PLACED)
+            .then(pl.col("subrank"))
+            .otherwise(None)
+            .alias("placed_subrank"),
+        )
+    )
+
+
+def _points_change() -> pl.Expr:
+    """Take the Rank Point change a Ranked game applied.
+
+    - the difference between the two flat progress readings, never the
+      change the matchmaker assigned, which can stop at a subrank floor
+    - null outside Ranked games, where neither reading is recorded
+    - null during placements, whose bank resets every game and never reaches
+      the placed rating
+    """
+    change = pl.col("player_rank_final_flat_progress") - pl.col("player_rank_initial_flat_progress")
+
+    return pl.when(pl.col("player_rank_initial_display_rank") > 0).then(change).otherwise(None)
+
+
+def _scored_points() -> pl.Expr:
+    """Take the points reading of each scored game."""
+    return pl.when(_SCORED).then(pl.col("points_change"))
 
 
 def badge_from_subrank(subrank: pl.Expr) -> pl.Expr:
@@ -210,8 +276,18 @@ def badge_from_subrank(subrank: pl.Expr) -> pl.Expr:
 
 
 RECORD_GAMES_DIMENSIONS = {
+    "account_id": Dimension(
+        pl.col("account_id"),
+        comment="Which of the configured accounts played the game.",
+    ),
     "match_mode": Dimension(pl.col("match_mode")),
     "game_mode": Dimension(pl.col("game_mode")),
+    "ranked_type": Dimension(
+        pl.col("ranked_type"),
+        comment="Raw ECitadelRankedType: null before build 6652, when match_mode 1 "
+        "was itself the ranked queue, then 0 unranked and 1 Ranked. Separates the "
+        "two things match_mode 1 means.",
+    ),
     "day": Dimension(pl.col("day"), comment="Local date, not the UTC date."),
     "week": Dimension(
         pl.col("day").dt.truncate("1w"),
@@ -258,6 +334,16 @@ RECORD_GAMES_MEASURES = {
         synonyms=("winrate",),
         direction="maximize",
     ),
+    "net_points": Measure(
+        pl.when(_scored_points().is_not_null().any()).then(_scored_points().sum()).otherwise(None),
+        "points",
+        comment="Rank Points won minus lost over scored games, summing the change the game "
+        "applied and never the change the matchmaker assigned. A loss that stopped at a subrank "
+        "floor adds nothing, placement games add nothing, and a group without a single "
+        "points reading stays null rather than zero.",
+        direction="maximize",
+        missing="zero",
+    ),
     "mvps": Measure(
         ((pl.col("mvp_rank") == 1) & _SCORED).sum(),
         "count",
@@ -294,6 +380,11 @@ RECORD_GAMES_MEASURES = {
         "badge",
         comment="The mean scored-game lobby subrank rounded back to a badge level, ready for skill_rating.",
     ),
+    "last_rated_at": Measure(
+        pl.when(_SCORED_SUBRANK.is_not_null()).then(pl.col("start_time")).max(),
+        "datetime",
+        comment="Start of the newest scored game with a lobby rating, the time lobby labels resolve against.",
+    ),
 }
 
 
@@ -310,19 +401,22 @@ def record_games(
     hero: str | None = None,
     match_mode: ModeArg = INHERIT,
     game_mode: ModeArg = INHERIT,
+    ranked: RankedArg = INHERIT,
 ) -> MetricView:
     """One row per match in the winrate window.
 
     - days keeps only the last N days that had games, None keeps everything
     - the result feeds daily_record, abandon_record, and unscored_record
       through their games parameter
-    - match_mode and game_mode carry the my_games behaviour, so only ordinary
-      matchmaking games count unless mode_context says otherwise
+    - the mode arguments carry the my_games behaviour, so ranked play is the
+      only thing counted unless mode_context says otherwise
     - the readable match_mode and game_mode dimensions allow an all-mode
-      win-rate summary when both filters are lifted
+      win-rate summary when the filters are lifted
     """
     return MetricView(
-        source=lambda: _record_game_rows(accounts, tz, days, since, hero, match_mode, game_mode)
+        source=lambda: _record_game_rows(
+            accounts, tz, days, since, hero, match_mode, game_mode, ranked
+        )
     )
 
 
@@ -334,12 +428,15 @@ def _record_game_rows(
     hero: str | None,
     match_mode: ModeArg = INHERIT,
     game_mode: ModeArg = INHERIT,
+    ranked: RankedArg = INHERIT,
 ) -> pl.LazyFrame:
     """Take the one row per match the winrate window keeps.
 
     - the result is already deduplicated
+    - lobby_subrank prefers the average Valve published and falls back to
+      the placed player average Season One Ranked allows
     """
-    lf = view_frame(my_games(accounts, tz, match_mode, game_mode))
+    lf = view_frame(my_games(accounts, tz, match_mode, game_mode, ranked))
 
     if hero is not None:
         lf = lf.filter(hero_filter(hero))
@@ -351,16 +448,24 @@ def _record_game_rows(
     if days is not None:
         lf = lf.filter(pl.col("day").rank("dense", descending=True) <= days)
 
-    return lf.unique(subset="match_id").select(
-        "match_id",
-        "team",
-        "day",
-        "match_mode",
-        "game_mode",
-        "won",
-        "mvp_rank",
-        (~SCORED).alias("not_scored"),
-        _lobby_subrank().alias("lobby_subrank"),
+    return (
+        lf.unique(subset="match_id")
+        .join(_placed_lobby(), on="match_id", how="left")
+        .select(
+            "match_id",
+            "account_id",
+            "team",
+            "day",
+            "start_time",
+            "match_mode",
+            "game_mode",
+            pl.col("matches.ranked_type").alias("ranked_type"),
+            "won",
+            "mvp_rank",
+            (~SCORED).alias("not_scored"),
+            pl.coalesce(_lobby_subrank(), pl.col("placed_subrank")).alias("lobby_subrank"),
+            _points_change().alias("points_change"),
+        )
     )
 
 

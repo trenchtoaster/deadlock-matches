@@ -151,3 +151,33 @@ def test_skill_rating_labels_badge_columns():
     ).with_columns(queries.skill_rating("average_badge_team0").alias("label"))
 
     assert df.get_column("label").to_list() == ["Emissary VI", "Oracle III", "Obscurus", None]
+
+
+def test_skill_rating_asof_labels_by_era():
+    df = pl.DataFrame(
+        {
+            "average_badge_team0": [63, 63, None],
+            "start_time": [
+                dt.datetime(2026, 7, 20, tzinfo=dt.UTC),
+                dt.datetime(2026, 8, 2, tzinfo=dt.UTC),
+                dt.datetime(2026, 8, 2, tzinfo=dt.UTC),
+            ],
+        },
+        schema={"average_badge_team0": pl.Int64, "start_time": pl.Datetime("us", "UTC")},
+    ).with_columns(queries.skill_rating_asof("average_badge_team0").alias("label"))
+
+    assert df.get_column("label").to_list() == ["Emissary III", "Ritualist III", None]
+
+
+def test_skill_rating_asof_without_history_matches_skill_rating(monkeypatch):
+    monkeypatch.setattr("deadlock_matches.assets.skill_rating.era_labels", lambda path=None: [])
+
+    df = pl.DataFrame(
+        {
+            "average_badge_team0": [63, 95],
+            "start_time": [dt.datetime(2026, 7, 20, tzinfo=dt.UTC)] * 2,
+        },
+        schema={"average_badge_team0": pl.Int64, "start_time": pl.Datetime("us", "UTC")},
+    ).with_columns(queries.skill_rating_asof("average_badge_team0").alias("label"))
+
+    assert df.get_column("label").to_list() == ["Ritualist III", "Phantom V"]

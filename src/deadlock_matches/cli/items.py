@@ -207,13 +207,12 @@ def builds_report(args: argparse.Namespace, config: str | Path | None = None) ->
         by_account.setdefault(b["account_id"], []).append(b)
 
     print(f"Tracked {args.hero} players ({len(builds)} downloaded games):\n")
-    print(f"  {'Player':<18} {'Games':>5} {'Rank':>5}  Record")
+    print(f"  {'Player':<18} {'Games':>5}  Record")
 
     for m in members:
         bs = by_account.get(m["account_id"], [])
         w = sum(1 for b in bs if b["win"])
-        rank = "-" if m["rank"] is None else str(m["rank"])
-        print(f"  {m['name']:<18} {m['games']:>5} {rank:>5}  {w}W {len(bs) - w}L")
+        print(f"  {m['name']:<18} {m['games']:>5}  {w}W {len(bs) - w}L")
 
     wins = [b for b in builds if b["win"]]
     losses = [b for b in builds if not b["win"]]

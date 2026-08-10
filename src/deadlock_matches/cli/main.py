@@ -10,7 +10,7 @@ from typing import TYPE_CHECKING
 import polars as pl
 
 from deadlock_matches import export, extract, paths, players, queries, schemas
-from deadlock_matches.cli import cards, data, items, meta, performance
+from deadlock_matches.cli import cards, data, items, meta, performance, rank
 from deadlock_matches.config import (
     config_account_names,
     config_accounts,
@@ -25,24 +25,26 @@ if TYPE_CHECKING:
 
 AS_OF_HELP = (
     "show the card as the game was on this date (YYYY-MM-DD), like 2026-03-01, "
-    "from the versioned asset history; defaults to the current patch"
+    "from the versioned asset history. Defaults to the current patch"
 )
 CHANGES_HELP = "list every patch that changed this, from the versioned asset history, and quit"
 ACCOUNT_HELP = (
     "your account IDs or names from config.toml, defaults to all accounts there. "
     "A tracked player name from [players.<hero>] reads their downloaded games instead"
 )
-STANDARD_MODE = (extract.MATCH_MODE_STANDARD, extract.GAME_MODE_NORMAL)
-RANKED_MODE = (extract.MATCH_MODE_RANKED, extract.GAME_MODE_NORMAL)
-PLACEMENT_MODE = (extract.MATCH_MODE_PLACEMENT, extract.GAME_MODE_NORMAL)
-STREET_BRAWL_MODE = (extract.MATCH_MODE_STANDARD, extract.GAME_MODE_STREET_BRAWL)
-PRIVATE_LOBBY_MODE = (extract.MATCH_MODE_PRIVATE_LOBBY, extract.GAME_MODE_NORMAL)
+RANKED_PLAY_MODE = queries.RANKED_PLAY
+STANDARD_MODE = (extract.MATCH_MODE_STANDARD, extract.GAME_MODE_NORMAL, False)
+RANKED_MODE = (extract.MATCH_MODE_RANKED, extract.GAME_MODE_NORMAL, None)
+PLACEMENT_MODE = (extract.MATCH_MODE_PLACEMENT, extract.GAME_MODE_NORMAL, None)
+STREET_BRAWL_MODE = (extract.MATCH_MODE_STANDARD, extract.GAME_MODE_STREET_BRAWL, None)
+PRIVATE_LOBBY_MODE = (extract.MATCH_MODE_PRIVATE_LOBBY, extract.GAME_MODE_NORMAL, None)
 
 COMMAND_HELP = {
     "sync": "pull your matches into the parquet tables from the archive or the API",
     "history": "one line per game of yours with the match ID",
     "match": "one match: the final scoreboard, then your intervals of souls and damage",
-    "winrate": "wins and losses per day",
+    "winrate": "wins and losses per week",
+    "rank": "every Ranked game with the points it paid, the rating, and the season record",
     "laning": "whether winning your lane or a feeding teammate decides your games",
     "deaths": "how you die: when, to whom, alone or ganked",
     "damage": "where your damage to heroes comes from: gun, abilities, item procs",
@@ -73,6 +75,7 @@ SECTIONS = (
             "history",
             "match",
             "winrate",
+            "rank",
             "laning",
             "deaths",
             "damage",
@@ -168,14 +171,23 @@ def build_parser(config: str | Path | None = None) -> argparse.ArgumentParser:
         return sub.add_parser(name, description=COMMAND_HELP[name])
 
     def mode_flags(parser: argparse.ArgumentParser) -> None:
-        """Add the explicit alternatives to the Standard default."""
+        """Add the explicit alternatives to the ranked-play default."""
         modes = parser.add_mutually_exclusive_group()
+        modes.add_argument(
+            "--standard",
+            dest="mode",
+            action="store_const",
+            const=STANDARD_MODE,
+            help="read or download the unranked Standard queue build 6652 introduced "
+            "instead of ranked games",
+        )
         modes.add_argument(
             "--ranked",
             dest="mode",
             action="store_const",
             const=RANKED_MODE,
-            help="read or download Ranked instead of Standard games",
+            help="read or download Ranked Season 1 alone without the ranked games "
+            "played before build 6652 moved the queue",
         )
         modes.add_argument(
             "--placement",
@@ -183,7 +195,7 @@ def build_parser(config: str | Path | None = None) -> argparse.ArgumentParser:
             dest="mode",
             action="store_const",
             const=PLACEMENT_MODE,
-            help="read or download New Player Placement instead of Standard games "
+            help="read or download New Player Placement instead of ranked games "
             "(--calibration remains an alias)",
         )
         modes.add_argument(
@@ -191,7 +203,7 @@ def build_parser(config: str | Path | None = None) -> argparse.ArgumentParser:
             dest="mode",
             action="store_const",
             const=STREET_BRAWL_MODE,
-            help="read or download Street Brawl instead of Standard games",
+            help="read or download Street Brawl instead of ranked games",
         )
         modes.add_argument(
             "--private-lobby",
@@ -199,9 +211,9 @@ def build_parser(config: str | Path | None = None) -> argparse.ArgumentParser:
             action="store_const",
             const=PRIVATE_LOBBY_MODE,
             help="read or download Private Lobby games such as scrims and FACEIT "
-            "instead of Standard games",
+            "instead of ranked games",
         )
-        parser.set_defaults(mode=STANDARD_MODE)
+        parser.set_defaults(mode=RANKED_PLAY_MODE)
 
     d = command("history")
     d.add_argument(
@@ -548,9 +560,10 @@ def build_parser(config: str | Path | None = None) -> argparse.ArgumentParser:
     )
     dy.add_argument(
         "--by",
-        choices=("day", "week", "month", "mode"),
-        default="day",
-        help="group by day, week, month, or show one total row per game mode",
+        choices=("day", "week", "month", "mode", "account"),
+        default="week",
+        help="group by day, week, month (default week), or show one total row "
+        "per game mode or per account",
     )
     dy.add_argument("--hero", default=None, help="hero display name, like Mirage")
     dy.add_argument(
@@ -560,6 +573,20 @@ def build_parser(config: str | Path | None = None) -> argparse.ArgumentParser:
         "skill rating or higher, 'all' disables",
     )
     mode_flags(dy)
+
+    rk = command("rank")
+    rk.add_argument(
+        "--account",
+        type=account_list,
+        default=accounts,
+        help=ACCOUNT_HELP,
+    )
+    rk.add_argument("--days", type=int, default=None, help="only your last N days of Ranked games")
+    rk.add_argument(
+        "--since",
+        default=None,
+        help="only Ranked games on or after this date (YYYY-MM-DD), like 2026-07-30",
+    )
 
     ln = command("laning")
     ln.add_argument(
@@ -650,7 +677,7 @@ def build_parser(config: str | Path | None = None) -> argparse.ArgumentParser:
         type=float,
         default=None,
         help="resolve melee scaling at this light melee damage, the number the in-game "
-        "stat screen shows, items included; heavy melee keeps the hero's ratio",
+        "stat screen shows with items included. Heavy melee keeps the ratio of the hero",
     )
     ab.add_argument(
         "--weapon",
@@ -907,6 +934,7 @@ def main(argv: Sequence[str] | None = None, config: str | Path | None = None) ->
         "history",
         "compare",
         "winrate",
+        "rank",
         "laning",
         "deaths",
         "damage",
@@ -932,6 +960,7 @@ def main(argv: Sequence[str] | None = None, config: str | Path | None = None) ->
             "item",
             "compare",
             "winrate",
+            "rank",
             "laning",
             "deaths",
             "damage",
@@ -970,9 +999,9 @@ def main(argv: Sequence[str] | None = None, config: str | Path | None = None) ->
 
     _repair_players_store(args, config)
 
-    match_mode, game_mode = getattr(args, "mode", STANDARD_MODE)
+    match_mode, game_mode, ranked = getattr(args, "mode", RANKED_PLAY_MODE)
 
-    with queries.mode_context(match_mode=match_mode, game_mode=game_mode):
+    with queries.mode_context(match_mode=match_mode, game_mode=game_mode, ranked=ranked):
         _dispatch(args, config)
 
 
@@ -999,6 +1028,8 @@ def _dispatch(args: argparse.Namespace, config: str | Path | None) -> None:
         data.leaderboard_report(args, config)
     elif args.cmd == "winrate":
         performance.winrate_report(args, config)
+    elif args.cmd == "rank":
+        rank.rank_report(args, config)
     elif args.cmd == "laning":
         performance.laning_games_report(args, config)
     elif args.cmd == "deaths":
