@@ -1,6 +1,13 @@
 # Changelog
 
 All notable changes to this project are documented here.
+## [0.13.0] - 2026-08-10
+
+### Added
+
+- Support Ranked Season 1 ([5cd9e0d](https://github.com/trenchtoaster/deadlock-matches/commit/5cd9e0dafdc676760c9125a09a3ff8b3efff561a))
+
+
 ## [0.12.0] - 2026-07-31
 
 ### Added
