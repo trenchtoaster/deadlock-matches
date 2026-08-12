@@ -1641,7 +1641,14 @@ def teams_report(row: dict[str, Any], args: argparse.Namespace) -> None:
 def abilities_report(row: dict[str, Any], args: argparse.Namespace) -> None:
     """Print ability unlocks and upgrades in the order they were spent."""
     df = (
-        queries.ability_upgrades(row["hero"], args.parquet, accounts=[row["account_id"]])
+        queries.ability_upgrades(
+            row["hero"],
+            args.parquet,
+            accounts=[row["account_id"]],
+            match_mode=None,
+            game_mode=None,
+            ranked=None,
+        )
         .filter(pl.col("match_id") == row["match_id"])
         .collect()
     )

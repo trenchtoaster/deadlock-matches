@@ -10,6 +10,7 @@ import polars as pl
 
 from deadlock_matches.assets import heroes, items
 from deadlock_matches.queries.core import (
+    INHERIT,
     _resolved_accounts,
     mode_label,
     my_games,
@@ -482,9 +483,11 @@ def _hero_window(
       selected stat, so heal prevented still divides by every game
     - the count and the combined minutes ride along on every row rather than
       arriving by a cross join, which projection pushdown is free to undo
+    - naming matches lifts the mode default
     """
+    mode = None if matches is not None else INHERIT
     games = (
-        view_frame(my_games(accounts, tz))
+        view_frame(my_games(accounts, tz, mode, mode, mode))
         .filter(pl.col("hero") == hero_name)
         .select(
             "match_id",
@@ -578,7 +581,7 @@ def damage_by_source(
       into the item
     - gun and ability rows keep a null per_min_owned and per_1k, and so does
       an item source with no buy on record
-    - matches limits the rows to specific match ids
+    - matches limits the rows to specific match ids in any mode
     - stat swaps the figure like hero_damage: damage, healing, mitigated, ...
     """
     accounts = _resolved_accounts(accounts)
@@ -978,11 +981,15 @@ def _soul_sources(
     matches: Sequence[int] | None,
     tz: str | None,
 ) -> pl.LazyFrame:
-    """Roll the soul_sources snapshots up to one nonzero row per game and source."""
+    """Roll the soul_sources snapshots up to one nonzero row per game and source.
+
+    - naming matches lifts the mode default
+    """
     resolved_accounts = _resolved_accounts(accounts)
     hero_name = _resolved_hero_name(hero)
+    mode = None if matches is not None else INHERIT
     hero_games = (
-        view_frame(my_games(resolved_accounts, tz))
+        view_frame(my_games(resolved_accounts, tz, mode, mode, mode))
         .filter(pl.col("hero") == hero_name)
         .select("match_id", "account_id", "hero", "day", "start_local")
     )
@@ -1031,7 +1038,7 @@ def souls_by_source(
     - games counts only the games where the source paid souls (the tables
       hold a zero row for every source in every game)
     - minutes is the combined length of the games where the source paid
-    - matches limits the rows to specific match ids
+    - matches limits the rows to specific match ids in any mode
     """
     accounts = _resolved_accounts(accounts)
     finals = view_frame(

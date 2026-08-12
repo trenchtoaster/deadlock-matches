@@ -12,6 +12,9 @@ from deadlock_matches import config
 from deadlock_matches.assets import abilities, heroes, items
 from deadlock_matches.queries.core import (
     _ERA_SENTINEL,
+    INHERIT,
+    ModeArg,
+    RankedArg,
     asset_asof,
     my_games,
     player_rows,
@@ -456,6 +459,9 @@ def ability_upgrades(
     accounts: Sequence[int] | None = None,
     since: str | dt.date | None = None,
     tz: str | None = None,
+    match_mode: ModeArg = INHERIT,
+    game_mode: ModeArg = INHERIT,
+    ranked: RankedArg = INHERIT,
 ) -> pl.LazyFrame:
     """Ability unlocks and upgrades in spend order, with AP cost and soul threshold."""
     ability_rows = [
@@ -478,7 +484,9 @@ def ability_upgrades(
         },
     )
 
-    games = view_frame(my_games(accounts, tz), parquet_dir=parquet_dir).select(
+    games = view_frame(
+        my_games(accounts, tz, match_mode, game_mode, ranked), parquet_dir=parquet_dir
+    ).select(
         "match_id",
         "account_id",
         "hero",

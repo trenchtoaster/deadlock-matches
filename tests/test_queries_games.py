@@ -320,6 +320,45 @@ def test_souls_by_source_matches_filter(movement_pq):
         queries.souls_by_source("Mirage", accounts=[42], matches=[999], parquet_dir=movement_pq)
 
 
+def test_souls_by_source_matches_lifts_mode_filter(tmp_path):
+    info = build_movement_match(100)
+    info.ranked_type = 0
+
+    for name, df in export.build_tables([info], exclude=("movement",)).items():
+        df.write_parquet(tmp_path / f"{name}.parquet")
+
+    with pytest.raises(ValueError):
+        queries.souls_by_source("Mirage", accounts=[42], parquet_dir=tmp_path)
+
+    kept = queries.souls_by_source("Mirage", accounts=[42], matches=[100], parquet_dir=tmp_path)
+
+    assert kept.get_column("souls").sum() == 700
+
+
+def test_damage_source_games_matches_lifts_mode_filter(tmp_path):
+    info = build_match(100)
+    info.ranked_type = 0
+
+    for name, df in export.build_tables([info], exclude=("movement",)).items():
+        df.write_parquet(tmp_path / f"{name}.parquet")
+
+    _write_item_history(tmp_path)
+
+    df = queries.summarize(
+        queries.damage_source_games,
+        by="source_name",
+        measures=["total", "minutes", "per_window_game"],
+        hero="Mirage",
+        accounts=[42],
+        matches=[100],
+        parquet_dir=tmp_path,
+    ).collect()
+
+    assert df.get_column("total").sum() == 240
+    assert set(df.get_column("minutes").to_list()) == {30.0}
+    assert None not in df.get_column("per_window_game").to_list()
+
+
 def test_souls_by_source_raises_without_souls(pq):
     with pytest.raises(ValueError):
         queries.souls_by_source("Mirage", accounts=[42], parquet_dir=pq)

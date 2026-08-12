@@ -2556,6 +2556,26 @@ def test_match_abilities_flag_prints_upgrade_order(capsys, tmp_path):
     assert "cumulative AP spend" in out
 
 
+def test_match_abilities_flag_works_for_unranked_game(capsys, tmp_path):
+    cache = tmp_path / "cache"
+    cache.mkdir()
+    dust_devil = 1336069669
+    write_cache_entry(
+        cache,
+        match_id=100,
+        stats=[(300, 3000)],
+        ability_items=[(dust_devil, 60)],
+        ranked_type=0,
+    )
+
+    run_main(tmp_path, "match", "100", "--account", "42", "--abilities")
+
+    out = capsys.readouterr().out
+
+    assert "Ability upgrades" in out
+    assert re.search(r"1:00\s+1\s+1\s+0\s+unlock\s+Dust Devil\s+1", out)
+
+
 def test_match_items_flag_prints_buy_order(capsys, tmp_path):
     cache = tmp_path / "cache"
     cache.mkdir()
