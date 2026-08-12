@@ -1,6 +1,13 @@
 # Changelog
 
 All notable changes to this project are documented here.
+## [0.13.1] - 2026-08-12
+
+### Fixed
+
+- Read named match ids in any mode ([c83514d](https://github.com/trenchtoaster/deadlock-matches/commit/c83514da7ff2e403bf878daaf4b4cfcad8712e43))
+
+
 ## [0.13.0] - 2026-08-10
 
 ### Added
