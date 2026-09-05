@@ -9,7 +9,7 @@ from typing import TYPE_CHECKING
 import polars as pl
 
 from deadlock_matches.assets import heroes
-from deadlock_matches.queries.core import my_games, player_rows, scan
+from deadlock_matches.queries.core import my_games, player_rows, scan, since_days_filter
 from deadlock_matches.queries.semantic import view_frame
 
 if TYPE_CHECKING:
@@ -123,16 +123,13 @@ def lane_records(
 
         lf = lf.filter(pl.col("hero_id") == hero_id)
 
-    if since is not None:
-        since = dt.date.fromisoformat(since) if isinstance(since, str) else since
-        lf = lf.filter(pl.col("day") >= since)
+    lf = since_days_filter(lf, since, None)
 
     mine = lf.unique(subset="match_id").select(
         "match_id", "account_id", "team", "lane", "day", "won"
     )
 
-    if days is not None:
-        mine = mine.filter(pl.col("day").rank("dense", descending=True) <= days)
+    mine = since_days_filter(mine, None, days)
 
     sides = mine.select(
         "match_id",

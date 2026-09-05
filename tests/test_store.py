@@ -7,9 +7,9 @@ from deadlock_matches.assets import history, items, snapshots, store
 
 @pytest.fixture(autouse=True)
 def _clear_item_cache():
-    items.item_map.cache_clear()
+    store.clear_maps()
     yield
-    items.item_map.cache_clear()
+    store.clear_maps()
 
 
 def test_read_path_prefers_user_store(tmp_path, monkeypatch):

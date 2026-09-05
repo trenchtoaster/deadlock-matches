@@ -3,24 +3,22 @@
 from __future__ import annotations
 
 import datetime as dt
-import functools
-import json
 from pathlib import Path
+from typing import Any
 
 from deadlock_matches.assets import history, store
 
-SKILL_RATING_JSON = store.seed_path("skill_rating.json")
-RANK_HISTORY_PARQUET = store.seed_path("rank_history.parquet")
 SUBRANK_LABELS = {1: "I", 2: "II", 3: "III", 4: "IV", 5: "V", 6: "VI"}
 
 
-@functools.cache
+def _rank_name(rec: dict[str, Any]) -> str:
+    """Read the rank name out of a stored rank record."""
+    return rec["name"]
+
+
 def tier_map(path: Path | None = None) -> dict[int, str]:
     """Load skill_rating.json into {tier: name}, cached per path."""
-    src = Path(path) if path is not None else store.read_path("skill_rating.json")
-    records = json.loads(src.read_text(encoding="utf-8"))
-
-    return {rec["tier"]: rec["name"] for rec in records}
+    return store.load_map("skill_rating.json", "tier", _rank_name, path)
 
 
 def rank_asof(tier: int, at: dt.datetime | dt.date, path: Path | None = None) -> str | None:
@@ -32,23 +30,7 @@ def rank_asof(tier: int, at: dt.datetime | dt.date, path: Path | None = None) ->
     """
     src = Path(path) if path is not None else store.read_path("rank_history.parquet")
 
-    if not history.has_history(src):
-        return tier_map().get(tier)
-
-    rec = history.record_asof(src, tier, at)
-
-    return rec["name"] if rec else None
-
-
-def subrank_index(badge: int) -> int:
-    """Turn a badge level into a linear subrank count, 6 levels per tier.
-
-    Badge levels skip 7-9 within each tier (95 -> 59), so averaging badges
-    directly lands between levels. Average the indexes instead.
-    """
-    tier, level = divmod(badge, 10)
-
-    return tier * 6 + level
+    return history.lookup_asof(src, tier, at, _rank_name, tier_map)
 
 
 def badge_from_subrank(index: int) -> int:

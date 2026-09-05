@@ -6,9 +6,12 @@ import datetime as dt
 import functools
 import json
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import polars as pl
+
+if TYPE_CHECKING:
+    from collections.abc import Callable
 
 SCHEMA = {"from": pl.String, "build": pl.Int64, "id": pl.String, "record": pl.String}
 
@@ -148,3 +151,41 @@ def records_asof(path: Path, at: dt.datetime | dt.date) -> dict[str, dict[str, A
     rows = table.filter(pl.col("from") == chosen)
 
     return {rid: json.loads(rec) for rid, rec in rows.select("id", "record").iter_rows()}
+
+
+def lookup_asof[T](
+    path: Path,
+    record_id: str | int,
+    at: dt.datetime | dt.date,
+    build: Callable[[dict[str, Any]], T],
+    current: Callable[[], dict[Any, T]],
+) -> T | None:
+    """Return one stored record in effect at a time, built into its asset type.
+
+    - no history at all falls back to the current snapshot
+    """
+    if not has_history(path):
+        return current().get(record_id)
+
+    rec = record_asof(path, record_id, at)
+
+    return build(rec) if rec else None
+
+
+def map_asof[T](
+    path: Path,
+    at: dt.datetime | dt.date,
+    key: str,
+    build: Callable[[dict[str, Any]], T],
+    current: Callable[[], dict[Any, T]],
+) -> dict[Any, T]:
+    """Return every stored record in effect at a time, keyed by one record field.
+
+    - no history at all falls back to the current snapshot
+    """
+    records = records_asof(path, at)
+
+    if records is None:
+        return current()
+
+    return {rec[key]: build(rec) for rec in records.values()}

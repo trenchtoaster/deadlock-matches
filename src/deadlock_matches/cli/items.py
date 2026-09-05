@@ -123,10 +123,10 @@ def item_report(args: argparse.Namespace, config: str | Path | None = None) -> N
 
     pool = config_players(args.hero, config)
 
-    if pool and queries.table_exists("item_events", players.PARQUET_DIR):
+    if pool and queries.table_exists("item_events", players.PLAYERS_PARQUET_DIR):
         top = queries.item_value(
             item.name,
-            parquet_dir=players.PARQUET_DIR,
+            parquet_dir=players.PLAYERS_PARQUET_DIR,
             hero=args.hero,
             accounts=list(pool.values()),
         )

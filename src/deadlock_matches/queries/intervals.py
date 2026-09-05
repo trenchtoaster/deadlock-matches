@@ -155,6 +155,22 @@ def _interval_grid(
     )
 
 
+def _lazy_fill_and_diff(frame: pl.LazyFrame, tracks: Sequence[str], column: str) -> pl.LazyFrame:
+    """Forward fill one cumulative column along each track of an interval grid, then diff it.
+
+    - tracks name the columns that split the grid into separate series
+    - an interval with no sample keeps the value the track carried into it
+    - the column comes back holding the gain of each interval, not the running total
+    """
+    over = list(tracks)
+
+    return (
+        frame.sort(*over, "interval")
+        .with_columns(pl.col(column).fill_null(strategy="forward").fill_null(0).over(over))
+        .with_columns(pl.col(column) - pl.col(column).shift(1).fill_null(0).over(over))
+    )
+
+
 def _column_gains(
     games: pl.LazyFrame, column: str, interval_s: int, parquet_dir: str | Path | None
 ) -> pl.LazyFrame:
@@ -175,12 +191,8 @@ def _column_gains(
     return (
         _interval_grid(games, interval_s, parquet_dir)
         .join(cumulative, on=[*_KEYS, "interval"], how="left")
-        .sort(*_KEYS, "interval")
-        .with_columns(pl.col("value").forward_fill().over(_KEYS).fill_null(0))
-        .with_columns(
-            (pl.col("value") - pl.col("value").shift(1).over(_KEYS).fill_null(0)).alias("gain")
-        )
-        .select(*_KEYS, "interval", "gain")
+        .pipe(_lazy_fill_and_diff, _KEYS, "value")
+        .select(*_KEYS, "interval", pl.col("value").alias("gain"))
     )
 
 
@@ -213,16 +225,9 @@ def _source_gains(
         _interval_grid(games, interval_s, parquet_dir)
         .join(pl.LazyFrame({"source_name": list(sources)}), how="cross")
         .join(per_source, on=[*_KEYS, "source_name", "interval"], how="left")
-        .sort(*_KEYS, "source_name", "interval")
-        .with_columns(pl.col("value").forward_fill().over([*_KEYS, "source_name"]).fill_null(0))
-        .with_columns(
-            (
-                pl.col("value")
-                - pl.col("value").shift(1).over([*_KEYS, "source_name"]).fill_null(0)
-            ).alias("gain")
-        )
+        .pipe(_lazy_fill_and_diff, [*_KEYS, "source_name"], "value")
         .group_by(*_KEYS, "interval")
-        .agg(pl.col("gain").sum())
+        .agg(pl.col("value").sum().alias("gain"))
     )
 
 
@@ -276,20 +281,53 @@ def compare_intervals(
     return MetricView(source=lambda: _interval_gains(games, stat, interval_s))
 
 
+_ALL_FAMILIES = ("events", "column", "sources")
+
+
+def _stat_source(
+    stat: str,
+    families: Sequence[str] = _ALL_FAMILIES,
+    noun: str = "compare stat",
+) -> tuple[str, str | tuple[str, ...]]:
+    """Name the table family one compare stat reads and the column or soul sources it needs.
+
+    - events counts deaths table rows, column reads one stats snapshot column,
+      and sources sums a set of soul sources
+    - families narrows which of the three a caller accepts
+    - an unknown name raises, naming the stats the caller does accept
+    """
+    lookup = {
+        "events": lambda name: name if name in ("kills", "deaths") else None,
+        "column": INTERVAL_STATS.get,
+        "sources": SOUL_COMPOSITES.get,
+    }
+
+    for family in families:
+        found = lookup[family](stat)
+
+        if found is not None:
+            return family, found
+
+    known = ", ".join(
+        name
+        for name in COMPARE_STATS
+        if any(lookup[family](name) is not None for family in families)
+    )
+    msg = f"Unknown {noun} {stat!r}, one of: {known}"
+    raise ValueError(msg)
+
+
 def _interval_gains(games: pl.LazyFrame, stat: str, interval_s: int) -> pl.LazyFrame:
     """Pick the gain builder one compare stat needs, rejecting an unknown name."""
-    if stat in ("kills", "deaths"):
+    family, spec = _stat_source(stat)
+
+    if family == "events":
         return _event_gains(games, interval_s, None, kills=stat == "kills")
 
-    if stat in INTERVAL_STATS:
-        return _column_gains(games, INTERVAL_STATS[stat], interval_s, None)
+    if family == "column":
+        return _column_gains(games, str(spec), interval_s, None)
 
-    if stat in SOUL_COMPOSITES:
-        return _source_gains(games, SOUL_COMPOSITES[stat], interval_s, None)
-
-    known = ", ".join(COMPARE_STATS)
-    msg = f"Unknown compare stat {stat!r}, one of: {known}"
-    raise ValueError(msg)
+    return _source_gains(games, tuple(spec), interval_s, None)
 
 
 def game_totals(
@@ -302,7 +340,9 @@ def game_totals(
         .join(scan("matches", parquet_dir).select("match_id", "duration_s"), on="match_id")
     )
 
-    if stat in ("kills", "deaths"):
+    family, spec = _stat_source(stat)
+
+    if family == "events":
         deaths = scan("deaths", parquet_dir)
 
         if stat == "kills":
@@ -318,29 +358,24 @@ def game_totals(
             .agg(pl.len().cast(pl.Int64).alias("total"))
         )
 
-    elif stat in INTERVAL_STATS:
+    elif family == "column":
         totals = (
             scan("stats", parquet_dir)
             .join(games.select(_KEYS).unique(), on=_KEYS)
             .group_by(_KEYS)
-            .agg(pl.col(INTERVAL_STATS[stat]).sort_by("time_stamp_s").last().alias("total"))
+            .agg(pl.col(str(spec)).sort_by("time_stamp_s").last().alias("total"))
         )
 
-    elif stat in SOUL_COMPOSITES:
+    else:
         totals = (
             with_soul_source_name(scan("soul_sources", parquet_dir))
             .join(games.select(_KEYS).unique(), on=_KEYS)
-            .filter(pl.col("source_name").is_in(list(SOUL_COMPOSITES[stat])))
+            .filter(pl.col("source_name").is_in(list(spec)))
             .group_by(*_KEYS, "source_name")
             .agg((pl.col("souls") + pl.col("souls_orbs")).max().alias("total"))
             .group_by(_KEYS)
             .agg(pl.col("total").sum())
         )
-
-    else:
-        known = ", ".join(COMPARE_STATS)
-        msg = f"Unknown compare stat {stat!r}, one of: {known}"
-        raise ValueError(msg)
 
     return (
         with_duration.join(totals, on=_KEYS, how="left")
@@ -380,22 +415,24 @@ def cumulative_at(
         .select(*_KEYS, "mark_s")
     )
 
-    if stat in INTERVAL_STATS:
+    family, spec = _stat_source(stat, ("column", "sources"), "cumulative stat")
+
+    if family == "column":
         values = (
             scan("stats", parquet_dir)
             .join(games.select(_KEYS).unique(), on=_KEYS)
-            .select(*_KEYS, "time_stamp_s", pl.col(INTERVAL_STATS[stat]).alias("value"))
+            .select(*_KEYS, "time_stamp_s", pl.col(str(spec)).alias("value"))
             .join(marks, how="cross")
             .filter(pl.col("time_stamp_s") <= pl.col("mark_s"))
             .group_by(*_KEYS, "mark_s")
             .agg(pl.col("value").sort_by("time_stamp_s").last())
         )
 
-    elif stat in SOUL_COMPOSITES:
+    else:
         values = (
             with_soul_source_name(scan("soul_sources", parquet_dir))
             .join(games.select(_KEYS).unique(), on=_KEYS)
-            .filter(pl.col("source_name").is_in(list(SOUL_COMPOSITES[stat])))
+            .filter(pl.col("source_name").is_in(list(spec)))
             .select(
                 *_KEYS,
                 "source_name",
@@ -409,11 +446,6 @@ def cumulative_at(
             .group_by(*_KEYS, "mark_s")
             .agg(pl.col("value").sum())
         )
-
-    else:
-        known = ", ".join(k for k in COMPARE_STATS if k not in ("kills", "deaths"))
-        msg = f"Unknown cumulative stat {stat!r}, one of: {known}"
-        raise ValueError(msg)
 
     return (
         reached.join(values, on=[*_KEYS, "mark_s"], how="left")
@@ -518,16 +550,13 @@ def cumulative_stat_target_times(
     - times are linearly interpolated between cumulative stat snapshots
     - targets that a game never reaches are left out
     """
-    if stat not in INTERVAL_STATS:
-        known = ", ".join(INTERVAL_STATS)
-        msg = f"Unknown cumulative target stat {stat!r}, one of: {known}"
-        raise ValueError(msg)
+    _, column = _stat_source(stat, ("column",), "cumulative target stat")
 
     target_frame = pl.LazyFrame(
         {"target": sorted(set(targets))},
         schema={"target": pl.Int64},
     )
-    value = pl.col(INTERVAL_STATS[stat]).alias("value")
+    value = pl.col(str(column)).alias("value")
 
     samples = (
         scan("stats", parquet_dir)
@@ -942,13 +971,7 @@ def source_intervals(
 
     return (
         grid.join(samples, on=[*keys, "source_class", "delivery", "interval"], how="left")
-        .sort(*keys, "source_class", "interval")
-        .with_columns(
-            pl.col("damage").fill_null(strategy="forward").fill_null(0).over(*keys, "source_class")
-        )
-        .with_columns(
-            pl.col("damage") - pl.col("damage").shift(1).fill_null(0).over(*keys, "source_class")
-        )
+        .pipe(_lazy_fill_and_diff, [*keys, "source_class"], "damage")
         .with_columns(damage_source_name().alias("source_name"))
         .group_by(*keys, "source_name", "delivery", "interval")
         .agg(pl.col("damage").sum())

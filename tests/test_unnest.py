@@ -1,4 +1,5 @@
 import polars as pl
+import pytest
 
 from deadlock_matches import schemas
 from deadlock_matches.assets import history, items, unnest
@@ -223,3 +224,55 @@ def test_missing_history_gives_empty_typed_frames(tmp_path):
         df = tables[name]
         assert df.height == 0
         assert df.columns == list(schemas.TABLES[name])
+
+
+def test_missing_flags_read_as_false(tmp_path):
+    path = tmp_path / "item_history.parquet"
+    bare = {"id": 9, "name": "Bare", "class_name": "upgrade_bare", "cost": 1, "tier": 1}
+    history.write(path, [{"from": "2026-01-01T00:00:00", "build": 100, "records": {"9": bare}}])
+
+    parents = unnest.item_tables(path)["item_history"]
+
+    assert parents.get_column("is_active").to_list() == [False]
+    assert parents.get_column("slot").to_list() == [None]
+
+
+def test_hero_flags_read_as_false(tmp_path):
+    path = tmp_path / "hero_history.parquet"
+    bare = {"id": 3, "name": "Bare", "class_name": "hero_bare"}
+    history.write(path, [{"from": "2026-01-01T00:00:00", "build": 100, "records": {"3": bare}}])
+
+    parents = unnest.hero_tables(path)["hero_history"]
+
+    assert parents.get_column("player_selectable").to_list() == [False]
+    assert parents.get_column("disabled").to_list() == [False]
+
+
+def test_weapon_without_block_keeps_null_stats(tmp_path):
+    path = tmp_path / "ability_history.parquet"
+    gun = {"id": 8, "name": "Gun", "class_name": "citadel_weapon_y", "hero": 2, "kind": "weapon"}
+    history.write(
+        path, [{"from": "2026-01-01T00:00:00", "build": 100, "records": {"citadel_weapon_y": gun}}]
+    )
+
+    weapons = unnest.ability_tables(path)["ability_weapon_history"]
+
+    assert weapons.height == 1
+    assert weapons.get_column("bullet_damage").to_list() == [None]
+
+
+@pytest.mark.parametrize(
+    ("builder", "names"),
+    [
+        (unnest.hero_tables, ("hero_history", "hero_level_history", "hero_stat_history")),
+        (unnest.ability_tables, ("ability_history", "ability_weapon_history")),
+        (unnest.rank_tables, ("rank_history",)),
+        (unnest.statue_tables, ("statue_history",)),
+    ],
+)
+def test_missing_history_gives_empty_typed_frames_everywhere(tmp_path, builder, names):
+    tables = builder(tmp_path / "none.parquet")
+
+    for name in names:
+        assert tables[name].height == 0
+        assert tables[name].columns == list(schemas.TABLES[name])

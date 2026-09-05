@@ -8,6 +8,7 @@ def test_linux_dirs(monkeypatch):
 
     assert paths.data_dir() == Path.home() / ".local/share"
     assert paths.cache_dir() == Path.home() / ".cache/deadlock-matches"
+    assert paths.package_dir() == Path.home() / ".local/share/deadlock-matches"
 
 
 def test_windows_dirs(monkeypatch):
@@ -16,6 +17,7 @@ def test_windows_dirs(monkeypatch):
 
     assert paths.data_dir() == Path("C:/Users/x/AppData/Local")
     assert paths.cache_dir() == Path("C:/Users/x/AppData/Local/deadlock-matches/cache")
+    assert paths.package_dir() == Path("C:/Users/x/AppData/Local/deadlock-matches")
 
 
 def test_windows_dirs_fallback(monkeypatch):

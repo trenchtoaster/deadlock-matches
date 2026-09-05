@@ -4,7 +4,7 @@ from deadlock_matches import damage
 from deadlock_matches.extract import pb
 
 
-def build_match():
+def build_damage_match():
     """Build a match where slot 5 deals Escalating Exposure and Bullet damage, some to a non-hero."""
     info = pb.CMsgMatchMetaDataContents().match_info
 
@@ -50,37 +50,37 @@ def build_match():
 
 
 def test_damage_from_source_hero_only_stat0():
-    info = build_match()
+    info = build_damage_match()
 
     assert damage.damage_from_source(info, 100, "upgrade_escalating_exposure") == 809
 
 
 def test_damage_from_source_respects_stat_type():
-    info = build_match()
+    info = build_damage_match()
 
     assert damage.damage_from_source(info, 100, "upgrade_escalating_exposure", stat_type=3) == 20
 
 
 def test_damage_from_source_unknown_source_is_zero():
-    info = build_match()
+    info = build_damage_match()
 
     assert damage.damage_from_source(info, 100, "upgrade_nonexistent") == 0.0
 
 
 def test_damage_from_source_player_not_in_match():
-    info = build_match()
+    info = build_damage_match()
 
     assert damage.damage_from_source(info, 999, "Bullet") == 0.0
 
 
 def test_dealer_with_no_damage_block():
-    info = build_match()
+    info = build_damage_match()
 
     assert damage.damage_from_source(info, 200, "Bullet") == 0.0
 
 
 def test_damage_by_source_ranks_by_total():
-    info = build_match()
+    info = build_damage_match()
 
     agg = damage.damage_by_source(info, 100)
 
@@ -89,7 +89,7 @@ def test_damage_by_source_ranks_by_total():
 
 
 def test_damage_by_source_excludes_objective_damage():
-    info = build_match()
+    info = build_damage_match()
 
     agg = damage.damage_by_source(info, 100)
 
@@ -97,7 +97,7 @@ def test_damage_by_source_excludes_objective_damage():
 
 
 def test_item_damage_by_display_name():
-    info = build_match()
+    info = build_damage_match()
 
     assert damage.item_damage(info, 100, "Escalating Exposure") == 809
 

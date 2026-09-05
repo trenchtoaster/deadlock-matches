@@ -3,17 +3,12 @@
 from __future__ import annotations
 
 import datetime as dt
-import functools
-import json
 import re
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
 from deadlock_matches.assets import history, store
-
-HEROES_JSON = store.seed_path("heroes.json")
-HERO_HISTORY_PARQUET = store.seed_path("hero_history.parquet")
 
 
 @dataclass(frozen=True, slots=True)
@@ -176,13 +171,9 @@ class Hero:
         return {"souls": souls, **self.boon_stats(self.level_for_souls(souls))}
 
 
-@functools.cache
 def hero_map(path: Path | None = None) -> dict[int, Hero]:
     """Load heroes.json into {hero_id: Hero}, cached per path."""
-    src = Path(path) if path is not None else store.read_path("heroes.json")
-    records = json.loads(src.read_text(encoding="utf-8"))
-
-    return {rec["id"]: Hero.from_record(rec) for rec in records}
+    return store.load_map("heroes.json", "id", Hero.from_record, path)
 
 
 def hero_name(hero_id: int, path: Path | None = None) -> str:
@@ -201,12 +192,7 @@ def hero_asof(hero_id: int, at: dt.datetime | dt.date, path: Path | None = None)
     """
     src = Path(path) if path is not None else store.read_path("hero_history.parquet")
 
-    if not history.has_history(src):
-        return hero_map().get(hero_id)
-
-    rec = history.record_asof(src, hero_id, at)
-
-    return Hero.from_record(rec) if rec else None
+    return history.lookup_asof(src, hero_id, at, Hero.from_record, hero_map)
 
 
 def normalize_name(name: str) -> str:
@@ -218,12 +204,15 @@ def normalize_name(name: str) -> str:
     return re.sub(r"[^a-z0-9]", "", name.lower())
 
 
+def hero_by_name(name: str, path: Path | None = None) -> Hero | None:
+    """Look up a hero by display name ("Mirage", "mo krill")."""
+    found = store.name_index(hero_map, normalize_name, path).get(normalize_name(name))
+
+    return found[0] if found else None
+
+
 def hero_id_by_name(name: str, path: Path | None = None) -> int | None:
     """Look up the hero ID for a display name ("Mirage", "mo krill")."""
-    wanted = normalize_name(name)
+    hero = hero_by_name(name, path)
 
-    for hero in hero_map(path).values():
-        if normalize_name(hero.name) == wanted:
-            return hero.id
-
-    return None
+    return hero.id if hero else None

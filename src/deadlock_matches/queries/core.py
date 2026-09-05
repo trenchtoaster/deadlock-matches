@@ -198,11 +198,13 @@ def _asof_era_join(
 
     - right carries an era_from datetime column and the join key(s) in by
     - backward as-of on era_from <= left[on], grouped by the key(s)
+    - an empty by joins one shared era timeline onto every left row
     - rows older than the first era fall back to the earliest era, matching record_asof
     """
     by_cols = [by] if isinstance(by, str) else list(by)
+    first = pl.col("era_from").min().over(by_cols) if by_cols else pl.col("era_from").min()
     prepared = right.with_columns(
-        pl.when(pl.col("era_from") == pl.col("era_from").min().over(by_cols))
+        pl.when(pl.col("era_from") == first)
         .then(pl.lit(_ERA_SENTINEL))
         .otherwise(pl.col("era_from"))
         .alias("_join_from")
@@ -214,7 +216,7 @@ def _asof_era_join(
             prepared,
             left_on=on,
             right_on="_join_from",
-            by=by_cols,
+            by=by_cols or None,
             strategy="backward",
             check_sortedness=False,
         )
@@ -482,6 +484,25 @@ def _local_day(frame: pl.LazyFrame, tz: str | None) -> pl.LazyFrame:
     return frame.with_columns(
         pl.col("start_time").dt.convert_time_zone(tz).alias("start_local")
     ).with_columns(pl.col("start_local").dt.date().alias("day"))
+
+
+def since_days_filter(
+    frame: pl.LazyFrame, since: str | dt.date | None, days: int | None
+) -> pl.LazyFrame:
+    """Cut a frame that has a day column down to a start date and a count of played days.
+
+    - since takes an ISO date string or a date and keeps that day onward
+    - days keeps the most recent played days, so empty days do not count
+    - None on either argument lifts that part of the filter
+    """
+    if since is not None:
+        start = dt.date.fromisoformat(since) if isinstance(since, str) else since
+        frame = frame.filter(pl.col("day") >= start)
+
+    if days is not None:
+        frame = frame.filter(pl.col("day").rank("dense", descending=True) <= days)
+
+    return frame
 
 
 def _resolved_accounts(accounts: Sequence[int] | None) -> list[int]:

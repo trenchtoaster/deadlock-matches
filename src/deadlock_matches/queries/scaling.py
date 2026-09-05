@@ -52,25 +52,10 @@ def _hero_era_starts() -> list[dt.datetime]:
     return [_era_from(from_str) for from_str, _ in era_list]
 
 
-def _with_hero_era(left: pl.LazyFrame, on: str = "start_time") -> pl.LazyFrame:
-    """Attach the hero balance era live at the time of each row as an era_from column."""
-    starts = _hero_era_starts()
-    first = min(starts)
-    era_frame = (
-        pl.LazyFrame({"era_from": starts}, schema={"era_from": pl.Datetime("us", "UTC")})
-        .with_columns(
-            pl.when(pl.col("era_from") == first)
-            .then(pl.lit(_ERA_SENTINEL))
-            .otherwise(pl.col("era_from"))
-            .alias("_join_from")
-        )
-        .sort("_join_from")
-    )
-
-    return (
-        left.sort(on)
-        .join_asof(era_frame, left_on=on, right_on="_join_from", strategy="backward")
-        .drop("_join_from")
+def _hero_era_frame() -> pl.LazyFrame:
+    """Take the hero balance era starts as a frame ready for _asof_era_join."""
+    return pl.LazyFrame(
+        {"era_from": _hero_era_starts()}, schema={"era_from": pl.Datetime("us", "UTC")}
     )
 
 

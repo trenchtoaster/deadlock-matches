@@ -71,10 +71,9 @@ build: clean
     @echo "-----------------------------------"
     uv build
 
-publish:
+publish: clean
     @echo "-----------------------------------"
     @echo "- Building and publishing to PyPI -"
     @echo "-----------------------------------"
-    rm -rf dist/
     uv build
     uv publish

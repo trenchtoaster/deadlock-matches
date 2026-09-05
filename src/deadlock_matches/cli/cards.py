@@ -6,12 +6,12 @@ import datetime as dt
 from typing import TYPE_CHECKING, Any
 
 from deadlock_matches.assets import abilities, heroes, history, items, store
+from deadlock_matches.queries.movement import UNITS_PER_METER
 
 if TYPE_CHECKING:
     import argparse
     from pathlib import Path
 
-UNITS_PER_METER = 39.37
 BASE_MELEE = (50.0, 116.0)
 TRANSCENDENT_ITEM_CDR = 0.25
 

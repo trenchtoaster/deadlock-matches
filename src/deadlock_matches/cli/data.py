@@ -38,6 +38,7 @@ from deadlock_matches.config import (
     find_config,
     format_accounts,
 )
+from deadlock_matches.queries.stats import match_final_totals
 
 if TYPE_CHECKING:
     import argparse
@@ -49,13 +50,9 @@ def _tilde(path: str | Path) -> str:
     return paths.tilde(path)
 
 
-TEAMS = {0: "The Hidden King", 1: "The Archmother"}
-
-MVP_LABELS = {1: "1 (MVP)", 2: "2 (Key)", 3: "3 (Key)"}
-
 AGENT_SKILL_DIR = "agent/skills/deadlock-matches"
 AGENT_SKILL_RESOURCE = f"{AGENT_SKILL_DIR}/SKILL.md"
-AGENT_SKILL_REFERENCES = ("references/schema-caveats.md",)
+AGENT_SKILL_REFERENCES_DIR = "references"
 AGENT_SKILL_TARGETS = ("claude", "codex", "gemini")
 LEADERBOARD_NAME_WIDTH = 20
 
@@ -100,8 +97,23 @@ def _bundled_skill() -> resources.abc.Traversable:
     return resources.files("deadlock_matches").joinpath(AGENT_SKILL_RESOURCE)
 
 
-def _bundled_skill_file(relative_path: str) -> resources.abc.Traversable:
-    return resources.files("deadlock_matches").joinpath(AGENT_SKILL_DIR, relative_path)
+def _bundled_skill_references() -> list[tuple[str, resources.abc.Traversable]]:
+    """List every file under the bundled references tree with its path relative to the skill."""
+    root = resources.files("deadlock_matches").joinpath(AGENT_SKILL_DIR, AGENT_SKILL_REFERENCES_DIR)
+    found: list[tuple[str, resources.abc.Traversable]] = []
+
+    def walk(node: resources.abc.Traversable, prefix: str) -> None:
+        for child in sorted(node.iterdir(), key=lambda item: item.name):
+            relative = f"{prefix}/{child.name}"
+
+            if child.is_dir():
+                walk(child, relative)
+            else:
+                found.append((relative, child))
+
+    walk(root, AGENT_SKILL_REFERENCES_DIR)
+
+    return found
 
 
 def skill_report(args: argparse.Namespace) -> None:
@@ -129,10 +141,10 @@ def skill_report(args: argparse.Namespace) -> None:
 
     target.parent.mkdir(parents=True, exist_ok=True)
     target.write_text(skill.read_text(encoding="utf-8"), encoding="utf-8")
-    for relative_path in AGENT_SKILL_REFERENCES:
+    for relative_path, source in _bundled_skill_references():
         reference_target = target.parent / relative_path
         reference_target.parent.mkdir(parents=True, exist_ok=True)
-        reference_target.write_bytes(_bundled_skill_file(relative_path).read_bytes())
+        reference_target.write_bytes(source.read_bytes())
     print(f"Installed agent skill at {_tilde(target)}")
     if getattr(args, "agent", "claude") == "claude" and getattr(args, "dir", None) is None:
         print(
@@ -160,22 +172,6 @@ def _api_modes(
         return extract.MATCH_MODE_RANKED, game_mode
 
     return match_mode, game_mode
-
-
-def final_stats(match_ids: pl.LazyFrame, parquet_dir: str | Path) -> pl.LazyFrame:
-    """Return the end-of-match damage and healing totals per player from the stats snapshots.
-
-    - reads the last sample of each player-game rather than the biggest, so a
-      counter that dips still reports what the match ended on
-    """
-    last = pl.col("player_damage", "boss_damage", "player_healing", "heal_prevented")
-
-    return (
-        queries.scan("stats", parquet_dir)
-        .join(match_ids, on="match_id")
-        .group_by("match_id", "account_id")
-        .agg(last.sort_by("time_stamp_s").last())
-    )
 
 
 def sync_archive(cache: str | Path, archive_dir: str | Path, *, quiet: bool = False) -> int:
@@ -294,7 +290,7 @@ def match_history(args: argparse.Namespace, config: str | Path | None = None) ->
     games = (
         players_lf.join(matches.lazy().select("match_id", "start_local"), on="match_id")
         .join(
-            final_stats(matches.lazy().select("match_id"), args.parquet),
+            match_final_totals(matches.lazy().select("match_id"), args.parquet),
             on=["match_id", "account_id"],
             how="left",
         )
@@ -554,7 +550,7 @@ def refresh_assets(args: argparse.Namespace) -> None:
     for name in sorted(old_items - new_items):
         print(f"  gone item: {name}")
 
-    installed = extract.installed_client_version(getattr(args, "cache", extract.DEFAULT_CACHE))
+    installed = extract.installed_client_version(getattr(args, "cache", None))
 
     if installed is None:
         note = ""
@@ -819,6 +815,7 @@ def leaderboard_report(args: argparse.Namespace, config: str | Path | None = Non
         return
 
     watchlist = config_players(args.hero, config)
+    tracked = set(watchlist.values())
     top = players.top_players(hero_id, limit=args.players)
     known = {m["account_id"] for m in top}
     top += [
@@ -832,7 +829,7 @@ def leaderboard_report(args: argparse.Namespace, config: str | Path | None = Non
     for m in top:
         where = f"rank {m['rank']:<4} {m['region']}" if m.get("rank") else "tracked"
 
-        if m["account_id"] in set(watchlist.values()) and m.get("rank"):
+        if m["account_id"] in tracked and m.get("rank"):
             where += "  tracked"
 
         name = _fit_display(str(m["name"]), LEADERBOARD_NAME_WIDTH)
@@ -852,7 +849,7 @@ def leaderboard_report(args: argparse.Namespace, config: str | Path | None = Non
                 kda = f"{row['player_kills']}/{row['player_deaths']}/{row['player_assists']}"
                 print(f"      {row['match_id']}  {when}  {result}  {kda}")
 
-    fresh = [m for m in top if m["account_id"] not in set(watchlist.values())]
+    fresh = [m for m in top if m["account_id"] not in tracked]
 
     if fresh:
         print(

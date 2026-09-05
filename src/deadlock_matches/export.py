@@ -29,7 +29,7 @@ if TYPE_CHECKING:
 
     from deadlock_matches.extract import MatchInfo
 
-PARQUET_DIR = paths.data_dir() / "deadlock-matches/parquet"
+PARQUET_DIR = paths.package_dir() / "parquet"
 
 EXPORT_LOGIC_VERSION = 2
 PROGRESS_EVERY = 50
@@ -210,9 +210,10 @@ def build_tables(
 ) -> dict[str, pl.DataFrame]:
     """Build the parquet tables from MatchInfo messages.
 
-    - builds matches, players, stats, soul_sources, item_events, accolades,
-      buffs, stacks, custom_stats, damage, damage_sources, damage_targets,
-      mid_boss, objectives, and deaths
+    - builds matches, players, hero_xp_rewards, stats, soul_sources, item_events,
+      accolades, buffs, stacks, custom_stats, damage, damage_sources,
+      damage_targets, mid_boss, objectives, deaths, movement, and
+      movement_intervals
     - item cost/tier/slot resolve against the committed item history era live at
       match time, so rebuilds price each match on its own patch
     - proc vs stat attribution is derived at read time from damage, see queries.item_attribution
@@ -758,66 +759,71 @@ def exported_match_ids(out_dir: Path) -> set[int]:
     return set(exported.to_series().to_list())
 
 
-def schema_drift(out_dir: Path, exclude: Collection[str] = ()) -> str | None:
-    """Compare parquet columns to schemas.py to identify mismatches.
+@dataclass(frozen=True)
+class DriftScan:
+    """The first drift reason found and whether every drift only drops columns."""
 
-    - read schemas from parquet footers
+    reason: str | None
+    drop_only: bool
+
+
+def _scan_drift(out_dir: Path, exclude: Collection[str] = ()) -> DriftScan:
+    """Read every month footer once and report the drift reason and the drop-only verdict.
+
     - a missing table directory counts as a mismatch
     - a month file sitting flat in the table directory is the pre-hive layout
       and counts as a mismatch too
+    - a table that lost a column the schema still asks for is not drop-only
     """
+    reason: str | None = None
+    drop_only = True
+
+    for name in sorted(schemas.PARTITIONED):
+        if name in exclude:
+            continue
+
+        directory = out_dir / name
+
+        if not directory.is_dir():
+            reason = reason or f"the {name} table is missing"
+            drop_only = False
+
+        elif next(directory.glob("*.parquet"), None) is not None:
+            reason = reason or f"the {name} table is on the flat month layout"
+            drop_only = False
+
+        else:
+            expected = set(schemas.TABLES[name])
+
+            for month_file in sorted(directory.glob("month=*/*.parquet")):
+                found = set(pl.read_parquet_schema(month_file))
+
+                if found != expected and reason is None:
+                    month = month_file.parent.name.removeprefix("month=")
+                    reason = f"{name} {month} columns differ from schemas.py"
+
+                drop_only = drop_only and expected <= found
+
+                if reason is not None and not drop_only:
+                    break
+
+        if reason is not None and not drop_only:
+            break
+
+    return DriftScan(reason=reason, drop_only=drop_only)
+
+
+def schema_drift(out_dir: Path, exclude: Collection[str] = ()) -> str | None:
+    """Compare parquet columns to schemas.py to identify mismatches."""
     if not (out_dir / "matches").is_dir():
         return None
 
-    for name in sorted(schemas.PARTITIONED):
-        if name in exclude:
-            continue
-
-        directory = out_dir / name
-
-        if not directory.is_dir():
-            return f"the {name} table is missing"
-
-        if next(directory.glob("*.parquet"), None) is not None:
-            return f"the {name} table is on the flat month layout"
-
-        expected = set(schemas.TABLES[name])
-
-        for month_file in sorted(directory.glob("month=*/*.parquet")):
-            month = month_file.parent.name.removeprefix("month=")
-
-            if set(pl.read_parquet_schema(month_file)) != expected:
-                return f"{name} {month} columns differ from schemas.py"
-
-    return None
+    return _scan_drift(out_dir, exclude).reason
 
 
 def drop_only_drift(out_dir: Path, exclude: Collection[str] = ()) -> bool:
-    """Whether the drift is only columns schemas.py stopped storing.
-
-    - every table has to be on disk already, a missing one needs a real decode
-    - every column the schema still asks for has to be in the footer, a new one needs a decode too
-    - the pre-hive flat month layout needs a full rebuild, not a reshape
-    """
-    for name in sorted(schemas.PARTITIONED):
-        if name in exclude:
-            continue
-
-        directory = out_dir / name
-
-        if not directory.is_dir():
-            return False
-
-        if next(directory.glob("*.parquet"), None) is not None:
-            return False
-
-        expected = set(schemas.TABLES[name])
-
-        for month_file in sorted(directory.glob("month=*/*.parquet")):
-            if not expected <= set(pl.read_parquet_schema(month_file)):
-                return False
-
-    return True
+    """Whether the drift is only columns schemas.py stopped storing."""
+    return _scan_drift(out_dir, exclude).drop_only
 
 
 def reshape_partitions(out_dir: Path, exclude: Collection[str] = ()) -> int:
@@ -1171,7 +1177,11 @@ def export_all(
     out_dir.mkdir(parents=True, exist_ok=True)
     archive_paths = _archive_paths(archive_dir)
     total = len(archive_paths)
-    print(f"Building the tables from the archive ({total:,} archived matches)", flush=True)
+    print(
+        f"Building the tables from the archive ({total:,} archived matches)",
+        file=sys.stderr,
+        flush=True,
+    )
 
     for name in schemas.PARTITIONED:
         if name not in exclude:
@@ -1251,12 +1261,13 @@ def export_new(
     if not exported:
         return export_all(archive_dir, out_dir, exclude, accounts)
 
-    drift = schema_drift(out_dir, exclude)
+    scan = _scan_drift(out_dir, exclude)
+    drift = scan.reason
 
-    if drift and drop_only_drift(out_dir, exclude):
-        print("Dropping the columns the tables no longer store")
+    if drift and scan.drop_only:
+        print("Dropping the columns the tables no longer store", file=sys.stderr, flush=True)
         reshape_partitions(out_dir, exclude)
-        drift = schema_drift(out_dir, exclude)
+        drift = _scan_drift(out_dir, exclude).reason
 
     if drift:
         result = export_all(archive_dir, out_dir, exclude, accounts)

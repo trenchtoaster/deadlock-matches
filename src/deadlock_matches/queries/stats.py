@@ -20,6 +20,7 @@ from deadlock_matches.queries.core import (
     my_games,
     player_rows,
     scan,
+    since_days_filter,
     table_exists,
 )
 from deadlock_matches.queries.delivery import damage_category
@@ -467,6 +468,22 @@ def final_stats(parquet_dir: str | Path | None = None, tz: str | None = None) ->
     return _local_day(finals, tz)
 
 
+def match_final_totals(match_ids: pl.LazyFrame, parquet_dir: str | Path) -> pl.LazyFrame:
+    """Take the end-of-match damage and healing totals per player for a set of matches.
+
+    - reads the last sample of each player-game rather than the biggest, so a
+      counter that dips still reports what the match ended on
+    """
+    last = pl.col("player_damage", "boss_damage", "player_healing", "heal_prevented")
+
+    return (
+        scan("stats", parquet_dir)
+        .join(match_ids, on="match_id")
+        .group_by("match_id", "account_id")
+        .agg(last.sort_by("time_stamp_s").last())
+    )
+
+
 def team_damage_ranks(parquet_dir: str | Path | None = None) -> pl.LazyFrame:
     """Rank players by hero damage within their team.
 
@@ -493,8 +510,12 @@ def my_deaths(
     parquet_dir: str | Path | None = None,
     accounts: Sequence[int] | None = None,
     tz: str | None = None,
+    days: int | None = None,
 ) -> pl.LazyFrame:
-    """Read the player deaths with hero, won, duration, and local day joined in."""
+    """Read the player deaths with hero, won, duration, and local day joined in.
+
+    - days keeps the last N local days that have games
+    """
     games = view_frame(my_games(accounts, tz), parquet_dir=parquet_dir).select(
         "match_id",
         "account_id",
@@ -504,8 +525,9 @@ def my_deaths(
         "day",
         pl.col("matches.duration_s").alias("duration_s"),
     )
+    deaths = scan("deaths", parquet_dir).join(games, on=["match_id", "account_id"])
 
-    return scan("deaths", parquet_dir).join(games, on=["match_id", "account_id"])
+    return since_days_filter(deaths, None, days)
 
 
 def death_context(
@@ -513,17 +535,19 @@ def death_context(
     parquet_dir: str | Path | None = None,
     accounts: Sequence[int] | None = None,
     tz: str | None = None,
+    days: int | None = None,
 ) -> pl.LazyFrame:
     """Add counts of nearby allies and enemies to my_deaths.
 
     - solo and outnumbered flags come along
+    - days keeps the last N local days that have games
     - needs the movement table for player positions (excluded by default)
     """
     if not table_exists("movement", parquet_dir):
         msg = 'movement table not exported: remove "movement" from the exclude list in config.toml and run `deadlock sync`'
         raise ValueError(msg)
 
-    deaths = my_deaths(parquet_dir, accounts, tz)
+    deaths = my_deaths(parquet_dir, accounts, tz, days)
     teams = player_rows(parquet_dir).select("match_id", "account_id", "team")
 
     mine = deaths.select("match_id", "account_id", "game_time_s", "x", "y").join(

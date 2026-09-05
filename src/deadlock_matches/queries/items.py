@@ -8,21 +8,23 @@ from typing import TYPE_CHECKING
 
 import polars as pl
 
-from deadlock_matches import config
 from deadlock_matches.assets import abilities, heroes, items
 from deadlock_matches.queries.core import (
     _ERA_SENTINEL,
     INHERIT,
     ModeArg,
     RankedArg,
+    _asof_era_join,
+    _resolved_accounts,
     asset_asof,
     my_games,
     player_rows,
     scan,
+    since_days_filter,
     table_exists,
 )
 from deadlock_matches.queries.delivery import damage_category
-from deadlock_matches.queries.scaling import _hero_by_era, _with_hero_era
+from deadlock_matches.queries.scaling import _hero_by_era, _hero_era_frame
 from deadlock_matches.queries.semantic import view_frame
 
 if TYPE_CHECKING:
@@ -346,9 +348,7 @@ def item_games(
 
     games = view_frame(my_games(accounts), parquet_dir=parquet_dir)
 
-    if since is not None:
-        since = dt.date.fromisoformat(since) if isinstance(since, str) else since
-        games = games.filter(pl.col("day") >= since)
+    games = since_days_filter(games, since, None)
 
     if hero is not None:
         hero_id = heroes.hero_id_by_name(hero)
@@ -497,9 +497,7 @@ def ability_upgrades(
         pl.col("matches.start_time").alias("start_time"),
     )
 
-    if since is not None:
-        since = dt.date.fromisoformat(since) if isinstance(since, str) else since
-        games = games.filter(pl.col("day") >= since)
+    games = since_days_filter(games, since, None)
 
     if hero is not None:
         hero_id = heroes.hero_id_by_name(hero)
@@ -544,7 +542,7 @@ def ability_upgrades(
             .over("match_id", "account_id")
             .alias("ability_points_spent")
         )
-        .pipe(_with_hero_era)
+        .pipe(_asof_era_join, _hero_era_frame(), ())
     )
     reward_rows = [
         {
@@ -638,11 +636,7 @@ def item_buys(
     - pass item (a display name) to keep one item, None keeps every purchase
     - pass tier to keep one shop tier, buy_n still counts every purchase in the match
     """
-    accounts = config.config_accounts() if accounts is None else list(accounts)
-
-    if not accounts:
-        msg = "no accounts: pass accounts= or fill in accounts in config.toml"
-        raise ValueError(msg)
+    accounts = _resolved_accounts(accounts)
 
     buys = (
         scan("item_events", parquet_dir)

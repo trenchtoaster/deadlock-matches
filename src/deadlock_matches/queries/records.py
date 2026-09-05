@@ -8,16 +8,17 @@ from typing import TYPE_CHECKING
 
 import polars as pl
 
-from deadlock_matches import config
 from deadlock_matches.queries.core import (
     INHERIT,
     SCORED,
     ModeArg,
     RankedArg,
+    _resolved_accounts,
     hero_filter,
     my_games,
     player_rows,
     scan,
+    since_days_filter,
     skill_rating_asof,
 )
 from deadlock_matches.queries.semantic import (
@@ -35,7 +36,7 @@ if TYPE_CHECKING:
     from collections.abc import Sequence
 
 
-_SCORED = ~pl.col("not_scored").fill_null(value=False)
+_SCORED_BY_FLAG = ~pl.col("not_scored").fill_null(value=False)
 
 _MIN_PLACED = 6
 
@@ -172,14 +173,11 @@ def _scored(games: pl.DataFrame) -> pl.DataFrame:
 
     - the winrate table leaves the rest out
     """
-    return games.filter(_SCORED)
+    return games.filter(_SCORED_BY_FLAG)
 
 
 def _subrank(column: str) -> pl.Expr:
-    """Turn a badge level column into a linear subrank count.
-
-    - the expression form of skill_rating.subrank_index
-    """
+    """Turn a badge level column into a linear subrank count."""
     badge = pl.col(column)
 
     return (badge // 10) * 6 + badge % 10
@@ -255,7 +253,7 @@ def _points_change() -> pl.Expr:
 
 def _scored_points() -> pl.Expr:
     """Take the points reading of each scored game."""
-    return pl.when(_SCORED).then(pl.col("points_change"))
+    return pl.when(_SCORED_BY_FLAG).then(pl.col("points_change"))
 
 
 def badge_from_subrank(subrank: pl.Expr) -> pl.Expr:
@@ -298,20 +296,22 @@ RECORD_GAMES_DIMENSIONS = {
         comment="Local calendar month, represented by its first day.",
     ),
     "won": Dimension(pl.col("won")),
-    "scored": Dimension(_SCORED, comment="False for the matches Valve left unscored."),
+    "scored": Dimension(_SCORED_BY_FLAG, comment="False for the matches Valve left unscored."),
     "team": Dimension(pl.col("team")),
 }
 
-_SCORED_SUBRANK = pl.when(_SCORED).then(pl.col("lobby_subrank"))
+_SCORED_SUBRANK = pl.when(_SCORED_BY_FLAG).then(pl.col("lobby_subrank"))
 
 RECORD_GAMES_MEASURES = {
     "games": Measure(pl.len(), "count", comment="Every game, scored or not.", missing="zero"),
     "scored_games": Measure(
-        _SCORED.sum(), "count", comment="The win rate denominator.", missing="zero"
+        _SCORED_BY_FLAG.sum(), "count", comment="The win rate denominator.", missing="zero"
     ),
-    "wins": Measure((pl.col("won") & _SCORED).sum(), "count", direction="maximize", missing="zero"),
+    "wins": Measure(
+        (pl.col("won") & _SCORED_BY_FLAG).sum(), "count", direction="maximize", missing="zero"
+    ),
     "losses": Measure(
-        (~pl.col("won") & _SCORED).sum(), "count", direction="minimize", missing="zero"
+        (~pl.col("won") & _SCORED_BY_FLAG).sum(), "count", direction="minimize", missing="zero"
     ),
     "net": Measure(
         lambda measure: measure["wins"].cast(pl.Int64) - measure["losses"].cast(pl.Int64),
@@ -345,14 +345,14 @@ RECORD_GAMES_MEASURES = {
         missing="zero",
     ),
     "mvps": Measure(
-        ((pl.col("mvp_rank") == 1) & _SCORED).sum(),
+        ((pl.col("mvp_rank") == 1) & _SCORED_BY_FLAG).sum(),
         "count",
         comment="MVP awards in scored games.",
         direction="maximize",
         missing="zero",
     ),
     "key_players": Measure(
-        ((pl.col("mvp_rank") >= 2) & _SCORED).sum(),
+        ((pl.col("mvp_rank") >= 2) & _SCORED_BY_FLAG).sum(),
         "count",
         comment="Key Player awards in scored games.",
         direction="maximize",
@@ -441,12 +441,7 @@ def _record_game_rows(
     if hero is not None:
         lf = lf.filter(hero_filter(hero))
 
-    if since is not None:
-        since = dt.date.fromisoformat(since) if isinstance(since, str) else since
-        lf = lf.filter(pl.col("day") >= since)
-
-    if days is not None:
-        lf = lf.filter(pl.col("day").rank("dense", descending=True) <= days)
+    lf = since_days_filter(lf, since, days)
 
     return (
         lf.unique(subset="match_id")
@@ -489,11 +484,7 @@ def abandon_record(
     - buys auto-fire from the queued build while the player is gone and
       deaths happen to an idle hero, so neither counts
     """
-    accounts = config.config_accounts() if accounts is None else list(accounts)
-
-    if not accounts:
-        msg = "no accounts: pass accounts= or fill in accounts in config.toml"
-        raise ValueError(msg)
+    accounts = _resolved_accounts(accounts)
 
     if games is None:
         games = view_frame(record_games(accounts, tz, days, since, hero), parquet_dir=parquet_dir)

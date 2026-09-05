@@ -4,15 +4,11 @@ from __future__ import annotations
 
 import datetime as dt
 import functools
-import json
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
 from deadlock_matches.assets import history, store
-
-ITEMS_JSON = store.seed_path("items.json")
-ITEM_HISTORY_PARQUET = store.seed_path("item_history.parquet")
 
 
 @dataclass(frozen=True, slots=True)
@@ -76,13 +72,9 @@ class Item:
         )
 
 
-@functools.cache
 def item_map(path: Path | None = None) -> dict[int, Item]:
     """Cached load of items.json, keyed by item ID."""
-    src = Path(path) if path is not None else store.read_path("items.json")
-    records = json.loads(src.read_text(encoding="utf-8"))
-
-    return {rec["id"]: Item.from_record(rec) for rec in records}
+    return store.load_map("items.json", "id", Item.from_record, path)
 
 
 def item_name(item_id: int, path: Path | None = None) -> str:
@@ -92,16 +84,11 @@ def item_name(item_id: int, path: Path | None = None) -> str:
     return item.name if item else f"id{item_id}"
 
 
-@functools.cache
 def item_by_name(name: str, path: Path | None = None) -> Item | None:
     """Look up an item by display name, ignoring case."""
-    low = name.lower()
+    found = store.name_index(item_map, str.lower, path).get(name.lower())
 
-    for item in item_map(path).values():
-        if item.name.lower() == low:
-            return item
-
-    return None
+    return found[0] if found else None
 
 
 @functools.cache
@@ -123,12 +110,7 @@ def item_asof(item_id: int, at: dt.datetime | dt.date, path: Path | None = None)
     """
     src = Path(path) if path is not None else store.read_path("item_history.parquet")
 
-    if not history.has_history(src):
-        return item_map().get(item_id)
-
-    rec = history.record_asof(src, item_id, at)
-
-    return Item.from_record(rec) if rec else None
+    return history.lookup_asof(src, item_id, at, Item.from_record, item_map)
 
 
 def item_map_asof(at: dt.datetime | dt.date, path: Path | None = None) -> dict[int, Item]:
@@ -138,9 +120,8 @@ def item_map_asof(at: dt.datetime | dt.date, path: Path | None = None) -> dict[i
     - no history at all falls back to the current snapshot
     """
     src = Path(path) if path is not None else store.read_path("item_history.parquet")
-    records = history.records_asof(src, at)
 
-    if records is None:
-        return item_map()
+    return history.map_asof(src, at, "id", Item.from_record, item_map)
 
-    return {rec["id"]: Item.from_record(rec) for rec in records.values()}
+
+store.register_cache(item_by_class_name.cache_clear)

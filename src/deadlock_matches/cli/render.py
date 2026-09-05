@@ -20,6 +20,61 @@ GAP = "gap"
 _READINGS = {"maximize": ("better", "worse"), "minimize": ("worse", "better")}
 
 
+def _places(number: float) -> int:
+    """Pick two decimals for a small fraction and none for anything else."""
+    return 2 if abs(number) < 10 and abs(number - round(number)) > 1e-9 else 0
+
+
+def cell(
+    value: float | None,
+    width: int = 8,
+    *,
+    scale: float = 1.0,
+    decimals: int | None = None,
+    sign: bool = False,
+    group: bool = True,
+    blank: str = BLANK,
+) -> str:
+    """Format one number into a table cell of a fixed width.
+
+    - a missing value prints the blank instead of a zero
+    - scale divides the number, for meters out of game units
+    - decimals defaults to two for a small fraction and none otherwise
+    """
+    if value is None:
+        return blank.rjust(width)
+
+    number = float(value) / scale
+    places = _places(number) if decimals is None else decimals
+    text = f"{number:{'+' if sign else ''}{',' if group else ''}.{places}f}"
+
+    return text.rjust(width)
+
+
+def gained_cell(total: float | None, *, percent: bool) -> str:
+    """Format the permanent stat a buff family added up to."""
+    if total is None:
+        return "?"
+
+    if total == 0:
+        return "-"
+
+    places = len(f"{total:g}".partition(".")[2])
+
+    return cell(total, 0, decimals=places, sign=True, group=False) + ("%" if percent else "")
+
+
+def count_cell(values: Mapping[str, int], key: str, base: str) -> str:
+    """Format a count with its share of a base count."""
+    value = values.get(key, 0)
+    whole = values.get(base, 0)
+
+    if not whole:
+        return cell(value, 0, decimals=0)
+
+    return f"{cell(value, 0, decimals=0)} ({cell(100 * value / whole, 0, decimals=0)}%)"
+
+
 def reading(measure: Measure, gap: float | None) -> str:
     """Label a gap better or worse from the direction its measure declares.
 

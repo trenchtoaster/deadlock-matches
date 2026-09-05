@@ -170,3 +170,31 @@ def test_a_field_format_overrides_what_the_measure_declares():
 def test_an_unknown_measure_names_the_valid_ones():
     with pytest.raises(ValueError, match="my_games has no measure 'kils'"):
         render.table(queries.my_games, [{}], [render.Field("kils")])
+
+
+@pytest.mark.parametrize(
+    ("value", "kwargs", "text"),
+    [
+        (None, {}, "       -"),
+        (1234.0, {}, "   1,234"),
+        (2.5, {}, "    2.50"),
+        (2.5, {"sign": True}, "   +2.50"),
+        (393.7, {"scale": 39.37, "decimals": 1}, "    10.0"),
+        (None, {"scale": 39.37, "decimals": 1}, "       -"),
+    ],
+)
+def test_cell_formats_one_number_to_a_fixed_width(value, kwargs, text):
+    assert render.cell(value, **kwargs) == text
+
+
+def test_gained_cell_marks_an_unknown_family_and_an_empty_one():
+    assert render.gained_cell(None, percent=False) == "?"
+    assert render.gained_cell(0, percent=False) == "-"
+    assert render.gained_cell(4.5, percent=True) == "+4.5%"
+    assert render.gained_cell(50, percent=False) == "+50"
+
+
+def test_count_cell_shows_the_share_of_the_base_count():
+    assert render.count_cell({"Hits": 60, "Shots": 200}, "Hits", "Shots") == "60 (30%)"
+    assert render.count_cell({"Hits": 1200}, "Hits", "Shots") == "1,200"
+    assert render.count_cell({}, "Hits", "Shots") == "0"

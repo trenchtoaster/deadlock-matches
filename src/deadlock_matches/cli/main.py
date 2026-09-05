@@ -10,7 +10,7 @@ from typing import TYPE_CHECKING
 import polars as pl
 
 from deadlock_matches import export, extract, paths, players, queries, schemas
-from deadlock_matches.cli import cards, data, items, meta, performance, rank
+from deadlock_matches.cli import cards, compare, data, games, items, match, meta, rank, winrate
 from deadlock_matches.config import (
     config_account_names,
     config_accounts,
@@ -21,7 +21,7 @@ from deadlock_matches.config import (
 )
 
 if TYPE_CHECKING:
-    from collections.abc import Sequence
+    from collections.abc import Callable, Sequence
 
 AS_OF_HELP = (
     "show the card as the game was on this date (YYYY-MM-DD), like 2026-03-01, "
@@ -161,7 +161,7 @@ def build_parser(config: str | Path | None = None) -> argparse.ArgumentParser:
         formatter_class=argparse.RawDescriptionHelpFormatter,
         description=_command_sections(),
     )
-    ap.add_argument("--cache", default=str(extract.DEFAULT_CACHE), help=argparse.SUPPRESS)
+    ap.add_argument("--cache", default=None, help=argparse.SUPPRESS)
     ap.add_argument("--archive", default=str(extract.ARCHIVE_DIR), help=argparse.SUPPRESS)
     ap.add_argument("--parquet", default=str(export.PARQUET_DIR), help=argparse.SUPPRESS)
     ap.set_defaults(account=accounts)
@@ -214,6 +214,16 @@ def build_parser(config: str | Path | None = None) -> argparse.ArgumentParser:
             "instead of ranked games",
         )
         parser.set_defaults(mode=RANKED_PLAY_MODE)
+
+    def account_since_flags(
+        parser: argparse.ArgumentParser,
+        days: str = "only your last N days of games",
+        since: str = "only days on or after this date (YYYY-MM-DD), like 2026-07-01",
+    ) -> None:
+        """Add the account, day window, and date flags the game reports share."""
+        parser.add_argument("--account", type=account_list, default=accounts, help=ACCOUNT_HELP)
+        parser.add_argument("--days", type=int, default=None, help=days)
+        parser.add_argument("--since", default=None, help=since)
 
     d = command("history")
     d.add_argument(
@@ -481,7 +491,9 @@ def build_parser(config: str | Path | None = None) -> argparse.ArgumentParser:
     f.add_argument(
         "--games", type=int, default=5, help="recent games in the selected mode per player"
     )
-    f.add_argument("--out", default=str(players.PARQUET_DIR), help="players parquet directory")
+    f.add_argument(
+        "--out", default=str(players.PLAYERS_PARQUET_DIR), help="players parquet directory"
+    )
     mode_flags(f)
 
     sy = command("sync")
@@ -524,19 +536,8 @@ def build_parser(config: str | Path | None = None) -> argparse.ArgumentParser:
     mode_flags(mn)
 
     de = command("deaths")
-    de.add_argument(
-        "--account",
-        type=account_list,
-        default=accounts,
-        help=ACCOUNT_HELP,
-    )
+    account_since_flags(de)
     de.add_argument("--hero", default=None, help="hero display name, like Mirage")
-    de.add_argument("--days", type=int, default=None, help="only your last N days of games")
-    de.add_argument(
-        "--since",
-        default=None,
-        help="only days on or after this date (YYYY-MM-DD), like 2026-07-01",
-    )
     de.add_argument(
         "--radius",
         type=int,
@@ -546,17 +547,8 @@ def build_parser(config: str | Path | None = None) -> argparse.ArgumentParser:
     mode_flags(de)
 
     dy = command("winrate")
-    dy.add_argument(
-        "--account",
-        type=account_list,
-        default=accounts,
-        help=ACCOUNT_HELP,
-    )
-    dy.add_argument("--days", type=int, default=None, help="only your last N days of games")
-    dy.add_argument(
-        "--since",
-        default=None,
-        help="only days on or after this date (YYYY-MM-DD or YYYYMMDD), like 2026-07-01",
+    account_since_flags(
+        dy, since="only days on or after this date (YYYY-MM-DD or YYYYMMDD), like 2026-07-01"
     )
     dy.add_argument(
         "--by",
@@ -575,31 +567,15 @@ def build_parser(config: str | Path | None = None) -> argparse.ArgumentParser:
     mode_flags(dy)
 
     rk = command("rank")
-    rk.add_argument(
-        "--account",
-        type=account_list,
-        default=accounts,
-        help=ACCOUNT_HELP,
-    )
-    rk.add_argument("--days", type=int, default=None, help="only your last N days of Ranked games")
-    rk.add_argument(
-        "--since",
-        default=None,
-        help="only Ranked games on or after this date (YYYY-MM-DD), like 2026-07-30",
+    account_since_flags(
+        rk,
+        days="only your last N days of Ranked games",
+        since="only Ranked games on or after this date (YYYY-MM-DD), like 2026-07-30",
     )
 
     ln = command("laning")
-    ln.add_argument(
-        "--account",
-        type=account_list,
-        default=accounts,
-        help=ACCOUNT_HELP,
-    )
-    ln.add_argument("--days", type=int, default=None, help="only your last N days of games")
-    ln.add_argument(
-        "--since",
-        default=None,
-        help="only days on or after this date (YYYY-MM-DD or YYYYMMDD), like 2026-07-01",
+    account_since_flags(
+        ln, since="only days on or after this date (YYYY-MM-DD or YYYYMMDD), like 2026-07-01"
     )
     ln.add_argument("--hero", default=None, help="hero display name, like Mirage")
     ln.add_argument(
@@ -613,18 +589,7 @@ def build_parser(config: str | Path | None = None) -> argparse.ArgumentParser:
     for name in ("damage", "healing", "souls", "combat", "movement"):
         dg = command(name)
         dg.add_argument("--hero", required=True, help="hero display name, like Mirage")
-        dg.add_argument(
-            "--account",
-            type=account_list,
-            default=accounts,
-            help=ACCOUNT_HELP,
-        )
-        dg.add_argument("--days", type=int, default=None, help="only your last N days of games")
-        dg.add_argument(
-            "--since",
-            default=None,
-            help="only days on or after this date (YYYY-MM-DD), like 2026-07-01",
-        )
+        account_since_flags(dg)
         dg.add_argument(
             "--games",
             type=int,
@@ -862,11 +827,11 @@ def resolve_store(args: argparse.Namespace, config: str | Path | None = None) ->
     if not requested or requested & mine:
         return
 
-    if not queries.table_exists("downloads", players.PARQUET_DIR):
+    if not queries.table_exists("downloads", players.PLAYERS_PARQUET_DIR):
         return
 
     downloaded = set(
-        queries.scan("downloads", players.PARQUET_DIR)
+        queries.scan("downloads", players.PLAYERS_PARQUET_DIR)
         .select("account_id")
         .unique()
         .collect()
@@ -874,14 +839,66 @@ def resolve_store(args: argparse.Namespace, config: str | Path | None = None) ->
     )
 
     if requested <= downloaded:
-        args.parquet = str(players.PARQUET_DIR)
+        args.parquet = str(players.PLAYERS_PARQUET_DIR)
+
+
+ACCOUNT_COMMANDS = frozenset(
+    {
+        None,
+        "history",
+        "compare",
+        "winrate",
+        "rank",
+        "laning",
+        "deaths",
+        "damage",
+        "healing",
+        "souls",
+        "combat",
+        "movement",
+    }
+)
+"""Commands that read your own games, so they need an account and a fresh archive."""
+
+SYNC_COMMANDS = ACCOUNT_COMMANDS | {"item", "match"}
+
+CARD_REPORTS: dict[str, Callable[[argparse.Namespace], None]] = {
+    "ability": cards.ability_report,
+    "hero": cards.hero_report,
+    "meta": meta.meta_report,
+    "skill": data.skill_report,
+}
+
+REPORTS: dict[str, Callable[[argparse.Namespace, str | Path | None], None]] = {
+    "accounts": data.list_accounts,
+    "builds": items.builds_report,
+    "combat": games.combat_games_report,
+    "compare": compare.compare_report,
+    "config": data.config_report,
+    "damage": games.damage_games_report,
+    "deaths": games.deaths_report,
+    "download": data.download_matches,
+    "healing": games.healing_games_report,
+    "item": items.item_report,
+    "laning": games.laning_games_report,
+    "leaderboard": data.leaderboard_report,
+    "match": match.match_report,
+    "movement": games.movement_games_report,
+    "rank": rank.rank_report,
+    "souls": games.souls_games_report,
+    "sync": data.sync_tables,
+    "winrate": winrate.winrate_report,
+}
 
 
 def _is_players_store(parquet_dir: str | Path) -> bool:
     """Identify tracked-player stores by their downloads ledger, including custom paths."""
     parquet_dir = Path(parquet_dir)
 
-    return parquet_dir == Path(players.PARQUET_DIR) or (parquet_dir / "downloads.parquet").is_file()
+    return (
+        parquet_dir == Path(players.PLAYERS_PARQUET_DIR)
+        or (parquet_dir / "downloads.parquet").is_file()
+    )
 
 
 def _players_stores_read(args: argparse.Namespace) -> list[Path]:
@@ -894,7 +911,7 @@ def _players_stores_read(args: argparse.Namespace) -> list[Path]:
     match_falls_back = args.cmd == "match" and selected == Path(export.PARQUET_DIR)
 
     if reads_default or match_falls_back:
-        stores.append(Path(players.PARQUET_DIR))
+        stores.append(Path(players.PLAYERS_PARQUET_DIR))
 
     return list(dict.fromkeys(stores))
 
@@ -925,24 +942,16 @@ def main(argv: Sequence[str] | None = None, config: str | Path | None = None) ->
     """Entry point for the deadlock CLI."""
     args = build_parser(config).parse_args(argv)
 
+    if getattr(args, "cache", None) is None:
+        args.cache = str(extract.default_cache())
+
     if config is None:
         ensure_config()
 
     card_only = args.cmd == "item" and args.hero is None
-    needs_account = args.cmd in (
-        None,
-        "history",
-        "compare",
-        "winrate",
-        "rank",
-        "laning",
-        "deaths",
-        "damage",
-        "healing",
-        "souls",
-        "combat",
-        "movement",
-    ) or (args.cmd == "match" and (args.match_id is None or args.hero is None))
+    needs_account = args.cmd in ACCOUNT_COMMANDS or (
+        args.cmd == "match" and (args.match_id is None or args.hero is None)
+    )
 
     if needs_account and not args.account:
         print(f"No account set: pass --account or add one to {paths.tilde(find_config())}")
@@ -952,26 +961,7 @@ def main(argv: Sequence[str] | None = None, config: str | Path | None = None) ->
     if needs_account:
         resolve_store(args, config)
 
-    if (
-        args.cmd
-        in (
-            None,
-            "history",
-            "item",
-            "compare",
-            "winrate",
-            "rank",
-            "laning",
-            "deaths",
-            "damage",
-            "healing",
-            "souls",
-            "combat",
-            "movement",
-            "match",
-        )
-        and not card_only
-    ):
+    if args.cmd in SYNC_COMMANDS and not card_only:
         new = data.sync_archive(args.cache, args.archive, quiet=True)
         exclude = config_exclude(config)
         selected = Path(args.parquet)
@@ -1012,56 +1002,25 @@ def _dispatch(args: argparse.Namespace, config: str | Path | None) -> None:
             schema_report(args)
         except ValueError as e:
             print(e)
-    elif args.cmd == "item":
-        items.item_report(args, config)
-    elif args.cmd == "builds":
-        items.builds_report(args, config)
-    elif args.cmd == "compare":
-        performance.compare_report(args, config)
-    elif args.cmd == "match":
-        performance.match_report(args, config)
-    elif args.cmd == "download":
-        data.download_matches(args, config)
-    elif args.cmd == "sync":
-        data.sync_tables(args, config)
-    elif args.cmd == "leaderboard":
-        data.leaderboard_report(args, config)
-    elif args.cmd == "winrate":
-        performance.winrate_report(args, config)
-    elif args.cmd == "rank":
-        rank.rank_report(args, config)
-    elif args.cmd == "laning":
-        performance.laning_games_report(args, config)
-    elif args.cmd == "deaths":
-        performance.deaths_report(args, config)
-    elif args.cmd == "damage":
-        performance.damage_games_report(args, config)
-    elif args.cmd == "healing":
-        performance.healing_games_report(args, config)
-    elif args.cmd == "souls":
-        performance.souls_games_report(args, config)
-    elif args.cmd == "combat":
-        performance.combat_games_report(args, config)
-    elif args.cmd == "movement":
-        performance.movement_games_report(args, config)
-    elif args.cmd == "hero":
-        cards.hero_report(args)
-    elif args.cmd == "ability":
-        cards.ability_report(args)
-    elif args.cmd == "meta":
-        meta.meta_report(args)
-    elif args.cmd == "accounts":
-        data.list_accounts(args, config)
-    elif args.cmd == "config":
-        data.config_report(args, config)
-    elif args.cmd == "skill":
-        data.skill_report(args)
-    elif args.cmd == "assets" and args.backfill:
-        data.rebuild_history(args)
-    elif args.cmd == "assets":
-        data.refresh_assets(args)
-    else:
-        data.match_history(args, config)
+
+        return
+
+    if args.cmd == "assets":
+        if args.backfill:
+            data.rebuild_history(args)
+        else:
+            data.refresh_assets(args)
+
+        return
+
+    card = CARD_REPORTS.get(args.cmd)
+
+    if card is not None:
+        card(args)
+        return
+
+    report = REPORTS.get(args.cmd, data.match_history)
+    report(args, config)
 
 
 if __name__ == "__main__":

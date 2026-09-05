@@ -28,7 +28,7 @@ def isolated_user_state(tmp_path, monkeypatch):
     """Keep default config and parquet reads inside each test's temporary directory."""
     monkeypatch.setattr(config.paths, "config_dir", lambda: tmp_path / "user-config")
     monkeypatch.setattr(export, "PARQUET_DIR", tmp_path / "user-parquet")
-    monkeypatch.setattr(players, "PARQUET_DIR", tmp_path / "user-parquet-players")
+    monkeypatch.setattr(players, "PLAYERS_PARQUET_DIR", tmp_path / "user-parquet-players")
 
 
 @pytest.fixture

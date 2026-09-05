@@ -17,6 +17,8 @@ if TYPE_CHECKING:
     from collections.abc import Sequence
 
 
+UNITS_PER_METER = 39.37
+
 MOVEMENT_COUNTS = [
     "alive_s",
     "moving_s",
@@ -291,3 +293,8 @@ def movement_game_records(
     )
 
     return _collect_game_records(games, hero, resolved_accounts)
+
+
+def meters_min() -> pl.Expr:
+    """Convert the pace column from game units to meters per minute."""
+    return (pl.col("distance_min") / UNITS_PER_METER).alias("meters_min")

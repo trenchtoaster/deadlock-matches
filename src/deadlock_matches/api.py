@@ -43,7 +43,7 @@ from deadlock_matches import paths
 
 BASE = "https://api.deadlock-api.com"
 CACHE_DIR = paths.cache_dir() / "api"
-DATA_DIR = paths.data_dir() / "deadlock-matches/api"
+DATA_DIR = paths.package_dir() / "api"
 
 DAY = 86_400
 PRUNE_AGE = 30 * DAY

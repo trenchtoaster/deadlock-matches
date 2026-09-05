@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import datetime as dt
 import functools
-import json
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
@@ -13,9 +12,6 @@ if TYPE_CHECKING:
     from collections.abc import Iterator
 
 from deadlock_matches.assets import heroes, history, items, store
-
-ABILITIES_JSON = store.seed_path("abilities.json")
-ABILITY_HISTORY_PARQUET = store.seed_path("ability_history.parquet")
 
 
 @dataclass(frozen=True, slots=True)
@@ -122,13 +118,21 @@ class Ability:
             yield from entries
 
 
-@functools.cache
 def ability_map(path: Path | None = None) -> dict[str, Ability]:
     """Load abilities.json into {class_name: Ability}, cached per path."""
-    src = Path(path) if path is not None else store.read_path("abilities.json")
-    records = json.loads(src.read_text(encoding="utf-8"))
+    return store.load_map("abilities.json", "class_name", Ability.from_record, path)
 
-    return {rec["class_name"]: Ability.from_record(rec) for rec in records}
+
+@functools.cache
+def _hero_index(path: Path | None = None) -> dict[int, tuple[Ability, ...]]:
+    """Group the abilities and guns of every hero by hero id."""
+    index: dict[int, tuple[Ability, ...]] = {}
+
+    for ability in ability_map(path).values():
+        if ability.hero is not None:
+            index[ability.hero] = (*index.get(ability.hero, ()), ability)
+
+    return index
 
 
 def ability_asof(
@@ -142,12 +146,7 @@ def ability_asof(
     """
     src = Path(path) if path is not None else store.read_path("ability_history.parquet")
 
-    if not history.has_history(src):
-        return ability_map().get(class_name)
-
-    rec = history.record_asof(src, class_name, at)
-
-    return Ability.from_record(rec) if rec else None
+    return history.lookup_asof(src, class_name, at, Ability.from_record, ability_map)
 
 
 def ability_by_name(
@@ -158,11 +157,11 @@ def ability_by_name(
     Pass hero_id for a name that exists on several heroes, without it an
     ambiguous name raises ValueError.
     """
-    wanted = heroes.normalize_name(name)
+    index = store.name_index(ability_map, heroes.normalize_name, path)
     matches = [
         a
-        for a in ability_map(path).values()
-        if heroes.normalize_name(a.name) == wanted and (hero_id is None or a.hero == hero_id)
+        for a in index.get(heroes.normalize_name(name), ())
+        if hero_id is None or a.hero == hero_id
     ]
     owners = sorted({heroes.hero_name(a.hero) for a in matches if a.hero})
 
@@ -176,13 +175,13 @@ def ability_by_name(
 
 def for_hero(hero_id: int, path: Path | None = None) -> tuple[Ability, ...]:
     """List the abilities for a hero."""
-    return tuple(a for a in ability_map(path).values() if a.hero == hero_id and a.kind == "ability")
+    return tuple(a for a in _hero_index(path).get(hero_id, ()) if a.kind == "ability")
 
 
 def hero_gun(hero_id: int, path: Path | None = None) -> Ability | None:
     """Look up the gun and weapon stats for a hero."""
-    for ability in ability_map(path).values():
-        if ability.hero == hero_id and ability.kind == "weapon":
+    for ability in _hero_index(path).get(hero_id, ()):
+        if ability.kind == "weapon":
             return ability
 
     return None
@@ -194,12 +193,8 @@ def hero_alt_gun(hero_id: int, path: Path | None = None) -> Ability | None:
     The alt record shares the primary display name or has none, so it
     cannot be reached by name.
     """
-    for ability in ability_map(path).values():
-        if (
-            ability.hero == hero_id
-            and ability.kind == "weapon"
-            and ability.class_name.endswith(("_alt", "_set_2"))
-        ):
+    for ability in _hero_index(path).get(hero_id, ()):
+        if ability.kind == "weapon" and ability.class_name.endswith(("_alt", "_set_2")):
             return ability
 
     return None
@@ -271,3 +266,7 @@ def label(class_name: str, path: Path | None = None) -> str:
         return item.name
 
     return class_name
+
+
+store.register_cache(_hero_index.cache_clear)
+store.register_cache(_token_map.cache_clear)

@@ -8,6 +8,7 @@ from typing import TYPE_CHECKING, Any
 import polars as pl
 
 from deadlock_matches import api, extract, queries
+from deadlock_matches.cli import render
 from deadlock_matches.config import account_labels, config_timezone
 
 if TYPE_CHECKING:
@@ -87,11 +88,11 @@ def season_rules() -> dict[str, Any]:
 
 def _mode_matches(parquet_dir: str | Path, modes: Sequence[int]) -> pl.LazyFrame:
     """Take the matches in these match modes with the scored flag under its view name."""
+    selected = queries.mode_filter(modes, extract.GAME_MODE_NORMAL, ranked=None, prefix="")
+
     return (
         queries.scan("matches", parquet_dir)
-        .filter(
-            pl.col("match_mode").is_in(modes) & (pl.col("game_mode") == extract.GAME_MODE_NORMAL)
-        )
+        .filter(selected)
         .select("match_id", pl.col("not_scored").alias("matches.not_scored"))
     )
 
@@ -210,29 +211,49 @@ def _note(g: Mapping[str, Any]) -> str:
     return ", ".join(notes)
 
 
+GAME_COLUMNS = (
+    render.Key("day", "Day", 12),
+    render.Key("time", "Time", 7),
+    render.Key("account", "Account", 11),
+    render.Key("hero", "Hero", 15),
+    render.Key("result", "Result", 8),
+    render.Key("rating", "Rating", 14),
+    render.Key("points", "Points", 18, right=True),
+    render.Key("change", "Change", 13, right=True),
+    render.Key("streak", "Streak", 9, right=True),
+    render.Key("note", "Note"),
+)
+
+
+def _game_row(g: Mapping[str, Any], names: Mapping[int, str], last_day: str) -> dict[str, Any]:
+    """Build the cells one Ranked game prints, with a repeated day left blank."""
+    day = g["start_local"].strftime("%Y-%m-%d")
+
+    return {
+        "day": "" if day == last_day else day,
+        "time": g["start_local"].strftime("%H:%M"),
+        "account": names.get(g["account_id"], str(g["account_id"])),
+        "hero": g["hero"],
+        "result": "win" if g["won"] else "loss",
+        "rating": g["rating"] or "-",
+        "points": _points(g),
+        "change": _change(g),
+        "streak": g["player_rank_initial_win_streak"] or 0,
+        "note": _note(g),
+    }
+
+
 def _game_table(games: pl.DataFrame, names: Mapping[int, str]) -> None:
     """Print one line per Ranked game with the points it paid and put the newest last."""
-    print(
-        f"  {'Day':<10}  {'Time':<5}  {'Account':<10} {'Hero':<14} {'Result':<7} "
-        f"{'Rating':<13} {'Points':>17} {'Change':>12} {'Streak':>7}  Note"
-    )
-
+    rows = []
     last_day = ""
 
     for g in games.iter_rows(named=True):
-        day = g["start_local"].strftime("%Y-%m-%d")
-        day_cell = "" if day == last_day else day
-        last_day = day
-        account = names.get(g["account_id"], str(g["account_id"]))
-        time = g["start_local"].strftime("%H:%M")
-        result = "win" if g["won"] else "loss"
-        streak = g["player_rank_initial_win_streak"] or 0
+        rows.append(_game_row(g, names, last_day))
+        last_day = g["start_local"].strftime("%Y-%m-%d")
 
-        print(
-            f"  {day_cell:<10}  {time:<5}  {account:<10} {g['hero']:<14} {result:<7} "
-            f"{g['rating'] or '-':<13} {_points(g):>17} {_change(g):>12} {streak:>7}  "
-            f"{_note(g)}".rstrip()
-        )
+    for line in render.table(queries.record_games, rows, GAME_COLUMNS):
+        print(line.rstrip())
 
 
 def _footer_lines(window: pl.DataFrame, whole: pl.DataFrame) -> list[str]:
@@ -404,11 +425,7 @@ def rank_report(args: argparse.Namespace, config: str | Path | None = None) -> N
     season = _flag_gaps(season)
     games = season
 
-    if args.since is not None:
-        games = games.filter(pl.col("day") >= dt.date.fromisoformat(args.since))
-
-    if args.days is not None:
-        games = games.filter(pl.col("day").rank("dense", descending=True) <= args.days)
+    games = queries.since_days_filter(games.lazy(), args.since, args.days).collect()
 
     names = account_labels(config)
     printed = False

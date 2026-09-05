@@ -29,37 +29,127 @@ def _parse_from(value: str) -> dt.datetime:
 
 def _era_records(path: Path) -> Iterator[tuple[dt.datetime, int, str, dict[str, Any]]]:
     """Yield era_from, client_version, id, and decoded record for each committed era row."""
-    if not history.has_history(path):
-        return
+    table = history._table(path)
 
-    table = pl.read_parquet(path)
+    if table is None:
+        return
 
     for when, build, rid, record in table.select("from", "build", "id", "record").iter_rows():
         yield _parse_from(when), build, rid, json.loads(record)
 
 
+def _era_frame(path: Path) -> pl.DataFrame | None:
+    """Return the committed era rows with the era start parsed and the grain named."""
+    table = history._table(path)
+
+    if table is None:
+        return None
+
+    starts = {value: _parse_from(value) for value in table.get_column("from").unique()}
+
+    return table.with_columns(
+        pl.col("from")
+        .replace_strict(starts, return_dtype=pl.Datetime("us", "UTC"))
+        .alias("era_from"),
+        pl.col("build").alias("client_version"),
+    )
+
+
+def _flat_table(frame: pl.DataFrame | None, table: str, names: dict[str, str]) -> pl.DataFrame:
+    """Decode the record column of every era row into one flat table.
+
+    - names maps each record field to the column it fills
+    - a boolean column reads a missing field as false, the way the game treats it
+    """
+    spec = schemas.TABLES[table]
+
+    if frame is None:
+        return schemas.conform(table, [])
+
+    dtype = pl.Struct({field: spec[column].dtype for field, column in names.items()})
+    columns = []
+
+    for field, column in names.items():
+        value = pl.col("record").struct.field(field)
+
+        if spec[column].dtype == pl.Boolean:
+            value = value.fill_null(False)
+
+        columns.append(value.alias(column))
+
+    decoded = frame.with_columns(pl.col("record").str.json_decode(dtype))
+
+    return schemas.conform(table, decoded.select(*columns, "era_from", "client_version"))
+
+
+def _weapon_table(frame: pl.DataFrame | None) -> pl.DataFrame:
+    """Flatten the weapon block of every gun record into the weapon history table."""
+    if frame is None:
+        return schemas.conform("ability_weapon_history", [])
+
+    spec = schemas.TABLES["ability_weapon_history"]
+    dtype = pl.Struct(
+        {
+            "class_name": pl.String,
+            "kind": pl.String,
+            "weapon": pl.Struct({f: spec[f].dtype for f in snapshots.WEAPON_FIELDS}),
+        }
+    )
+    decoded = frame.with_columns(pl.col("record").str.json_decode(dtype)).filter(
+        pl.col("record").struct.field("kind") == "weapon"
+    )
+    weapon = pl.col("record").struct.field("weapon")
+    rows = decoded.select(
+        pl.col("record").struct.field("class_name").alias("ability_class"),
+        *[weapon.struct.field(f).alias(f) for f in snapshots.WEAPON_FIELDS],
+        "era_from",
+        "client_version",
+    )
+
+    return schemas.conform("ability_weapon_history", rows)
+
+
+ITEM_FIELDS = {
+    "id": "item_id",
+    "name": "name",
+    "class_name": "class_name",
+    "cost": "cost",
+    "slot": "slot",
+    "tier": "tier",
+    "is_active": "is_active",
+    "description": "description",
+}
+
+HERO_FIELDS = {
+    "id": "hero_id",
+    "name": "name",
+    "class_name": "class_name",
+    "hero_type": "hero_type",
+    "gun_tag": "gun_tag",
+    "complexity": "complexity",
+    "player_selectable": "player_selectable",
+    "disabled": "disabled",
+}
+
+ABILITY_FIELDS = {
+    "class_name": "ability_class",
+    "id": "id",
+    "name": "name",
+    "hero": "hero",
+    "kind": "kind",
+    "description": "description",
+}
+
+RANK_FIELDS = {"tier": "tier", "name": "name"}
+
+
 def item_tables(path: Path | None = None) -> dict[str, pl.DataFrame]:
     """Flatten the committed item history into the item and component tables."""
     path = store.read_path("item_history.parquet") if path is None else path
-    parents: list[dict] = []
     components: list[dict] = []
 
     for era_from, build, _rid, rec in _era_records(path):
         grain = {"era_from": era_from, "client_version": build}
-
-        parents.append(
-            {
-                "item_id": rec["id"],
-                "name": rec.get("name"),
-                "class_name": rec.get("class_name"),
-                "cost": rec.get("cost"),
-                "slot": rec.get("slot"),
-                "tier": rec.get("tier"),
-                "is_active": bool(rec.get("is_active")),
-                "description": rec.get("description"),
-                **grain,
-            }
-        )
 
         for pos, comp in enumerate(rec.get("components") or []):
             components.append(
@@ -72,7 +162,7 @@ def item_tables(path: Path | None = None) -> dict[str, pl.DataFrame]:
             )
 
     return {
-        "item_history": schemas.conform("item_history", parents),
+        "item_history": _flat_table(_era_frame(path), "item_history", ITEM_FIELDS),
         "item_component_history": schemas.conform("item_component_history", components),
     }
 
@@ -80,27 +170,12 @@ def item_tables(path: Path | None = None) -> dict[str, pl.DataFrame]:
 def hero_tables(path: Path | None = None) -> dict[str, pl.DataFrame]:
     """Flatten the committed hero history into the hero, level, stat, and boon tables."""
     path = store.read_path("hero_history.parquet") if path is None else path
-    parents: list[dict] = []
     levels: list[dict] = []
     stats: list[dict] = []
     level_ups: list[dict] = []
 
     for era_from, build, _rid, rec in _era_records(path):
         grain = {"era_from": era_from, "client_version": build}
-
-        parents.append(
-            {
-                "hero_id": rec["id"],
-                "name": rec.get("name"),
-                "class_name": rec.get("class_name"),
-                "hero_type": rec.get("hero_type"),
-                "gun_tag": rec.get("gun_tag"),
-                "complexity": rec.get("complexity"),
-                "player_selectable": bool(rec.get("player_selectable")),
-                "disabled": bool(rec.get("disabled")),
-                **grain,
-            }
-        )
 
         levels.extend(
             {
@@ -124,7 +199,7 @@ def hero_tables(path: Path | None = None) -> dict[str, pl.DataFrame]:
         )
 
     return {
-        "hero_history": schemas.conform("hero_history", parents),
+        "hero_history": _flat_table(_era_frame(path), "hero_history", HERO_FIELDS),
         "hero_level_history": schemas.conform("hero_level_history", levels),
         "hero_stat_history": schemas.conform("hero_stat_history", stats),
         "hero_level_up_history": schemas.conform("hero_level_up_history", level_ups),
@@ -134,26 +209,12 @@ def hero_tables(path: Path | None = None) -> dict[str, pl.DataFrame]:
 def ability_tables(path: Path | None = None) -> dict[str, pl.DataFrame]:
     """Flatten the committed ability history into the ability, property, upgrade, and weapon tables."""
     path = store.read_path("ability_history.parquet") if path is None else path
-    parents: list[dict] = []
     props: list[dict] = []
     upgrades: list[dict] = []
-    weapons: list[dict] = []
 
     for era_from, build, _rid, rec in _era_records(path):
         grain = {"era_from": era_from, "client_version": build}
         cls = rec["class_name"]
-
-        parents.append(
-            {
-                "ability_class": cls,
-                "id": rec["id"],
-                "name": rec.get("name"),
-                "hero": rec.get("hero"),
-                "kind": rec.get("kind"),
-                "description": rec.get("description"),
-                **grain,
-            }
-        )
 
         values = rec.get("properties") or {}
         scaling = rec.get("scaling") or {}
@@ -185,40 +246,21 @@ def ability_tables(path: Path | None = None) -> dict[str, pl.DataFrame]:
             for up in entries
         )
 
-        if rec.get("kind") == "weapon":
-            weapon = rec.get("weapon") or {}
-            weapons.append(
-                {
-                    "ability_class": cls,
-                    **{f: weapon.get(f) for f in snapshots.WEAPON_FIELDS},
-                    **grain,
-                }
-            )
+    frame = _era_frame(path)
 
     return {
-        "ability_history": schemas.conform("ability_history", parents),
+        "ability_history": _flat_table(frame, "ability_history", ABILITY_FIELDS),
         "ability_property_history": schemas.conform("ability_property_history", props),
         "ability_upgrade_history": schemas.conform("ability_upgrade_history", upgrades),
-        "ability_weapon_history": schemas.conform("ability_weapon_history", weapons),
+        "ability_weapon_history": _weapon_table(frame),
     }
 
 
 def rank_tables(path: Path | None = None) -> dict[str, pl.DataFrame]:
     """Flatten the committed rank history into the rank table."""
     path = store.read_path("rank_history.parquet") if path is None else path
-    rows: list[dict] = []
 
-    for era_from, build, _rid, rec in _era_records(path):
-        rows.append(
-            {
-                "tier": rec["tier"],
-                "name": rec.get("name"),
-                "era_from": era_from,
-                "client_version": build,
-            }
-        )
-
-    return {"rank_history": schemas.conform("rank_history", rows)}
+    return {"rank_history": _flat_table(_era_frame(path), "rank_history", RANK_FIELDS)}
 
 
 def statue_tables(path: Path | None = None) -> dict[str, pl.DataFrame]:

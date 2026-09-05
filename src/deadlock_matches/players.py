@@ -20,7 +20,7 @@ if TYPE_CHECKING:
     from deadlock_matches.extract import MatchInfo
 
 REGIONS = ("Europe", "NAmerica", "Asia", "SAmerica", "Oceania")
-PARQUET_DIR = paths.data_dir() / "deadlock-matches/parquet-players"
+PLAYERS_PARQUET_DIR = paths.package_dir() / "parquet-players"
 
 
 def leaderboard(region: str) -> list[dict[str, Any]]:
@@ -245,7 +245,7 @@ def tracked_player_games(
     - intentionally exposes every stored mode; pool_games is the filtered
       comparison reader
     """
-    parquet_dir = PARQUET_DIR if parquet_dir is None else Path(parquet_dir)
+    parquet_dir = PLAYERS_PARQUET_DIR if parquet_dir is None else Path(parquet_dir)
     tz = config.config_timezone() if tz is None else tz
 
     tracked = (
@@ -289,7 +289,7 @@ def pool_members(
     if not watchlist:
         return []
 
-    parquet_dir = PARQUET_DIR if parquet_dir is None else Path(parquet_dir)
+    parquet_dir = PLAYERS_PARQUET_DIR if parquet_dir is None else Path(parquet_dir)
     stats: dict[int, dict[str, Any]] = {}
 
     if queries.table_exists("downloads", parquet_dir):
@@ -332,7 +332,7 @@ def pool_games(
     - comes back empty when nothing is tracked or downloaded yet
     """
     watchlist = config.config_players(hero, config_path)
-    parquet_dir = PARQUET_DIR if parquet_dir is None else Path(parquet_dir)
+    parquet_dir = PLAYERS_PARQUET_DIR if parquet_dir is None else Path(parquet_dir)
 
     if not watchlist or not queries.table_exists("downloads", parquet_dir):
         return pl.LazyFrame(
@@ -380,7 +380,7 @@ def pool_builds(
     - each build carries the config player label, the win, and the buy
       sequence in build_order shape
     """
-    parquet_dir = PARQUET_DIR if parquet_dir is None else Path(parquet_dir)
+    parquet_dir = PLAYERS_PARQUET_DIR if parquet_dir is None else Path(parquet_dir)
 
     if not queries.table_exists("item_events", parquet_dir):
         return []
@@ -634,15 +634,16 @@ def download_metadata(
 
 def _store_counts(out_dir: Path, exclude: Collection[str], downloads_n: int) -> dict[str, int]:
     """Row totals per match table plus the downloads ledger size."""
-    counts: dict[str, int] = {}
+    names = [
+        name
+        for name in schemas.TABLES
+        if name in schemas.PARTITIONED
+        and name not in exclude
+        and queries.table_exists(name, out_dir)
+    ]
+    totals = pl.collect_all([queries.scan(name, out_dir).select(pl.len()) for name in names])
 
-    for name in schemas.TABLES:
-        if name not in schemas.PARTITIONED or name in exclude:
-            continue
-
-        if queries.table_exists(name, out_dir):
-            counts[name] = queries.scan(name, out_dir).select(pl.len()).collect().item()
-
+    counts: dict[str, int] = {name: total.item() for name, total in zip(names, totals, strict=True)}
     counts["downloads"] = downloads_n
 
     return counts
@@ -664,7 +665,7 @@ def write_player_tables(
       carrying any match that cannot be decoded forward so live tables are never lost
     - nothing is pruned, so player history builds up across runs
     """
-    out_dir = PARQUET_DIR if out_dir is None else Path(out_dir)
+    out_dir = PLAYERS_PARQUET_DIR if out_dir is None else Path(out_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
 
     downloads = _merge_downloads(out_dir, download_rows)

@@ -15,6 +15,7 @@ from deadlock_matches.queries.core import (
     mode_label,
     my_games,
     scan,
+    since_days_filter,
     table_exists,
 )
 from deadlock_matches.queries.delivery import hero_damage, with_delivery
@@ -728,12 +729,7 @@ def _hero_game_rows(
         pl.col("hero_id") == hero_id
     )
 
-    if since is not None:
-        since = dt.date.fromisoformat(since) if isinstance(since, str) else since
-        mine = mine.filter(pl.col("day") >= since)
-
-    if days is not None:
-        mine = mine.filter(pl.col("day").rank("dense", descending=True) <= days)
+    mine = since_days_filter(mine, since, days)
 
     return mine.select(
         "match_id",
@@ -1166,12 +1162,7 @@ def combat_hero_records(
     accounts = _resolved_accounts(accounts)
     mine = view_frame(my_games(accounts, tz), parquet_dir=parquet_dir)
 
-    if since is not None:
-        since = dt.date.fromisoformat(since) if isinstance(since, str) else since
-        mine = mine.filter(pl.col("day") >= since)
-
-    if days is not None:
-        mine = mine.filter(pl.col("day").rank("dense", descending=True) <= days)
+    mine = since_days_filter(mine, since, days)
 
     games = mine.select("match_id", "account_id", "hero").unique()
     finals = _final_custom_values(

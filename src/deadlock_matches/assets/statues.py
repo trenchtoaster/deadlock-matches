@@ -3,17 +3,12 @@
 from __future__ import annotations
 
 import datetime as dt
-import functools
-import json
 import re
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
 from deadlock_matches.assets import history, store
-
-STATUES_JSON = store.seed_path("statues.json")
-STATUE_HISTORY_PARQUET = store.seed_path("statue_history.parquet")
 
 STATUE_RE = re.compile(r"^(?P<buff>\w+?)_permanent_pickup(?:_lv(?P<level>\d+))?$")
 POWER_UP_RE = re.compile(r"^(?P<buff>\w+?)_powerup_pickup$")
@@ -70,13 +65,9 @@ class Statue:
         )
 
 
-@functools.cache
 def statue_map(path: Path | None = None) -> dict[str, Statue]:
     """Cached load of statues.json, keyed by class name."""
-    src = Path(path) if path is not None else store.read_path("statues.json")
-    records = json.loads(src.read_text(encoding="utf-8"))
-
-    return {rec["class_name"]: Statue.from_record(rec) for rec in records}
+    return store.load_map("statues.json", "class_name", Statue.from_record, path)
 
 
 def statue_map_asof(at: dt.datetime | dt.date, path: Path | None = None) -> dict[str, Statue]:
@@ -86,9 +77,5 @@ def statue_map_asof(at: dt.datetime | dt.date, path: Path | None = None) -> dict
     - no history at all falls back to the current snapshot
     """
     src = Path(path) if path is not None else store.read_path("statue_history.parquet")
-    records = history.records_asof(src, at)
 
-    if records is None:
-        return statue_map()
-
-    return {rec["class_name"]: Statue.from_record(rec) for rec in records.values()}
+    return history.map_asof(src, at, "class_name", Statue.from_record, statue_map)

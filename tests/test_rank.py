@@ -529,7 +529,7 @@ def test_rank_reads_the_players_store_for_a_downloaded_account(tmp_path, capsys,
     main_store = tmp_path / "parquet"
     players_store = tmp_path / "parquet-players"
     monkeypatch.setattr(export, "PARQUET_DIR", main_store)
-    monkeypatch.setattr(players, "PARQUET_DIR", players_store)
+    monkeypatch.setattr(players, "PLAYERS_PARQUET_DIR", players_store)
     write_tables(main_store, [build_standard_match(930, 0, MIRAGE, account_id=99)])
     write_tables(players_store, season_infos())
     schemas.conform(

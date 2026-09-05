@@ -12,12 +12,7 @@ from typing import TYPE_CHECKING, Any
 
 from deadlock_matches import api
 from deadlock_matches.assets import (
-    abilities,
-    accolades,
-    heroes,
     history,
-    items,
-    skill_rating,
     statues,
     store,
 )
@@ -757,7 +752,7 @@ def refresh_abilities(path: Path | None = None) -> int:
     ]
 
     path.write_text(json.dumps(records), encoding="utf-8")
-    abilities.ability_map.cache_clear()
+    store.clear_maps()
 
     return len(records)
 
@@ -771,7 +766,7 @@ def refresh_heroes(path: Path | None = None) -> int:
     records = api.get_json("v1/assets/heroes", use_cache=False)
 
     path.write_text(json.dumps([_hero_snapshot(r) for r in records]), encoding="utf-8")
-    heroes.hero_map.cache_clear()
+    store.clear_maps()
 
     return len(records)
 
@@ -824,7 +819,7 @@ def refresh_skill_rating(path: Path | None = None, *, build: int | None = None) 
     path.write_text(
         json.dumps([{"tier": tier, "name": names[tier]} for tier in names]), encoding="utf-8"
     )
-    skill_rating.tier_map.cache_clear()
+    store.clear_maps()
 
     return len(records)
 
@@ -846,7 +841,7 @@ def refresh_accolades(path: Path | None = None) -> int:
         ),
         encoding="utf-8",
     )
-    accolades.accolade_map.cache_clear()
+    store.clear_maps()
 
     return len(records)
 
@@ -861,7 +856,7 @@ def refresh_statues(path: Path | None = None) -> int:
     kept = [_statue_snapshot(r) for r in records if statues.is_statue(r.get("class_name") or "")]
 
     path.write_text(json.dumps(kept), encoding="utf-8")
-    statues.statue_map.cache_clear()
+    store.clear_maps()
 
     return len(kept)
 
@@ -875,9 +870,7 @@ def refresh_items(path: Path | None = None) -> int:
     records = api.get_json("v1/assets/items/by-type/upgrade", use_cache=False)
 
     path.write_text(json.dumps([_item_snapshot(r) for r in records]), encoding="utf-8")
-    items.item_map.cache_clear()
-    items.item_by_name.cache_clear()
-    items.item_by_class_name.cache_clear()
+    store.clear_maps()
 
     return len(records)
 

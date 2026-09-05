@@ -4,7 +4,7 @@ import json
 
 import pytest
 
-from deadlock_matches.assets import history, items
+from deadlock_matches.assets import history, items, store
 
 
 def _write_history(path):
@@ -79,7 +79,7 @@ def test_item_asof_without_history_falls_back_to_bundled(tmp_path):
 def test_committed_item_history_newest_matches_bundle():
     today = dt.date(2026, 7, 9)
 
-    assert history.has_history(items.ITEM_HISTORY_PARQUET)
+    assert history.has_history(store.read_path("item_history.parquet"))
 
     current = items.item_map()
     resolved = {i: items.item_asof(i, today) for i in current}

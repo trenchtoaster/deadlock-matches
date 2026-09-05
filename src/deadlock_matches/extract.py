@@ -30,11 +30,7 @@ MatchInfo = pb.CMsgMatchMetaDataContents.MatchInfo
 MATCH_MODE_STANDARD = pb.k_ECitadelMatchMode_Unranked
 MATCH_MODE_RANKED = pb.k_ECitadelMatchMode_Ranked
 MATCH_MODE_PLACEMENT = pb.k_ECitadelMatchMode_NewPlayerPlacement
-# Compatibility alias for callers and saved commands using the old mode name.
-MATCH_MODE_CALIBRATION = MATCH_MODE_PLACEMENT
 MATCH_MODE_PRIVATE_LOBBY = pb.k_ECitadelMatchMode_PrivateLobby
-# Compatibility alias for callers written before Standard and Ranked split.
-MATCH_MODE_MATCHMAKING = MATCH_MODE_STANDARD
 GAME_MODE_NORMAL = pb.k_ECitadelGameMode_Normal
 GAME_MODE_STREET_BRAWL = pb.k_ECitadelGameMode_StreetBrawl
 RANKED_TYPE_UNRANKED = pb.k_ECitadelRankedType_Invalid
@@ -114,8 +110,7 @@ def default_cache(candidates: Sequence[Path] = CACHE_CANDIDATES) -> Path:
     return candidates[0]
 
 
-DEFAULT_CACHE = default_cache()
-ARCHIVE_DIR = paths.data_dir() / "deadlock-matches/matches"
+ARCHIVE_DIR = paths.package_dir() / "matches"
 META_HOST = re.compile(rb"replay\d+\.valve\.net")
 META_PATH = re.compile(rb"/1422450/(\d+)_(\d+)\.meta\.bz2")
 BZ2_MAGIC = b"BZh"
@@ -154,7 +149,7 @@ def _login_users(steam_root: Path) -> dict[int, dict[str, str]]:
     return users
 
 
-def installed_client_version(cache_dir: str | Path = DEFAULT_CACHE) -> int | None:
+def installed_client_version(cache_dir: str | Path | None = None) -> int | None:
     """Read the installed Deadlock client build from steam.inf.
 
     - comes back None without an install
@@ -163,7 +158,9 @@ def installed_client_version(cache_dir: str | Path = DEFAULT_CACHE) -> int | Non
     - ClientVersion uses the same numbering as the asset history client_version
     - Steam updates steam.inf before a post-patch match can be played
     """
-    root = Path(cache_dir).parent.parent
+    cache_dir = default_cache() if cache_dir is None else Path(cache_dir)
+
+    root = cache_dir.parent.parent
     libraries = [root]
     vdf = root / "steamapps/libraryfolders.vdf"
 
@@ -186,7 +183,7 @@ def installed_client_version(cache_dir: str | Path = DEFAULT_CACHE) -> int | Non
     return None
 
 
-def steam_accounts(cache_dir: str | Path = DEFAULT_CACHE) -> list[SteamAccount]:
+def steam_accounts(cache_dir: str | Path | None = None) -> list[SteamAccount]:
     """List the Steam accounts on this PC that have run Deadlock.
 
     - the newest login comes first
@@ -194,7 +191,9 @@ def steam_accounts(cache_dir: str | Path = DEFAULT_CACHE) -> list[SteamAccount]:
     - a 1422450 folder inside means Deadlock ran on that account
     - login and persona names come from loginusers.vdf while Steam remembers the login
     """
-    steam_root = Path(cache_dir).resolve().parent.parent
+    cache_dir = default_cache() if cache_dir is None else Path(cache_dir)
+
+    steam_root = cache_dir.resolve().parent.parent
     userdata = steam_root / "userdata"
 
     if not userdata.is_dir():
@@ -226,9 +225,9 @@ def steam_accounts(cache_dir: str | Path = DEFAULT_CACHE) -> list[SteamAccount]:
     return found
 
 
-def iter_meta_files(cache_dir: str | Path = DEFAULT_CACHE) -> Iterator[Path]:
+def iter_meta_files(cache_dir: str | Path | None = None) -> Iterator[Path]:
     """Walk the httpcache and yield cache files that hold a match .meta.bz2."""
-    cache_dir = Path(cache_dir)
+    cache_dir = default_cache() if cache_dir is None else Path(cache_dir)
 
     for path in cache_dir.rglob("*"):
         if not path.is_file():
@@ -241,13 +240,15 @@ def iter_meta_files(cache_dir: str | Path = DEFAULT_CACHE) -> Iterator[Path]:
             yield path
 
 
-def archive(cache_dir: str | Path = DEFAULT_CACHE, archive_dir: str | Path = ARCHIVE_DIR) -> int:
+def archive(cache_dir: str | Path | None = None, archive_dir: str | Path = ARCHIVE_DIR) -> int:
     """Copy match entries out of the live cache so Steam eviction cannot lose them.
 
     - keeps one body per match
     - a cache copy replaces a salt 0 placeholder left by the API fallback
     - prunes a placeholder whose match already has a body with a real salt
     """
+    cache_dir = default_cache() if cache_dir is None else Path(cache_dir)
+
     archive_dir = Path(archive_dir)
     archive_dir.mkdir(parents=True, exist_ok=True)
 
@@ -363,9 +364,11 @@ def store_meta(
 
 
 def iter_matches(
-    cache_dir: str | Path = DEFAULT_CACHE, archive_dir: str | Path = ARCHIVE_DIR
+    cache_dir: str | Path | None = None, archive_dir: str | Path = ARCHIVE_DIR
 ) -> Iterator[Path]:
     """Sync the cache into the archive and yield one body per match in descending match_id order."""
+    cache_dir = default_cache() if cache_dir is None else Path(cache_dir)
+
     archive(cache_dir, archive_dir)
 
     yield from reversed(archived_match_paths(archive_dir))

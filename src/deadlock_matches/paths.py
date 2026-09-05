@@ -15,10 +15,15 @@ def data_dir() -> Path:
     return Path.home() / ".local/share"
 
 
+def package_dir() -> Path:
+    """The deadlock-matches directory under the user data directory."""
+    return data_dir() / "deadlock-matches"
+
+
 def cache_dir() -> Path:
     """~/.cache/deadlock-matches on Linux, LOCALAPPDATA/deadlock-matches/cache on Windows."""
     if sys.platform == "win32":
-        return data_dir() / "deadlock-matches/cache"
+        return package_dir() / "cache"
 
     return Path.home() / ".cache/deadlock-matches"
 

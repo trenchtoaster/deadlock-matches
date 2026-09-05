@@ -13,7 +13,7 @@ from deadlock_matches.extract import pb
 EE = 3005970438
 
 
-def build_match(match_id=100, winning_team=pb.k_ECitadelLobbyTeam_Team1):
+def build_export_match(match_id=100, winning_team=pb.k_ECitadelLobbyTeam_Team1):
     info = pb.CMsgMatchMetaDataContents().match_info
     info.match_id = match_id
     info.start_time = 1783000000
@@ -198,14 +198,14 @@ def build_match(match_id=100, winning_team=pb.k_ECitadelLobbyTeam_Team1):
 
 
 def test_from_api_json_matches_local_decode():
-    info = build_match()
+    info = build_export_match()
     as_json = json_format.MessageToDict(info, preserving_proto_field_name=True)
 
     assert extract.from_api_json(as_json) == info
 
 
 def test_from_api_json_ignores_unknown_fields():
-    info = build_match()
+    info = build_export_match()
     as_json = json_format.MessageToDict(info, preserving_proto_field_name=True)
     as_json["some_future_field"] = 7
 
@@ -213,7 +213,7 @@ def test_from_api_json_ignores_unknown_fields():
 
 
 def test_tables_have_expected_rows():
-    tables = export.build_tables([build_match()])
+    tables = export.build_tables([build_export_match()])
 
     assert len(tables["matches"]) == 1
     assert len(tables["players"]) == 2
@@ -249,7 +249,7 @@ def test_tables_have_expected_rows():
 
 
 def test_player_outcome_overrides_team_result():
-    info = build_match()
+    info = build_export_match()
     info.players[0].player_match_outcome = pb.k_EPlayerMatchOutcome_Penalized
 
     player = (
@@ -260,7 +260,7 @@ def test_player_outcome_overrides_team_result():
 
 
 def test_players_lane_resolves_at_read_time():
-    info = build_match()
+    info = build_export_match()
     info.players[0].assigned_lane = 1
     info.players[1].assigned_lane = 6
     players = export.build_tables([info])["players"]
@@ -273,7 +273,7 @@ def test_players_lane_resolves_at_read_time():
 
 
 def test_damage_sources_cumulative_matches_damage_total():
-    tables = export.build_tables([build_match()])
+    tables = export.build_tables([build_export_match()])
     ds = tables["damage_sources"]
 
     assert ds.get_column("time_stamp_s").to_list() == [600, 1200]
@@ -283,7 +283,7 @@ def test_damage_sources_cumulative_matches_damage_total():
 
 
 def test_damage_sources_right_aligns_short_arrays():
-    info = build_match()
+    info = build_export_match()
     src = info.damage_matrix.damage_dealers[0].damage_sources[0]
 
     late = src.damage_to_players.add()
@@ -297,7 +297,7 @@ def test_damage_sources_right_aligns_short_arrays():
 
 
 def test_damage_targets_keeps_per_enemy_samples():
-    tables = export.build_tables([build_match()])
+    tables = export.build_tables([build_export_match()])
     dt_rows = tables["damage_targets"]
 
     assert dt_rows.get_column("time_stamp_s").to_list() == [600, 1200]
@@ -308,7 +308,7 @@ def test_damage_targets_keeps_per_enemy_samples():
 
 
 def test_damage_targets_sums_split_arrays_per_target():
-    info = build_match()
+    info = build_export_match()
     src = info.damage_matrix.damage_dealers[0].damage_sources[0]
 
     late = src.damage_to_players.add()
@@ -321,7 +321,7 @@ def test_damage_targets_sums_split_arrays_per_target():
 
 
 def test_damage_targets_excludes_non_player_targets():
-    info = build_match()
+    info = build_export_match()
     src = info.damage_matrix.damage_dealers[0].damage_sources[0]
 
     creep = src.damage_to_players.add()
@@ -335,7 +335,7 @@ def test_damage_targets_excludes_non_player_targets():
 
 
 def test_damage_sources_splits_creep_from_hero_damage():
-    info = build_match()
+    info = build_export_match()
     src = info.damage_matrix.damage_dealers[0].damage_sources[0]
 
     creep = src.damage_to_players.add()
@@ -350,32 +350,32 @@ def test_damage_sources_splits_creep_from_hero_damage():
 
 
 def test_damage_sources_empty_without_sample_times():
-    info = build_match()
+    info = build_export_match()
     del info.damage_matrix.sample_time_s[:]
 
     assert export.build_tables([info])["damage_sources"].is_empty()
 
 
 def test_exclude_skips_movement():
-    tables = export.build_tables([build_match()], exclude=("movement",))
+    tables = export.build_tables([build_export_match()], exclude=("movement",))
 
     assert "movement" not in tables
 
 
 def test_movement_intervals_built_without_movement():
-    tables = export.build_tables([build_match()], exclude=("movement",))
+    tables = export.build_tables([build_export_match()], exclude=("movement",))
 
     assert len(tables["movement_intervals"]) == 1
 
 
 def test_exclude_skips_movement_intervals():
-    tables = export.build_tables([build_match()], exclude=("movement", "movement_intervals"))
+    tables = export.build_tables([build_export_match()], exclude=("movement", "movement_intervals"))
 
     assert "movement_intervals" not in tables
 
 
 def test_movement_intervals_counts():
-    mi = export.build_tables([build_match()])["movement_intervals"]
+    mi = export.build_tables([build_export_match()])["movement_intervals"]
     row = mi.row(0, named=True)
 
     assert len(mi) == 1
@@ -391,7 +391,7 @@ def test_movement_intervals_counts():
 
 
 def test_matches_average_badges():
-    info = build_match()
+    info = build_export_match()
     info.average_badge_team0 = 76
     info.average_badge_team1 = 83
     matches = export.build_tables([info])["matches"]
@@ -401,14 +401,14 @@ def test_matches_average_badges():
 
 
 def test_matches_average_badges_null_when_unset():
-    matches = export.build_tables([build_match()])["matches"]
+    matches = export.build_tables([build_export_match()])["matches"]
 
     assert matches.get_column("average_badge_team0")[0] is None
     assert matches.get_column("average_badge_team1")[0] is None
 
 
 def test_gold_fields_renamed_to_souls():
-    stats = export.build_tables([build_match()])["stats"]
+    stats = export.build_tables([build_export_match()])["stats"]
 
     assert "souls_player" in stats.columns
     assert "souls_denied" in stats.columns
@@ -417,7 +417,7 @@ def test_gold_fields_renamed_to_souls():
 
 
 def test_soul_sources_resolve_names_at_read_time():
-    src = export.build_tables([build_match()])["soul_sources"]
+    src = export.build_tables([build_export_match()])["soul_sources"]
 
     assert "source_name" not in src.columns
 
@@ -428,7 +428,7 @@ def test_soul_sources_resolve_names_at_read_time():
 
 
 def test_players_won_flag():
-    players = export.build_tables([build_match(winning_team=pb.k_ECitadelLobbyTeam_Team1)])[
+    players = export.build_tables([build_export_match(winning_team=pb.k_ECitadelLobbyTeam_Team1)])[
         "players"
     ]
     won = dict(zip(players.get_column("account_id"), players.get_column("won"), strict=True))
@@ -437,14 +437,14 @@ def test_players_won_flag():
 
 
 def test_players_mvp_rank():
-    players = export.build_tables([build_match()])["players"]
+    players = export.build_tables([build_export_match()])["players"]
     ranks = dict(zip(players.get_column("account_id"), players.get_column("mvp_rank"), strict=True))
 
     assert ranks == {42: 1, 43: 0}
 
 
 def test_matches_not_scored_flag():
-    info = build_match()
+    info = build_export_match()
     info.not_scored = True
 
     matches = export.build_tables([info])["matches"]
@@ -453,13 +453,13 @@ def test_matches_not_scored_flag():
 
 
 def test_matches_not_scored_defaults_false():
-    matches = export.build_tables([build_match()])["matches"]
+    matches = export.build_tables([build_export_match()])["matches"]
 
     assert matches.get_column("not_scored").to_list() == [False]
 
 
 def test_players_party_from_wire_field():
-    info = build_match()
+    info = build_export_match()
     raw = info.players[0].SerializeToString() + bytes([0x80, 0x01, 2])
     info.players[0].Clear()
     info.players[0].MergeFromString(raw)
@@ -471,7 +471,7 @@ def test_players_party_from_wire_field():
 
 
 def test_players_abandon_time():
-    info = build_match()
+    info = build_export_match()
     info.players[1].abandon_match_time_s = 367
 
     players = export.build_tables([info])["players"]
@@ -483,7 +483,7 @@ def test_players_abandon_time():
 
 
 def test_item_events_keep_imbued_id_and_resolve_name_at_read_time():
-    events = export.build_tables([build_match()])["item_events"]
+    events = export.build_tables([build_export_match()])["item_events"]
     assert "imbued_ability" not in events.columns
     events = (
         events.lazy().with_columns(queries.imbued_ability_name().alias("imbued_ability")).collect()
@@ -506,7 +506,7 @@ def test_item_events_keep_imbued_id_and_resolve_name_at_read_time():
 
 def test_item_events_priced_from_committed_history():
     start = dt.datetime.fromtimestamp(1783000000, dt.UTC)
-    events = export.build_tables([build_match()])["item_events"]
+    events = export.build_tables([build_export_match()])["item_events"]
 
     ee = events.filter(pl.col("item_id") == EE)
 
@@ -517,7 +517,7 @@ def test_item_events_priced_from_committed_history():
 
 
 def test_accolades_resolve_current_name_at_read_time():
-    acc = export.build_tables([build_match()])["accolades"]
+    acc = export.build_tables([build_export_match()])["accolades"]
     assert "accolade" not in acc.columns
     acc = acc.lazy().with_columns(queries.accolade_name().alias("accolade")).collect()
 
@@ -534,7 +534,7 @@ def test_accolades_resolve_current_name_at_read_time():
 
 
 def test_custom_stats_named_from_match_registry():
-    tables = export.build_tables([build_match()])
+    tables = export.build_tables([build_export_match()])
     rows = {(r["group"], r["stat"]): r["value"] for r in tables["custom_stats"].to_dicts()}
 
     assert rows[None, "Parry Success"] == 3
@@ -542,7 +542,7 @@ def test_custom_stats_named_from_match_registry():
 
 
 def test_custom_stats_keep_every_snapshot():
-    info = build_match()
+    info = build_export_match()
     s = info.players[0].stats.add()
     s.time_stamp_s = 600
     cs = s.custom_user_stats.add()
@@ -557,7 +557,7 @@ def test_custom_stats_keep_every_snapshot():
 
 
 def test_custom_stats_drop_unregistered_ids():
-    info = build_match()
+    info = build_export_match()
     cs = info.players[0].stats[0].custom_user_stats.add()
     cs.id = 99
     cs.value = 1
@@ -568,7 +568,7 @@ def test_custom_stats_drop_unregistered_ids():
 
 
 def test_stacks_resolve_current_labels_at_read_time():
-    stacks = export.build_tables([build_match()])["stacks"]
+    stacks = export.build_tables([build_export_match()])["stacks"]
     assert "class_name" not in stacks.columns
     assert "name" not in stacks.columns
     stacks = queries.with_stack_labels(stacks.lazy()).collect()
@@ -587,7 +587,7 @@ def test_stacks_resolve_current_labels_at_read_time():
 
 
 def test_buffs_keep_permanent_and_bridge_pickups():
-    table = export.build_tables([build_match()])["buffs"]
+    table = export.build_tables([build_export_match()])["buffs"]
 
     assert table.height == 2
     assert "buff" not in table.columns
@@ -610,7 +610,7 @@ def test_buffs_keep_permanent_and_bridge_pickups():
 
 
 def test_damage_maps_slots_to_accounts():
-    dmg = export.build_tables([build_match()])["damage"]
+    dmg = export.build_tables([build_export_match()])["damage"]
 
     assert dmg.get_column("account_id")[0] == 42
     assert dmg.get_column("target_account_id")[0] == 43
@@ -627,7 +627,7 @@ def test_stat_names_from_proto_enum():
 
 
 def test_damage_source_names_resolved_at_read_time():
-    dmg = export.build_tables([build_match()])["damage"]
+    dmg = export.build_tables([build_export_match()])["damage"]
     assert "source_name" not in dmg.columns
     dmg = queries.with_damage_source_name(dmg.lazy()).collect()
 
@@ -636,7 +636,7 @@ def test_damage_source_names_resolved_at_read_time():
 
 
 def test_item_attribution(tmp_path):
-    for name, df in export.build_tables([build_match()]).items():
+    for name, df in export.build_tables([build_export_match()]).items():
         df.write_parquet(tmp_path / f"{name}.parquet")
 
     events = queries.item_attribution(tmp_path).collect()
@@ -651,7 +651,7 @@ def test_item_attribution(tmp_path):
 
 
 def test_mid_boss_rows():
-    mb = export.build_tables([build_match()])["mid_boss"]
+    mb = export.build_tables([build_export_match()])["mid_boss"]
 
     assert mb.get_column("destroyed_time_s").to_list() == [1300, 1700]
     assert mb.get_column("team_killed").to_list() == [1, 1]
@@ -660,7 +660,7 @@ def test_mid_boss_rows():
 
 
 def test_objectives_rows():
-    obj = export.build_tables([build_match()])["objectives"]
+    obj = export.build_tables([build_export_match()])["objectives"]
 
     assert "objective" not in obj.columns
     assert "lane" not in obj.columns
@@ -678,7 +678,7 @@ def test_objectives_rows():
 
 
 def test_movement_positions_decoded():
-    movement = export.build_tables([build_match()])["movement"]
+    movement = export.build_tables([build_export_match()])["movement"]
 
     assert movement.get_column("account_id").to_list() == [42, 42, 42]
     assert movement.get_column("game_time_s").to_list() == [0, 1, 2]
@@ -687,7 +687,7 @@ def test_movement_positions_decoded():
 
 
 def test_movement_enum_names():
-    movement = export.build_tables([build_match()])["movement"]
+    movement = export.build_tables([build_export_match()])["movement"]
 
     assert movement.get_column("health_percent").to_list() == [100, 40, 0]
     assert movement.get_column("combat_type").to_list() == ["out", "player", "enemy_npc"]
@@ -695,7 +695,7 @@ def test_movement_enum_names():
 
 
 def test_movement_drops_samples_past_match_end():
-    info = build_match()
+    info = build_export_match()
     info.duration_s = 1
     movement = export.build_tables([info])["movement"]
 
@@ -713,7 +713,7 @@ def test_move_names_from_proto_enum():
 
 
 def test_deaths_rows():
-    deaths = export.build_tables([build_match()])["deaths"]
+    deaths = export.build_tables([build_export_match()])["deaths"]
 
     assert deaths.get_column("account_id")[0] == 42
     assert deaths.get_column("game_time_s")[0] == 2
@@ -729,7 +729,7 @@ def test_deaths_rows():
 
 
 def test_export_all_writes_parquet(tmp_path):
-    raw = build_match(match_id=7)
+    raw = build_export_match(match_id=7)
     contents = pb.CMsgMatchMetaDataContents()
     contents.match_info.CopyFrom(raw)
     meta_msg = pb.CMsgMatchMetaData()
@@ -763,7 +763,7 @@ def test_export_all_writes_parquet(tmp_path):
 
 def _archive_match(arc, match_id, start, accounts=None):
     """Write one match into the .bin archive at a chosen start time."""
-    info = build_match(match_id=match_id)
+    info = build_export_match(match_id=match_id)
     info.start_time = int(start.timestamp())
 
     if accounts is not None:
@@ -944,6 +944,34 @@ def test_drop_only_drift_rejects_a_missing_table(tmp_path):
     assert export.drop_only_drift(out, exclude=("buffs",)) is True
 
 
+def test_scan_drift_reports_the_reason_and_the_verdict_together(tmp_path):
+    arc = tmp_path / "arc"
+    arc.mkdir()
+    out = tmp_path / "pq"
+    _archive_match(arc, 7, dt.datetime(2026, 6, 1, tzinfo=dt.UTC))
+    export.export_all(arc, out)
+
+    _add_column(out, "players", "hero")
+    scan = export._scan_drift(out)
+
+    assert scan.reason == export.schema_drift(out)
+    assert scan.drop_only is True
+
+
+def test_scan_drift_rejects_drop_only_when_a_column_is_gone(tmp_path):
+    arc = tmp_path / "arc"
+    arc.mkdir()
+    out = tmp_path / "pq"
+    _archive_match(arc, 7, dt.datetime(2026, 6, 1, tzinfo=dt.UTC))
+    export.export_all(arc, out)
+
+    _drop_column(out, "objectives", "player_spirit_damage")
+    scan = export._scan_drift(out)
+
+    assert scan.reason is not None
+    assert scan.drop_only is False
+
+
 def test_reshape_partitions_drops_the_column_and_keeps_every_row(tmp_path):
     arc = tmp_path / "arc"
     arc.mkdir()
@@ -1071,14 +1099,14 @@ def test_full_export_reports_archive_progress(tmp_path, capsys):
     export.export_all(arc, tmp_path / "pq", accounts=[42])
 
     captured = capsys.readouterr()
-    assert "Building the tables from the archive (2 archived matches)" in captured.out
+    assert "Building the tables from the archive (2 archived matches)" in captured.err
     assert "Archive progress: 2/2 (100%)" in captured.err
     assert "Writing the asset reference tables" in captured.err
 
 
 def _meta_body(match_id):
     """A .meta.bz2 body for a built match, the shape the API and Valve return."""
-    info = build_match(match_id=match_id)
+    info = build_export_match(match_id=match_id)
     contents = pb.CMsgMatchMetaDataContents()
     contents.match_info.CopyFrom(info)
     meta = pb.CMsgMatchMetaData()
@@ -1427,7 +1455,7 @@ def test_incremental_is_idempotent(tmp_path):
 
 
 def test_flush_cap_splits_a_month_without_changing_its_content(tmp_path, monkeypatch):
-    infos = [build_match(match_id=10 + n) for n in range(5)]
+    infos = [build_export_match(match_id=10 + n) for n in range(5)]
     whole = tmp_path / "whole"
     split = tmp_path / "split"
 
@@ -1453,7 +1481,7 @@ def test_flush_cap_splits_a_month_without_changing_its_content(tmp_path, monkeyp
 
 
 def test_write_partitioned_replaces_rather_than_duplicating(tmp_path):
-    df = export.build_tables([build_match(match_id=5)])["matches"]
+    df = export.build_tables([build_export_match(match_id=5)])["matches"]
 
     export.write_partitioned("matches", df, "2026-06", tmp_path)
     export.write_partitioned("matches", df, "2026-06", tmp_path)
@@ -1465,7 +1493,7 @@ def test_write_partitioned_replaces_rather_than_duplicating(tmp_path):
 
 
 def test_write_partitioned_rejects_schema_drift(tmp_path):
-    df = export.build_tables([build_match(match_id=5)])["matches"]
+    df = export.build_tables([build_export_match(match_id=5)])["matches"]
 
     export.write_partitioned("matches", df, "2026-06", tmp_path)
 
@@ -1479,7 +1507,7 @@ def test_write_partitioned_rejects_schema_drift(tmp_path):
 
 
 def test_write_partitioned_rejects_an_old_schema_month_file(tmp_path):
-    df = export.build_tables([build_match(match_id=5)])["matches"]
+    df = export.build_tables([build_export_match(match_id=5)])["matches"]
 
     export.write_partitioned("matches", df, "2026-06", tmp_path)
 
@@ -1525,7 +1553,7 @@ def test_migrate_to_partitions_preserves_all_rows_without_decoding(tmp_path):
     out = tmp_path / "pq"
     out.mkdir()
 
-    tables = export.build_tables([build_match(match_id=10)])
+    tables = export.build_tables([build_export_match(match_id=10)])
 
     for name, df in tables.items():
         df.write_parquet(out / f"{name}.parquet")
