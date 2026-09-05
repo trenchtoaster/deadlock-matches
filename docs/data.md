@@ -27,6 +27,10 @@ Use `deadlock schema [table]` when you want the exact columns, data types, and d
 - `mid_boss`: one row per midboss kill, with when it died, which team killed it, and which team claimed the Rejuvenator.
 - `movement`: the position of every player, health percent, and movement state (sliding, dashing, ziplining, in combat or not) for every second of the match. The starter config excludes it because it is larger than every other table combined. Delete it from `exclude` if you want exact position or nearby-player queries.
 - `deaths`: one row per death with the time, position, killer, and respawn timer. Joined to `movement`, this answers things like "was I alone when I died" or "how many enemies killed me".
+- `accolades`: one row per end of match stat award per player, with the player's number for that stat and the highest star threshold reached. Parquet stores `accolade_id`. `queries.accolade_name()` adds the award title.
+- `damage_targets`: cumulative damage per dealer, source, and hero target over time. The table names the hero that received the damage, where `damage_sources` only splits hero targets from everything else.
+- `objectives`: one row per objective per team, covering guardians, walkers, base guardians, shrines, and the patron. Parquet stores `objective_id`. `queries.with_objective_labels()` adds the objective name and lane color.
+- `movement_intervals`: one row per player per minute, with movement state counts, dashes, and distance. The minute rollup stays queryable when the starter config excludes the raw `movement` table.
 
 The tables do not cover everything Valve stores yet. The full structure is `CMsgMatchMetaDataContents` in [`protos/citadel_gcmessages_common.proto`](../protos/citadel_gcmessages_common.proto). This is a work in progress, and new columns and tables get added as more of that data turns out to be interesting to query.
 

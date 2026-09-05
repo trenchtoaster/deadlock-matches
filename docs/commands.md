@@ -1638,4 +1638,5 @@ deadlock schema
 
 - column names, types, and descriptions for every parquet table, or one table with `deadlock schema players`
 - `--sample` prints real rows from your local data
+- `--views` lists every metric view with its arguments, dimensions, and measures
 - see [data.md](data.md) for the table overview and query patterns

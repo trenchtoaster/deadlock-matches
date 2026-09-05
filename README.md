@@ -479,10 +479,10 @@ LLM agent support is completely optional. The CLI, parquet tables, notebooks, an
 
 If you do use an agent, the same things that make the tables easy to query manually also make them easy for it.
 
-- `.claude/skills/deadlock-matches` is the source-checkout copy of a portable agent skill that teaches the agent the CLI, the schemas, and the query helpers, so it writes the same polars you would
-- installed users can run `deadlock skill install --agent claude`, `--agent codex`, or `--agent gemini`; `deadlock skill path --agent ...` prints the destination
-- `AGENTS.md` points agents working in the source checkout at the same file
-- the skill has notes about the parts of the data that are easy to get wrong (rows that double count, snapshot stats that are not aligned with the scoreboard) so an agent does not provide wrong answers
+- `.agents/skills/deadlock-matches` is the source-checkout copy of a portable agent skill that teaches the agent the CLI, the schemas, and the query helpers, so it writes the same polars you would. `.claude/skills/deadlock-matches` is a symlink to it
+- `.agents/wiki/` is the project knowledge that the skill references. One dated page per table lists the parts of the data that are easy to get wrong (rows that double count, snapshot stats that are not aligned with the scoreboard) so an agent does not provide wrong answers. The `contracts/` pages describe the table layout, the query helpers, and the module map
+- installed users can run `deadlock skill install --agent claude`, `--agent codex`, or `--agent gemini`; the install copies the skill and the wiki. `deadlock skill path --agent ...` prints the destination
+- `AGENTS.md` points agents working in the source checkout at the same files
 
 With an agent you ask in English instead of writing the query yourself. Real questions from my own sessions:
 
