@@ -1,6 +1,18 @@
 # Changelog
 
 All notable changes to this project are documented here.
+## [0.14.0] - 2026-09-05
+
+### Documentation
+
+- Move the agent skill into .agents and split the caveats into a wiki ([f3cf249](https://github.com/trenchtoaster/deadlock-matches/commit/f3cf24940c922cfe44d8493e7a496e7696489ec0))
+
+
+### Internal
+
+- Split the cli and remove the duplicated helpers ([e5f1d02](https://github.com/trenchtoaster/deadlock-matches/commit/e5f1d0257771c489eed868b253163ae27c13b730))
+
+
 ## [0.13.1] - 2026-08-12
 
 ### Fixed
