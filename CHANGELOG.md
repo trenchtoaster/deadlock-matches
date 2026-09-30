@@ -1,6 +1,13 @@
 # Changelog
 
 All notable changes to this project are documented here.
+## [0.15.0] - 2026-09-30
+
+### Added
+
+- Support the 2026-09-29 update with statue pickup times ([3e472ad](https://github.com/trenchtoaster/deadlock-matches/commit/3e472adf5d10c639f9394e81883cbb2339e42869))
+
+
 ## [0.14.0] - 2026-09-05
 
 ### Documentation
