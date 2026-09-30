@@ -2,14 +2,14 @@
 status: active
 scope: the parquet tables, their layout on disk, and the rules the exporter and the readers follow
 first_seen: 2026-07-08
-last_confirmed: 2026-08-10
+last_confirmed: 2026-10-01
 ---
 
 # Parquet tables
 
 ## The tables
 
-`matches`, `players`, `stats`, `soul_sources`, `item_events`, `accolades`, `buffs`, `stacks`, `custom_stats`, `damage`, `damage_sources`, `damage_targets`, `objectives`, `mid_boss`, `movement`, `movement_intervals`, `deaths`, and `hero_xp_rewards`. `deadlock schema <table>` prints the columns of any of them. `deadlock schema --views` prints the metric views that `summarize` accepts.
+`matches`, `players`, `stats`, `soul_sources`, `item_events`, `accolades`, `buffs`, `buff_pickups`, `stacks`, `custom_stats`, `damage`, `damage_sources`, `damage_targets`, `objectives`, `mid_boss`, `movement`, `movement_intervals`, `deaths`, and `hero_xp_rewards`. `deadlock schema <table>` prints the columns of any of them. `deadlock schema --views` prints the metric views that `summarize` accepts.
 
 The committed asset history exports as `item_history`, `item_component_history`, the `hero_*_history` and `ability_*_history` tables, `rank_history`, and `statue_history`. The tracked-player store adds the `downloads` ledger. `schemas.TABLES` is the authoritative list.
 

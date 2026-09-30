@@ -2,7 +2,7 @@
 status: active
 scope: the `item_events` table of buys, sells, and component consumption
 first_seen: 2026-07-08
-last_confirmed: 2026-08-10
+last_confirmed: 2026-10-01
 ---
 
 # Item events
@@ -44,3 +44,17 @@ An ownership window runs from buy time to sell or consume time, or to match end 
 First seen 2026-07-08.
 
 `item_tier` is a real assets label, 1:1 with the costs 800, 1600, 3200, and 6400. No 4800 tier exists. 4800 is only the incremental outlay when a 1600 component upgrades into a 6400 item. The buy row lands at upgrade time at full cost.
+
+## Corrupted buys look like normal buys
+
+First seen 2026-10-01.
+
+From build 6712 the assets API puts `corrupted_info` on 95 of 250 upgrade records. 49 are tier 3 and 46 are tier 4, and 90 of the 95 are shopable. It holds `property_upgrades` (name, bonus as a string, optional `round_corrupted_bonus`) and `excluded_penalties`. No record carries a corruption price or a corrupted variant id.
+
+The match metadata has no per-purchase corrupted marker. Item `flags` keeps the same 0 and 1 values, and `upgrade_info` is unchanged. The five post-6712 bodies checked on 2026-10-01 show no unknown wire fields on items or on `MatchInfo`. So `item_events` cannot separate a corrupted buy from a normal one, and the era price is the normal shop price. `matches.corrupted_penalty_seed` is an opaque seed and does not mark a buy.
+
+`_item_snapshot` in `assets/snapshots.py` drops `corrupted_info`, so neither `items.json` nor `item_history` holds it.
+
+The deadlock-api changelog says `v1/analytics/item-stats` excludes corrupted purchases by default and takes `corrupted_items=exclude|include|only`. That is not verified locally. `meta.get_item_stats` sends no such parameter, so the meta item stats would exclude corrupted buys.
+
+Recheck when an item row or a wire field marks a corrupted purchase.

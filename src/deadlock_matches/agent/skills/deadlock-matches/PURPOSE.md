@@ -22,6 +22,7 @@ Each row maps a part of `SKILL.md` to the knowledge that motivates it. A rule wi
 | --- | --- |
 | run `history` first for a match id | `cli/main.py`, the match id argument |
 | `match` intervals and `--ago` | `cli/match.py` |
+| `match --buffs` recorded values and the pickup timeline | [Custom stats](references/patterns/custom-stats.md), "Statue pickup times", and `cli/match.py` |
 | a match none of your accounts played | [Tracked players](references/patterns/tracked-players.md) and `cli.main.resolve_store` |
 | `item --hero` drops the card | `cli/items.py` |
 | the track flow and the leaderboard | [Tracked players](references/patterns/tracked-players.md), "The pool is ranked play by default" |

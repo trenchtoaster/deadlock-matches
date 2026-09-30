@@ -37,6 +37,7 @@ def write_cache_entry(
     ranked_type=None,
     hero_id=52,
     rank_points=None,
+    corrupted_penalty_seed=None,
 ):
     contents = pb.CMsgMatchMetaDataContents()
     info = contents.match_info
@@ -50,6 +51,9 @@ def write_cache_entry(
 
     if ranked_type is not None:
         info.ranked_type = ranked_type
+
+    if corrupted_penalty_seed is not None:
+        info.corrupted_penalty_seed = corrupted_penalty_seed
 
     if badges is not None:
         info.average_badge_team0, info.average_badge_team1 = badges
@@ -162,11 +166,17 @@ def write_cache_entry(
         acc.accolade_stat_value = value
         acc.accolade_threshold_achieved = threshold
 
-    for pickup, count, permanent in buffs:
+    for pickup, count, permanent, *picked in buffs:
         b = p.power_up_buffs.add()
         b.type = pickup
         b.value = count
         b.is_permanent = permanent
+
+        for time_s, stat in picked[0] if picked else ():
+            b.pickup_times_s.append(time_s)
+
+            if stat is not None:
+                b.pickup_stat_values.append(stat)
 
     for ability_id, value, is_enemy in stacks:
         st = (enemy if is_enemy else p).ability_stats.add()

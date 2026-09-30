@@ -53,7 +53,7 @@ def test_statue_map_loads_the_bundled_snapshot():
     families = {s.buff for s in catalog.values()}
     levels = {s.level for s in catalog.values()}
 
-    assert families == {"hp", "spirit", "wp", "firerate", "ammo", "cd"}
+    assert families >= {"hp", "spirit", "wp", "firerate", "ammo", "cd"}
     assert levels == {1, 2, 3}
     assert all(s.stat is not None for s in catalog.values())
     assert all(s.value is not None and s.value > 0 for s in catalog.values())

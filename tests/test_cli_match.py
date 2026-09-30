@@ -373,7 +373,141 @@ def test_match_buffs_flag_prints_buff_table(capsys, tmp_path):
     assert "Bridge buffs" in out
     assert re.search(r"weapon\s+4", out)
     assert "gun_powerup_pickup" not in out
+    assert "bullet resist" not in out
+    assert "move speed" not in out
     assert "patch the match was played on" in out
+
+
+def test_match_buffs_flag_prefers_recorded_pickup_values(capsys, tmp_path, monkeypatch):
+    cache = tmp_path / "cache"
+    cache.mkdir()
+    write_cache_entry(
+        cache,
+        match_id=100,
+        stats=[(300, 3000)],
+        corrupted_penalty_seed=77,
+        buffs=[
+            ("hp_permanent_pickup_lv2", 3, True, [(200, 25.0), (200, 25.0), (700, 25.0)]),
+            ("cd_permanent_pickup", 1, True, [(650, 0.5)]),
+            ("gun_powerup_pickup", 1, False),
+        ],
+    )
+    monkeypatch.setattr(cli_match.statues, "statue_map_asof", lambda at: {})
+
+    run_main(tmp_path, "match", "--account", "42", "--buffs")
+
+    out = capsys.readouterr().out
+
+    assert re.search(r"max health\s+0\s+3\s+0\s+3\s+\+75", out)
+    assert re.search(r"cooldown reduction\s+1\s+0\s+0\s+1\s+\+0\.5%", out)
+    assert "Statue pickups, 5-minute intervals" in out
+    assert re.search(r"Buff\s+0-5m\s+5-10m\s+10-15m\s+15-20m\s+20-25m\s+25-30m\s+Total", out)
+    assert re.search(r"max health\s+2\s+0\s+1\s+0\s+0\s+0\s+3\n", out)
+    assert re.search(r"cooldown reduction\s+0\s+0\s+1\s+0\s+0\s+0\s+1\n", out)
+    assert re.search(r"Total\s+2\s+0\s+2\s+0\s+0\s+0\s+4\n", out)
+    assert out.index("  max health  ") < out.index("  cooldown reduction  ", out.index("Statue"))
+    assert "Gained sums the stat each pickup recorded" in out
+    assert "patch the match was played on" not in out
+
+
+def test_match_buffs_flag_honors_the_interval(capsys, tmp_path):
+    cache = tmp_path / "cache"
+    cache.mkdir()
+    write_cache_entry(
+        cache,
+        match_id=100,
+        stats=[(300, 3000)],
+        buffs=[("hp_permanent_pickup_lv2", 2, True, [(200, 20.0), (700, 20.0)])],
+    )
+
+    run_main(tmp_path, "match", "--account", "42", "--buffs", "--interval", "15")
+
+    out = capsys.readouterr().out
+
+    assert "Statue pickups, 15-minute intervals" in out
+    assert re.search(r"Buff\s+0-15m\s+15-30m\s+Total", out)
+    assert re.search(r"max health\s+2\s+0\s+2\n", out)
+
+
+def test_match_buffs_flag_falls_back_to_the_catalog_for_a_missing_stat(capsys, tmp_path):
+    cache = tmp_path / "cache"
+    cache.mkdir()
+    write_cache_entry(
+        cache,
+        match_id=100,
+        stats=[(300, 3000)],
+        buffs=[
+            ("hp_permanent_pickup_lv2", 2, True, [(200, 25.0), (700, None)]),
+            ("cd_permanent_pickup", 1, True, [(650, 0.6)]),
+        ],
+    )
+
+    run_main(tmp_path, "match", "--account", "42", "--buffs")
+
+    out = capsys.readouterr().out
+
+    assert re.search(r"max health\s+0\s+2\s+0\s+2\s+\+40", out)
+    assert re.search(r"cooldown reduction\s+1\s+0\s+0\s+1\s+\+0\.6%", out)
+    assert re.search(r"max health\s+1\s+0\s+1\s+0\s+0\s+0\s+2\n", out)
+
+
+def test_match_buffs_flag_skips_the_timeline_without_pickup_times(capsys, tmp_path):
+    cache = tmp_path / "cache"
+    cache.mkdir()
+    write_cache_entry(
+        cache,
+        match_id=100,
+        stats=[(300, 3000)],
+        buffs=[("hp_permanent_pickup_lv2", 3, True)],
+    )
+
+    run_main(tmp_path, "match", "--account", "42", "--buffs")
+
+    out = capsys.readouterr().out
+
+    assert "Statue pickups" not in out
+    assert "patch the match was played on" in out
+
+
+def test_match_buffs_flag_labels_the_later_statue_families(capsys, tmp_path, monkeypatch):
+    cache = tmp_path / "cache"
+    cache.mkdir()
+    write_cache_entry(
+        cache,
+        match_id=100,
+        stats=[(300, 3000)],
+        buffs=[
+            ("bulletresist_permanent_pickup", 1, True),
+            ("bulletresist_permanent_pickup_lv2", 3, True),
+            ("range_permanent_pickup_lv2", 2, True),
+            ("movespeed_permanent_pickup_lv2", 1, True),
+            ("movespeed_permanent_pickup_lv3", 1, True),
+        ],
+    )
+    values = {
+        "bulletresist_permanent_pickup": ("bullet_armor_damage_resist", 0.5),
+        "bulletresist_permanent_pickup_lv2": ("bullet_armor_damage_resist", 0.75),
+        "spiritresist_permanent_pickup": ("tech_resist", 0.5),
+        "range_permanent_pickup_lv2": ("tech_range_percent", 0.5),
+        "movespeed_permanent_pickup_lv2": ("movement_speed_max", 7.874),
+        "movespeed_permanent_pickup_lv3": ("movement_speed_max", 11.811),
+    }
+    catalog = {
+        name: cli_match.statues.Statue.from_record(
+            {"id": 1, "class_name": name, "stat": stat, "value": value}
+        )
+        for name, (stat, value) in values.items()
+    }
+    monkeypatch.setattr(cli_match.statues, "statue_map_asof", lambda at: catalog)
+
+    run_main(tmp_path, "match", "--account", "42", "--buffs")
+
+    out = capsys.readouterr().out
+
+    assert re.search(r"bullet resist\s+1\s+3\s+0\s+4\s+\+2\.75%", out)
+    assert re.search(r"spirit resist\s+0\s+0\s+0\s+0\s+-", out)
+    assert re.search(r"ability range\s+0\s+2\s+0\s+2\s+\+1%", out)
+    assert re.search(r"move speed\s+0\s+1\s+1\s+2\s+\+0\.5 m/s", out)
 
 
 def test_match_buffs_flag_prints_sources(capsys, tmp_path):

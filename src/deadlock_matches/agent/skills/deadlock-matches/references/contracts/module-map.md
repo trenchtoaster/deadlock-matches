@@ -2,7 +2,7 @@
 status: active
 scope: what each module under `src/deadlock_matches/` owns
 first_seen: 2026-07-08
-last_confirmed: 2026-08-10
+last_confirmed: 2026-10-01
 ---
 
 # Module map
@@ -24,5 +24,5 @@ Modules are organized by data source, not by layer. The `queries/` package answe
 - `players.py` covers other players. It reads the per-hero leaderboard (`hero_leaderboard`, `top_players`) and materializes the tracked-player store (`download_matches` for tracked players or `matches_by_id` for specific match ids, then `write_player_tables`, with `match_info` as the one body loader). It also defines the comparison pool: `pool_members(hero)`, `pool_games(hero)`, `pool_builds(hero)`, and the ad-hoc `tracked_player_games(names, hero=, since=)`. See [Tracked players](../patterns/tracked-players.md).
 - `meta.py` computes item win-rate and synergy analytics on API data. `cli/meta.py` is the `meta` command over the public hero trends.
 - `paths.py` resolves the data and cache directories per platform.
-- `gen/` holds the compiled protos. `protos/` at the repository root holds the Valve sources.
+- `gen/` holds the compiled protos. `protos/` at the repository root holds the Valve sources, and `just protos` regenerates `gen/` from them. See [Match metadata](match-metadata.md).
 - `agent/skills/deadlock-matches/` is the bundled copy of the agent skill and this wiki that `deadlock skill install` writes for an installed user. The source of truth is `.agents/` at the repository root, and a test keeps the two in sync.

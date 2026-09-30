@@ -211,7 +211,7 @@ def build_tables(
     """Build the parquet tables from MatchInfo messages.
 
     - builds matches, players, hero_xp_rewards, stats, soul_sources, item_events,
-      accolades, buffs, stacks, custom_stats, damage, damage_sources,
+      accolades, buffs, buff_pickups, stacks, custom_stats, damage, damage_sources,
       damage_targets, mid_boss, objectives, deaths, movement, and
       movement_intervals
     - item cost/tier/slot resolve against the committed item history era live at
@@ -231,6 +231,7 @@ def build_tables(
     item_events: list[dict] = []
     accolade_rows: list[dict] = []
     buff_rows: list[dict] = []
+    pickup_rows: list[dict] = []
     stack_rows: list[dict] = []
     custom_rows: list[dict] = []
     damage: list[dict] = []
@@ -263,6 +264,9 @@ def build_tables(
                     info.average_badge_team1 if info.HasField("average_badge_team1") else None
                 ),
                 "not_scored": info.not_scored,
+                "corrupted_penalty_seed": (
+                    info.corrupted_penalty_seed if info.HasField("corrupted_penalty_seed") else None
+                ),
             }
         )
 
@@ -484,6 +488,27 @@ def build_tables(
                 for b in p.power_up_buffs
             )
 
+            pickup_rows.extend(
+                {
+                    "match_id": info.match_id,
+                    "start_time": start_time,
+                    "account_id": p.account_id,
+                    "hero_id": p.hero_id,
+                    "type": b.type,
+                    "pickup": n,
+                    "game_time_s": time_s,
+                    "value": value,
+                }
+                for b in p.power_up_buffs
+                for n, (time_s, value) in enumerate(
+                    zip(
+                        b.pickup_times_s,
+                        _to_length(b.pickup_stat_values, len(b.pickup_times_s)),
+                        strict=True,
+                    )
+                )
+            )
+
             stack_rows.extend(
                 {
                     "match_id": info.match_id,
@@ -600,6 +625,7 @@ def build_tables(
         "item_events": schemas.conform("item_events", item_events),
         "accolades": schemas.conform("accolades", accolade_rows),
         "buffs": schemas.conform("buffs", buff_rows),
+        "buff_pickups": schemas.conform("buff_pickups", pickup_rows),
         "stacks": schemas.conform("stacks", stack_rows),
         "custom_stats": schemas.conform("custom_stats", custom_rows),
         "damage": schemas.conform("damage", damage),
@@ -1113,6 +1139,7 @@ def migrate_to_partitions(out_dir: Path, exclude: Collection[str] = ()) -> None:
     - old columns we no longer support are dropped to match the current schema
     - the month for each row comes from the match start time in the matches table
     - the legacy single file is removed once its rows are written to the month partitions
+    - an empty legacy table gets an empty partition, so it still reads as a table
     """
     matches_file = out_dir / "matches.parquet"
 
@@ -1122,6 +1149,7 @@ def migrate_to_partitions(out_dir: Path, exclude: Collection[str] = ()) -> None:
     months = pl.read_parquet(matches_file).select(
         "match_id", pl.col("start_time").dt.strftime("%Y-%m").alias("_month")
     )
+    first_month = next(iter(sorted(months.get_column("_month").unique().to_list())), None)
 
     for name in schemas.PARTITIONED:
         if name in exclude:
@@ -1133,10 +1161,14 @@ def migrate_to_partitions(out_dir: Path, exclude: Collection[str] = ()) -> None:
             continue
 
         tagged = pl.read_parquet(legacy).join(months, on="match_id", how="inner")
+        written = sorted(tagged.get_column("_month").unique().to_list())
 
-        for month in sorted(tagged.get_column("_month").unique().to_list()):
+        for month in written:
             part = _reshape_to_schema(name, tagged.filter(pl.col("_month") == month))
             write_partitioned(name, part, month, out_dir)
+
+        if not written and first_month is not None:
+            write_partitioned(name, schemas.conform(name, []), first_month, out_dir)
 
         legacy.unlink()
 

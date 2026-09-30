@@ -21,7 +21,7 @@ def build_export_match(match_id=100, winning_team=pb.k_ECitadelLobbyTeam_Team1):
     info.winning_team = winning_team
     info.match_mode = pb.k_ECitadelMatchMode_Unranked
     info.game_mode = pb.k_ECitadelGameMode_Normal
-    info.ranked_type = pb.k_ECitadelRankedType_Normal
+    info.ranked_type = pb.k_eCitadelRankedType_Normal
     info.rank_interval = 3
 
     a = info.players.add()
@@ -43,11 +43,11 @@ def build_export_match(match_id=100, winning_team=pb.k_ECitadelLobbyTeam_Team1):
     reward = a.hero_xp_rewards.add().xp_grant
     reward.hero_id = 52
     reward.xp_grant = 100
-    reward.reason = pb.k_EHeroXPGrantReason_Win
+    reward.reason = pb.k_eGrant_Win
     award = a.hero_xp_rewards.add().xp_grant
     award.hero_id = 52
     award.xp_grant = 25
-    award.reason = pb.k_EHeroXPGrantReason_Award
+    award.reason = pb.k_eGrant_Award
 
     b = info.players.add()
     b.account_id = 43
@@ -233,7 +233,7 @@ def test_tables_have_expected_rows():
     assert len(tables["custom_stats"]) == 2
 
     match = tables["matches"].row(0, named=True)
-    assert match["ranked_type"] == pb.k_ECitadelRankedType_Normal
+    assert match["ranked_type"] == pb.k_eCitadelRankedType_Normal
     assert match["rank_interval"] == 3
 
     player = tables["players"].filter(pl.col("account_id") == 42).row(0, named=True)
@@ -607,6 +607,85 @@ def test_buffs_keep_permanent_and_bridge_pickups():
     assert bridge["level"] is None
     assert bridge["count"] == 2
     assert bridge["permanent"] is False
+
+
+def _with_pickup_times(info):
+    info.corrupted_penalty_seed = 1245176056
+    buff = info.players[0].power_up_buffs[0]
+    buff.pickup_times_s.extend([616, 616, 1348])
+    buff.pickup_stat_values.extend([20.0, 20.0, 20.0])
+
+    return info
+
+
+def test_old_bodies_leave_the_seed_null_and_write_no_pickups():
+    tables = export.build_tables([build_export_match()])
+
+    assert tables["matches"]["corrupted_penalty_seed"].to_list() == [None]
+    assert tables["buff_pickups"].is_empty()
+    assert tables["buff_pickups"].schema == schemas.conform("buff_pickups", []).schema
+
+
+def test_new_bodies_export_the_seed_and_one_row_per_pickup():
+    tables = export.build_tables([_with_pickup_times(build_export_match())])
+    pickups = tables["buff_pickups"].sort("pickup")
+
+    assert tables["matches"]["corrupted_penalty_seed"].to_list() == [1245176056]
+    assert pickups["type"].unique().to_list() == ["hp_permanent_pickup_lv2"]
+    assert pickups["pickup"].to_list() == [0, 1, 2]
+    assert pickups["game_time_s"].to_list() == [616, 616, 1348]
+    assert pickups["value"].to_list() == [20.0, 20.0, 20.0]
+    assert pickups["account_id"].unique().to_list() == [42]
+    assert tables["buffs"].filter(pl.col("type") == "hp_permanent_pickup_lv2")["count"].item() == 3
+
+
+def test_pickup_without_a_stat_value_keeps_a_null_value():
+    info = build_export_match()
+    buff = info.players[0].power_up_buffs[0]
+    buff.pickup_times_s.extend([100, 200])
+    buff.pickup_stat_values.append(20.0)
+
+    pickups = export.build_tables([info])["buff_pickups"].sort("pickup")
+
+    assert pickups["value"].to_list() == [20.0, None]
+
+
+def test_buff_intervals_counts_pickups_per_family(tmp_path):
+    for name, df in export.build_tables([_with_pickup_times(build_export_match())]).items():
+        df.write_parquet(tmp_path / f"{name}.parquet")
+
+    df = queries.buff_intervals(100, 42, 600, tmp_path)
+
+    assert df.schema == pl.Schema(queries.BUFF_INTERVAL_SCHEMA)
+    assert df.rows() == [
+        (0, 0, 600, "hp", 0, 0.0),
+        (1, 600, 1200, "hp", 2, 40.0),
+        (2, 1200, 1800, "hp", 1, 20.0),
+    ]
+    assert queries.buff_intervals(100, 43, 600, tmp_path).is_empty()
+
+
+def test_buff_intervals_clips_the_last_interval_and_nulls_a_missing_stat(tmp_path):
+    info = build_export_match()
+    buff = info.players[0].power_up_buffs[0]
+    buff.pickup_times_s.extend([100, 1790])
+    buff.pickup_stat_values.append(20.0)
+
+    for name, df in export.build_tables([info]).items():
+        df.write_parquet(tmp_path / f"{name}.parquet")
+
+    df = queries.buff_intervals(100, 42, 420, tmp_path)
+
+    assert df["end_s"].to_list() == [420, 840, 1260, 1680, 1800]
+    assert df["pickups"].to_list() == [1, 0, 0, 0, 1]
+    assert df["value"].to_list() == [20.0, 0.0, 0.0, 0.0, None]
+
+
+def test_buff_intervals_is_empty_without_the_table(tmp_path):
+    df = queries.buff_intervals(100, 42, 300, tmp_path)
+
+    assert df.is_empty()
+    assert df.schema == pl.Schema(queries.BUFF_INTERVAL_SCHEMA)
 
 
 def test_damage_maps_slots_to_accounts():
@@ -1545,6 +1624,8 @@ def test_export_new_migrates_a_legacy_single_file_store(tmp_path):
     matches = queries.scan("matches", out).collect()
 
     assert sorted(matches.get_column("match_id").to_list()) == [10, 11]
+    assert queries.table_exists("buff_pickups", out)
+    assert queries.scan("buff_pickups", out).collect().is_empty()
     assert result.decoded == 0
     assert result.skipped == 2
 

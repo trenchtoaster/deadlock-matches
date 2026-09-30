@@ -119,7 +119,7 @@ def build_ranked_match(match_id, day, *, mine, theirs, won=True):
     info.winning_team = pb.k_ECitadelLobbyTeam_Team1
     info.match_mode = pb.k_ECitadelMatchMode_Ranked
     info.game_mode = pb.k_ECitadelGameMode_Normal
-    info.ranked_type = pb.k_ECitadelRankedType_Normal
+    info.ranked_type = pb.k_eCitadelRankedType_Normal
     info.rank_interval = 1
 
     outcome = pb.k_EPlayerMatchOutcome_Win if won else pb.k_EPlayerMatchOutcome_Loss

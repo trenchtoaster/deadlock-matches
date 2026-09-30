@@ -63,6 +63,7 @@ from deadlock_matches.queries.games import (
     stack_games,
 )
 from deadlock_matches.queries.intervals import (
+    BUFF_INTERVAL_SCHEMA,
     COMPARE_STATS,
     CUMULATIVE_MARK_DIMENSIONS,
     CUMULATIVE_MARK_MEASURES,
@@ -73,6 +74,7 @@ from deadlock_matches.queries.intervals import (
     MILESTONE_DIMENSIONS,
     MILESTONE_MEASURES,
     SOUL_COMPOSITES,
+    buff_intervals,
     compare_intervals,
     cumulative_at,
     cumulative_marks,
@@ -211,6 +213,7 @@ from deadlock_matches.queries.stats import (
 __all__ = [
     "BUFF_GAME_DIMENSIONS",
     "BUFF_GAME_MEASURES",
+    "BUFF_INTERVAL_SCHEMA",
     "BULLET_PROC_OVERRIDES",
     "CARDINALITIES",
     "COMBAT_COUNTERS",
@@ -273,6 +276,7 @@ __all__ = [
     "badge_from_subrank",
     "buff_family",
     "buff_games",
+    "buff_intervals",
     "buff_level",
     "build_view_frame",
     "check_synonyms",

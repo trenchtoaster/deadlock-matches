@@ -49,6 +49,7 @@ def _write(parquet_dir):
             "average_badge_team0": 71,
             "average_badge_team1": 75,
             "not_scored": not_scored,
+            "corrupted_penalty_seed": None,
         }
         for match_id, not_scored in MATCHES
     ]

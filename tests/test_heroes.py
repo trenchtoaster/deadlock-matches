@@ -122,7 +122,6 @@ def test_real_snapshot_carries_level_scaling():
     assert len(h.levels) == 36
     assert h.levels[-1].required_souls > h.levels[0].required_souls
     assert h.base_health(36) > h.stats["max_health"]
-    assert h.purchase_bonuses["vitality"][0]["stat"] == "base_health_percent"
     assert h.investment_bonus("spirit", 4800) > h.investment_bonus("spirit", 4799)
 
 

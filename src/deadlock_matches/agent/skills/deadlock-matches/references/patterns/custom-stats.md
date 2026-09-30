@@ -2,7 +2,7 @@
 status: active
 scope: the `custom_stats` table, the named counter pool behind `--combat`
 first_seen: 2026-07-11
-last_confirmed: 2026-09-06
+last_confirmed: 2026-10-01
 ---
 
 # Custom stats
@@ -69,7 +69,21 @@ The incoming counters cover the whole enemy team combined. No per-enemy split ex
 
 First seen 2026-07-11.
 
-The buff source split reads three places. Statues come from the `PowerUp` custom stats, a sinner jackpot counts 4 from accolade 14, and a mid boss kill counts 2 team-wide. The rest is urn runs and light melee jackpots. The counts carry no timestamps, so no per-interval split exists.
+The buff source split reads three places. Statues come from the `PowerUp` custom stats, a sinner jackpot counts 4 from accolade 14, and a mid boss kill counts 2 team-wide. The rest is urn runs and light melee jackpots. `buff_games` and `buffs.count` have no time axis. For timing, read `buff_pickups` or `buff_intervals`, below.
+
+## Statue pickup times
+
+First seen 2026-10-01.
+
+Client build 6712 added `PowerUpBuff.pickup_times_s` and `pickup_stat_values`. Match 108628471 on 2026-09-29 is the first archived body that carries them. None of the 1855 older bodies do.
+
+The `buff_pickups` table holds one row per permanent statue pickup. `pickup` is the 0-based order within the type, because two pickups can share a second. `value` is the stat granted, in the statue catalog unit: percent, flat health, or move speed in engine units. The identity is match_id, account_id, type, and pickup.
+
+Rows exist only from build 6712 on. Older matches and the timed bridge buffs have none, so `buffs.count` stays the authoritative total. On the archive checked 2026-10-01, the list length equals `buffs.count` on 830 of 830 permanent buff rows. All 56 bridge buff rows have empty lists. The recorded values equal the statue catalog value for the era.
+
+`queries.buff_intervals` splits one player's pickups per interval and buff family. An empty frame means the match records no pickup times, not zero pickups. `deadlock match --buffs` sums the recorded values into Gained and falls back to the statue history era for older matches. A buff type with any pickup missing its recorded stat falls back to the statue history too.
+
+Recheck when a match body carries pickup times on a bridge buff.
 
 ## All-target accuracy
 

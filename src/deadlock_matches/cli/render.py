@@ -51,8 +51,13 @@ def cell(
     return text.rjust(width)
 
 
-def gained_cell(total: float | None, *, percent: bool) -> str:
-    """Format the permanent stat a buff family added up to."""
+def gained_cell(total: float | None, *, suffix: str = "") -> str:
+    """Format the permanent stat a buff family added up to.
+
+    Args:
+        total: The summed stat, None when the patch value is unknown.
+        suffix: The unit text printed after the number.
+    """
     if total is None:
         return "?"
 
@@ -61,7 +66,7 @@ def gained_cell(total: float | None, *, percent: bool) -> str:
 
     places = len(f"{total:g}".partition(".")[2])
 
-    return cell(total, 0, decimals=places, sign=True, group=False) + ("%" if percent else "")
+    return cell(total, 0, decimals=places, sign=True, group=False) + suffix
 
 
 def count_cell(values: Mapping[str, int], key: str, base: str) -> str:

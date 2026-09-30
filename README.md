@@ -426,7 +426,7 @@ deadlock schema players --sample 10
 
 `deadlock schema [table]` prints the data dictionary with the data type and description per column. `--sample` prints local rows, which is useful for checking join keys and real values before writing a query.
 
-The main match tables are `matches`, `players`, `stats`, `soul_sources`, `item_events`, `buffs`, `stacks`, `custom_stats`, `damage`, `damage_sources`, `damage_targets`, `mid_boss`, `movement`, and `deaths`. For table descriptions and query patterns, see [docs/data.md](docs/data.md).
+The main match tables are `matches`, `players`, `stats`, `soul_sources`, `item_events`, `buffs`, `buff_pickups`, `stacks`, `custom_stats`, `damage`, `damage_sources`, `damage_targets`, `mid_boss`, `movement`, and `deaths`. For table descriptions and query patterns, see [docs/data.md](docs/data.md).
 
 Sizes scale with the archive. Here is the data per 100 matches based on a real archive:
 

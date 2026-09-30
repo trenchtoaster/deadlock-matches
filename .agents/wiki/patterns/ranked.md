@@ -2,7 +2,7 @@
 status: active
 scope: the queue split at build 6652, Rank Points, badges, and the Season One rules
 first_seen: 2026-07-27
-last_confirmed: 2026-08-10
+last_confirmed: 2026-10-01
 ---
 
 # Ranked
@@ -49,13 +49,23 @@ Recheck when a season changes the subrank widths or the placement bank.
 
 First seen 2026-08-10.
 
-Beta Season 1 runs 2026-07-30 to 2026-10-08. Unlocking Ranked needs 60 account wins, 3 heroes at 15 wins each, 8 placement matches, and a solo or duo queue. The numbers come from `v1/assets/ranked-seasons` through `cli.rank.season_rules`, with `SEASON_FALLBACK` shipped for a failed request.
+Beta Season 1 interval 1 runs 2026-07-30 to 2026-10-08. Unlocking Ranked needs 60 account wins, 3 heroes at 15 wins each, 8 placement matches, and a solo or duo queue. The numbers come from `v1/assets/ranked-seasons` through `cli.rank.season_rules`, with `SEASON_FALLBACK` shipped for a failed request.
 
 The solo or duo rule exists only in that season asset. The per-player party field was dropped from match metadata on 2026-03-12, so party size is not checkable from the tables. See [Matches and players](matches-and-players.md).
 
 An account with zero stored Ranked games prints the eligibility panel instead of the rank table. The panel counts scored wins from the local archive, Standard and Ranked, so unarchived games are not counted and the printed note says so.
 
-Recheck when the season end date passes.
+Recheck when interval 2 games exist.
+
+## Season One has two intervals
+
+First seen 2026-10-01.
+
+The `v1/assets/ranked-seasons` payload fetched 2026-10-01 splits `season_1` into two intervals. Interval 1 runs 2026-07-30 17:00 UTC to 2026-10-08 21:00 UTC with `leaderboard_id` 1001. Interval 2 runs 2026-10-08 21:00 UTC to 2028-01-01 08:00 UTC with `leaderboard_id` 1002. A new field `base_win_loss_point_grant` is 300. `calibration_matches` is 8 and `valid_party_sizes` is [1, 2].
+
+`cli.rank.season_rules` takes the earliest interval start, so `deadlock rank` treats both intervals as one season. Whether points or placements reset at the boundary is an open question as of 2026-10-01. `matches.rank_interval` is stored and can split the two.
+
+Recheck when interval 2 games exist.
 
 ## Leaderboard badges stopped
 

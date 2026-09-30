@@ -2,7 +2,7 @@
 status: active
 scope: the public surface of the `queries` package, the one catalog to keep current when a helper changes
 first_seen: 2026-07-08
-last_confirmed: 2026-09-06
+last_confirmed: 2026-10-01
 ---
 
 # Queries
@@ -40,7 +40,7 @@ queries.summarize(
 - `soul_source_games` is one row per nonzero final soul source. See [Soul sources](../patterns/soul-sources.md).
 - `movement_games` is the per-game movement view. Its means weight every game equally and leave games without movement rows out.
 - `combat_games` is the fight-counter view behind `deadlock compare combat`. A game with no tracked counters keeps zeros instead of dropping out, so the per-game rates divide by every game.
-- `buff_games` is the permanent and bridge buff view. Counts carry no timestamps, so no per-interval split exists.
+- `buff_games` is the permanent and bridge buff view. It has no time axis. For timing, use `buff_intervals` or the `buff_pickups` table, which only matches from build 6712 on fill. See [Custom stats](../patterns/custom-stats.md).
 - `stack_games` is the final stack counters, with no timestamps. The trackers are Sticky Bomb, Trophy Collector, Glass Cannon, Restorative Locket, and the Guided Owl, Assassinate, and Combo kill counters.
 - `compare_intervals` gives the per-interval gains that `deadlock compare` medians for both sides. Full intervals only, kills and deaths from the `deaths` table, and soul composites forward-fill each source on its own clock.
 - `cumulative_marks` gives the cumulative value at fixed marks and `milestone_games` the minute each net-worth target was first crossed. A game that ended before a mark contributes no row, so read `games` alongside the median.
@@ -87,6 +87,7 @@ queries.summarize(
 - `damage_intervals(match_id, account_id, interval_s=300, stat="damage")` gives one player's damage to heroes as per-source interval gains from `damage_sources`, detail rows only, ordered by match total. Backs `deadlock match --damage`.
 - `source_intervals(games, interval_s=300, stat="damage")` does the same across many matches at once. `games` is any frame with match_id and account_id columns, for example `my_games` or `tracked_player_games` rows. It adds a `full` flag for whole windows, and `stat="healing"` covers healing.
 - `source_totals(games, stat="damage")` is the whole-game twin of `source_intervals`, one row per source from the final-total `damage` table. Use it for any totals-by-source number.
+- `buff_intervals(match_id, account_id, interval_s=300)` counts one player's statue pickups per interval and buff family from `buff_pickups`, with `value` the summed recorded stat. The columns follow `queries.BUFF_INTERVAL_SCHEMA`: interval, start_s, end_s, buff, pickups, and value. Every family the player picked up gets every interval up to the match end, with 0 pickups in an empty cell. The last `end_s` clips to the match duration. `value` is null when any pickup in the cell lacks its stat. An empty frame means the match records no pickup times, which is every match before build 6712. Backs the timeline in `deadlock match --buffs`.
 - `team_intervals(match_id, interval_s=300)` gives both teams' souls gained per interval with the running lead (team 0 minus team 1). Backs `deadlock match --teams`.
 - `laning_stats(match_id, mark_s)` snapshots every player in one match at the last stats sample at or before `mark_s`. The columns are souls, damage, damage_taken, healing, heal_prevented, creeps, neutrals, denies, and `snap_s`, the sample used. Kills and deaths are counted from the deaths table inside the window, with hero, team, and lane joined. Backs `deadlock match --laning`.
 - `movement_intervals(match_id, account_id, interval_s=300)` splits one player's movement into intervals. Each interval carries distance, the seconds alive, moving, stationary, sliding, in air, ziplining, and fighting, dash counts, and derived percents that are null while dead. It sums per-minute rows, so any interval that is a whole number of minutes is exact. Backs `deadlock match --movement`.

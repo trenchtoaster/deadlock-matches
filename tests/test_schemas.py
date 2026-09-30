@@ -18,6 +18,7 @@ MATCH_ROW = {
     "average_badge_team0": 76,
     "average_badge_team1": 83,
     "not_scored": False,
+    "corrupted_penalty_seed": None,
 }
 
 

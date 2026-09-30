@@ -158,7 +158,7 @@ def test_daily_record_lobby_null_without_badges(record_pq):
 def _season_one_match(match_id, day, *, badges, won=True):
     info = build_day_match(match_id, day, won=won)
     info.match_mode = extract.pb.k_ECitadelMatchMode_Ranked
-    info.ranked_type = extract.pb.k_ECitadelRankedType_Normal
+    info.ranked_type = extract.pb.k_eCitadelRankedType_Normal
 
     for slot in range(3, 13):
         p = info.players.add()

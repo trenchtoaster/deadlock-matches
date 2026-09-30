@@ -2,7 +2,7 @@
 status: active
 scope: the assets API data (heroes, items, abilities) and what it does not contain
 first_seen: 2026-07-08
-last_confirmed: 2026-08-10
+last_confirmed: 2026-10-01
 ---
 
 # Assets
@@ -43,9 +43,11 @@ Ability tuning numbers sit on `Ability`. `properties` holds base values, with un
 
 First seen 2026-07-08.
 
-Hero level scaling sits on `Hero`. `level_up` holds the per-boon stat increments, `levels` the soul thresholds per level, and `purchase_bonuses` the shop tier bonuses. `base_health(level)`, `spirit_power(level)`, and `level_for_souls(souls)` compute expected base health and spirit at any point in a match, because the snapshot stats carry each player's `level`.
+Hero level scaling sits on `Hero`. `level_up` holds the per-boon stat increments, `levels` the soul thresholds per level, and `purchase_bonuses` the old shop tier bonuses. `base_health(level)`, `spirit_power(level)`, and `level_for_souls(souls)` compute expected base health and spirit at any point in a match, because the snapshot stats carry each player's `level`.
 
 `Hero.stats_at(souls)` and `boon_stats(level)` return level, health, spirit, bullet damage bonus, light and heavy melee, and ability points and unlocks. `deadlock hero <name> --souls N` (or `--level N`) prints them with gun dps. Melee boons: the per-boon melee increment applies to light melee, and heavy keeps the hero's base heavy to light ratio, mostly 2.32. Wiki confirmed: Mirage +1.58 light and +3.67 heavy per boon.
+
+The assets API returns `purchase_bonuses` empty for every hero from build 6712. That was checked 2026-10-01 on the cached builds 6712, 6722, and 6723. Every hero had it at 6697, 6698, and 6701. The API changelog names build 6711, which is not cached. The field stays on `Hero` for the old eras. `cost_bonuses` stays filled, and `investment_bonus` reads it.
 
 ## Shop investment spikes
 
@@ -75,11 +77,21 @@ The melee stat gains half the weapon investment percent. The Crushing Fists case
 
 First seen 2026-07-10.
 
-The committed history parquets (`deadlock assets --backfill`) version every patch era, so as-of consumers (`item_events` pricing, `hero_scaling`, `ability_upgrades`, the `--as-of` cards) read the tuning live at match time. The bare `Hero`, `Item`, and `Ability` helpers without a `when` describe the current patch only.
+The history parquets version every patch era, so as-of consumers (`item_events` pricing, `hero_scaling`, `ability_upgrades`, the `--as-of` cards) read the tuning live at match time. The bundled seed ships with the package, and `deadlock assets --backfill` extends it in the user asset store. The bare `Hero`, `Item`, and `Ability` helpers without a `when` describe the current patch only.
 
-`deadlock assets --backfill --confirm` overwrites the committed parquets by rescanning every build since `assets.snapshots.HISTORY_START`. The scan is cached and near free. Review the diff before committing. There is deliberately no date flag on the CLI, because a narrowed scan truncates the earlier eras. `start_date` exists only as a library parameter for tests.
+`deadlock assets --backfill --confirm` writes the user asset store, resuming on top of the bundled seed. It scans only the builds newer than the last stored era and appends the new ones. `--full` rescans every build since `assets.snapshots.HISTORY_START` and overwrites the target, for an old-build correction. `--seed` writes the bundled seed instead and needs a source checkout, so a maintainer can commit it. Review the diff before committing a seed. The scan is cached and near free. There is deliberately no date flag on the CLI, because a narrowed scan truncates the earlier eras. `start_date` exists only as a library parameter for tests.
 
 The assets API can lag a patch by a day or so. The `Live data` line of `deadlock assets` says which build the data is from and whether it trails the installed client.
+
+## Build 6712 statues and heroes
+
+First seen 2026-10-01.
+
+Four statue families first appear at build 6712. They are bulletresist (`bullet_armor_damage_resist`, 0.5, 0.75, 1), spiritresist (`tech_resist`, 0.5, 0.75, 1), and range (`tech_range_percent`, 0.25, 0.5, 0.75). The fourth is movespeed (`movement_speed_max`, 3.937, 7.874, 11.811 engine units), which `match --buffs` shows as m/s. The statue parser needed no change for the new `buff_type_name` fields.
+
+Nine hero ids are new at build 6712, and none is player selectable. Six are the vote heroes with `development_state` pre_release: 78 Deadman Danny, 84 Rat King, 85 Solomon, 86 Violet, 87 Nurse Harrow, and 88 Baba. The other three are 73 Druid, 82 Opera, and 83 hero_testhero. The hero snapshot neither filters them nor keeps `development_state`. After a refresh they resolve by name like any hero, and no name collides.
+
+Recheck when a vote hero becomes selectable.
 
 ## No cast events exist
 

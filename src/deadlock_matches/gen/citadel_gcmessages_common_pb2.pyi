@@ -51,14 +51,22 @@ class ECitadelAccountStatMedal(int, metaclass=_enum_type_wrapper.EnumTypeWrapper
 
 class ECitadelRankedType(int, metaclass=_enum_type_wrapper.EnumTypeWrapper):
     __slots__ = ()
-    k_ECitadelRankedType_Invalid: _ClassVar[ECitadelRankedType]
-    k_ECitadelRankedType_Normal: _ClassVar[ECitadelRankedType]
+    k_eCitadelRankedType_Invalid: _ClassVar[ECitadelRankedType]
+    k_eCitadelRankedType_Normal: _ClassVar[ECitadelRankedType]
 
 class ECitadelMMPreference(int, metaclass=_enum_type_wrapper.EnumTypeWrapper):
     __slots__ = ()
     k_ECitadelMMPreference_Invalid: _ClassVar[ECitadelMMPreference]
     k_ECitadelMMPreference_Casual: _ClassVar[ECitadelMMPreference]
     k_ECitadelMMPreference_Serious: _ClassVar[ECitadelMMPreference]
+
+class ECitadelCabalMMTier(int, metaclass=_enum_type_wrapper.EnumTypeWrapper):
+    __slots__ = ()
+    k_eCabalMMTier_Invalid: _ClassVar[ECitadelCabalMMTier]
+    k_eCabalMMTier_Bronze: _ClassVar[ECitadelCabalMMTier]
+    k_eCabalMMTier_Silver: _ClassVar[ECitadelCabalMMTier]
+    k_eCabalMMTier_Gold: _ClassVar[ECitadelCabalMMTier]
+    k_eCabalMMTier_Platinum: _ClassVar[ECitadelCabalMMTier]
 
 class ECitadelObjective(int, metaclass=_enum_type_wrapper.EnumTypeWrapper):
     __slots__ = ()
@@ -174,12 +182,13 @@ class EFeatureBanReason(int, metaclass=_enum_type_wrapper.EnumTypeWrapper):
     k_eFeatureBanReason_ReportedByOtherPlayers: _ClassVar[EFeatureBanReason]
     k_eFeatureBanReason_MatchAbandons: _ClassVar[EFeatureBanReason]
     k_eFeatureBanReason_TooManyReportsSubmitted: _ClassVar[EFeatureBanReason]
+    k_eFeatureBanReason_ToxicChat: _ClassVar[EFeatureBanReason]
 
 class EHeroXPGrantReason(int, metaclass=_enum_type_wrapper.EnumTypeWrapper):
     __slots__ = ()
-    k_EHeroXPGrantReason_Win: _ClassVar[EHeroXPGrantReason]
-    k_EHeroXPGrantReason_Loss: _ClassVar[EHeroXPGrantReason]
-    k_EHeroXPGrantReason_Award: _ClassVar[EHeroXPGrantReason]
+    k_eGrant_Win: _ClassVar[EHeroXPGrantReason]
+    k_eGrant_Loss: _ClassVar[EHeroXPGrantReason]
+    k_eGrant_Award: _ClassVar[EHeroXPGrantReason]
 
 class EPlayerMatchOutcome(int, metaclass=_enum_type_wrapper.EnumTypeWrapper):
     __slots__ = ()
@@ -189,6 +198,42 @@ class EPlayerMatchOutcome(int, metaclass=_enum_type_wrapper.EnumTypeWrapper):
     k_EPlayerMatchOutcome_Penalized: _ClassVar[EPlayerMatchOutcome]
     k_EPlayerMatchOutcome_PenalizedParty: _ClassVar[EPlayerMatchOutcome]
     k_EPlayerMatchOutcome_NotScored: _ClassVar[EPlayerMatchOutcome]
+
+class EMatchMetadataExtraMessage(int, metaclass=_enum_type_wrapper.EnumTypeWrapper):
+    __slots__ = ()
+    k_EMatchMetadataExtraMessage_HeroReleaseVotes: _ClassVar[EMatchMetadataExtraMessage]
+
+class ECitadelCombatLogTypes(int, metaclass=_enum_type_wrapper.EnumTypeWrapper):
+    __slots__ = ()
+    k_eCitadelCombatLog_Invalid: _ClassVar[ECitadelCombatLogTypes]
+    k_eCitadelCombatLog_Damage: _ClassVar[ECitadelCombatLogTypes]
+    k_eCitadelCombatLog_Heal: _ClassVar[ECitadelCombatLogTypes]
+    k_eCitadelCombatLog_ModifierAdd: _ClassVar[ECitadelCombatLogTypes]
+    k_eCitadelCombatLog_ModifierRemove: _ClassVar[ECitadelCombatLogTypes]
+    k_eCitadelCombatLog_Death: _ClassVar[ECitadelCombatLogTypes]
+    k_eCitadelCombatLog_AbilityUse: _ClassVar[ECitadelCombatLogTypes]
+    k_eCitadelCombatLog_AbilityTrigger: _ClassVar[ECitadelCombatLogTypes]
+    k_eCitadelCombatLog_ItemUse: _ClassVar[ECitadelCombatLogTypes]
+    k_eCitadelCombatLog_Location: _ClassVar[ECitadelCombatLogTypes]
+    k_eCitadelCombatLog_CurrencyChange: _ClassVar[ECitadelCombatLogTypes]
+    k_eCitadelCombatLog_ItemPurchase: _ClassVar[ECitadelCombatLogTypes]
+    k_eCitadelCombatLog_SoulSecure: _ClassVar[ECitadelCombatLogTypes]
+    k_eCitadelCombatLog_Multikill: _ClassVar[ECitadelCombatLogTypes]
+    k_eCitadelCombatLog_Killstreak: _ClassVar[ECitadelCombatLogTypes]
+    k_eCitadelCombatLog_ObjectiveKill: _ClassVar[ECitadelCombatLogTypes]
+    k_eCitadelCombatLog_FirstBlood: _ClassVar[ECitadelCombatLogTypes]
+    k_eCitadelCombatLog_ModifierStackEvent: _ClassVar[ECitadelCombatLogTypes]
+    k_eCitadelCombatLog_ActivatePowerup: _ClassVar[ECitadelCombatLogTypes]
+    k_eCitadelCombatLog_HeroSaved: _ClassVar[ECitadelCombatLogTypes]
+    k_eCitadelCombatLog_HeroLevelup: _ClassVar[ECitadelCombatLogTypes]
+    k_eCitadelCombatLog_InterruptChannel: _ClassVar[ECitadelCombatLogTypes]
+    k_eCitadelCombatLog_AlliedGold: _ClassVar[ECitadelCombatLogTypes]
+    k_eCitadelCombatLog_RejuvTaken: _ClassVar[ECitadelCombatLogTypes]
+    k_eCitadelCombatLog_UnitSummoned: _ClassVar[ECitadelCombatLogTypes]
+    k_eCitadelCombatLog_EndKillstreak: _ClassVar[ECitadelCombatLogTypes]
+    k_eCitadelCombatLog_CriticalDamage: _ClassVar[ECitadelCombatLogTypes]
+    k_eCitadelCombatLog_SpellAbsorb: _ClassVar[ECitadelCombatLogTypes]
+    k_eCitadelCombatLog_UnitTeleported: _ClassVar[ECitadelCombatLogTypes]
 k_ELaneColor_Invalid: CMsgLaneColor
 k_ELaneColor_Yellow: CMsgLaneColor
 k_ELaneColor_Green: CMsgLaneColor
@@ -212,11 +257,16 @@ k_eNone: ECitadelAccountStatMedal
 k_eBronze: ECitadelAccountStatMedal
 k_eSilver: ECitadelAccountStatMedal
 k_eGold: ECitadelAccountStatMedal
-k_ECitadelRankedType_Invalid: ECitadelRankedType
-k_ECitadelRankedType_Normal: ECitadelRankedType
+k_eCitadelRankedType_Invalid: ECitadelRankedType
+k_eCitadelRankedType_Normal: ECitadelRankedType
 k_ECitadelMMPreference_Invalid: ECitadelMMPreference
 k_ECitadelMMPreference_Casual: ECitadelMMPreference
 k_ECitadelMMPreference_Serious: ECitadelMMPreference
+k_eCabalMMTier_Invalid: ECitadelCabalMMTier
+k_eCabalMMTier_Bronze: ECitadelCabalMMTier
+k_eCabalMMTier_Silver: ECitadelCabalMMTier
+k_eCabalMMTier_Gold: ECitadelCabalMMTier
+k_eCabalMMTier_Platinum: ECitadelCabalMMTier
 k_eCitadelObjective_Team0_Core: ECitadelObjective
 k_eCitadelObjective_Team0_Tier1_Lane1: ECitadelObjective
 k_eCitadelObjective_Team0_Tier1_Lane2: ECitadelObjective
@@ -305,15 +355,56 @@ k_eFeatureBanReason_DevCommand: EFeatureBanReason
 k_eFeatureBanReason_ReportedByOtherPlayers: EFeatureBanReason
 k_eFeatureBanReason_MatchAbandons: EFeatureBanReason
 k_eFeatureBanReason_TooManyReportsSubmitted: EFeatureBanReason
-k_EHeroXPGrantReason_Win: EHeroXPGrantReason
-k_EHeroXPGrantReason_Loss: EHeroXPGrantReason
-k_EHeroXPGrantReason_Award: EHeroXPGrantReason
+k_eFeatureBanReason_ToxicChat: EFeatureBanReason
+k_eGrant_Win: EHeroXPGrantReason
+k_eGrant_Loss: EHeroXPGrantReason
+k_eGrant_Award: EHeroXPGrantReason
 k_EPlayerMatchOutcome_Invalid: EPlayerMatchOutcome
 k_EPlayerMatchOutcome_Win: EPlayerMatchOutcome
 k_EPlayerMatchOutcome_Loss: EPlayerMatchOutcome
 k_EPlayerMatchOutcome_Penalized: EPlayerMatchOutcome
 k_EPlayerMatchOutcome_PenalizedParty: EPlayerMatchOutcome
 k_EPlayerMatchOutcome_NotScored: EPlayerMatchOutcome
+k_EMatchMetadataExtraMessage_HeroReleaseVotes: EMatchMetadataExtraMessage
+k_eCitadelCombatLog_Invalid: ECitadelCombatLogTypes
+k_eCitadelCombatLog_Damage: ECitadelCombatLogTypes
+k_eCitadelCombatLog_Heal: ECitadelCombatLogTypes
+k_eCitadelCombatLog_ModifierAdd: ECitadelCombatLogTypes
+k_eCitadelCombatLog_ModifierRemove: ECitadelCombatLogTypes
+k_eCitadelCombatLog_Death: ECitadelCombatLogTypes
+k_eCitadelCombatLog_AbilityUse: ECitadelCombatLogTypes
+k_eCitadelCombatLog_AbilityTrigger: ECitadelCombatLogTypes
+k_eCitadelCombatLog_ItemUse: ECitadelCombatLogTypes
+k_eCitadelCombatLog_Location: ECitadelCombatLogTypes
+k_eCitadelCombatLog_CurrencyChange: ECitadelCombatLogTypes
+k_eCitadelCombatLog_ItemPurchase: ECitadelCombatLogTypes
+k_eCitadelCombatLog_SoulSecure: ECitadelCombatLogTypes
+k_eCitadelCombatLog_Multikill: ECitadelCombatLogTypes
+k_eCitadelCombatLog_Killstreak: ECitadelCombatLogTypes
+k_eCitadelCombatLog_ObjectiveKill: ECitadelCombatLogTypes
+k_eCitadelCombatLog_FirstBlood: ECitadelCombatLogTypes
+k_eCitadelCombatLog_ModifierStackEvent: ECitadelCombatLogTypes
+k_eCitadelCombatLog_ActivatePowerup: ECitadelCombatLogTypes
+k_eCitadelCombatLog_HeroSaved: ECitadelCombatLogTypes
+k_eCitadelCombatLog_HeroLevelup: ECitadelCombatLogTypes
+k_eCitadelCombatLog_InterruptChannel: ECitadelCombatLogTypes
+k_eCitadelCombatLog_AlliedGold: ECitadelCombatLogTypes
+k_eCitadelCombatLog_RejuvTaken: ECitadelCombatLogTypes
+k_eCitadelCombatLog_UnitSummoned: ECitadelCombatLogTypes
+k_eCitadelCombatLog_EndKillstreak: ECitadelCombatLogTypes
+k_eCitadelCombatLog_CriticalDamage: ECitadelCombatLogTypes
+k_eCitadelCombatLog_SpellAbsorb: ECitadelCombatLogTypes
+k_eCitadelCombatLog_UnitTeleported: ECitadelCombatLogTypes
+
+class CMsgHeroXPGrant(_message.Message):
+    __slots__ = ("hero_id", "xp_grant", "reason")
+    HERO_ID_FIELD_NUMBER: _ClassVar[int]
+    XP_GRANT_FIELD_NUMBER: _ClassVar[int]
+    REASON_FIELD_NUMBER: _ClassVar[int]
+    hero_id: int
+    xp_grant: int
+    reason: EHeroXPGrantReason
+    def __init__(self, hero_id: _Optional[int] = ..., xp_grant: _Optional[int] = ..., reason: _Optional[_Union[EHeroXPGrantReason, str]] = ...) -> None: ...
 
 class CSOCitadelLobby(_message.Message):
     __slots__ = ("lobby_id", "match_id", "match_mode", "game_mode", "compatibility_version", "extra_messages", "server_steam_id", "server_state", "udp_connect_ip", "udp_connect_port", "sdr_address", "server_version", "safe_to_abandon", "match_punishes_abandons", "game_mode_version")
@@ -490,7 +581,7 @@ class CMsgPlayerHeroData(_message.Message):
     def __init__(self, hero_xp: _Optional[int] = ..., hero_equips: _Optional[_Union[CMsgEquippedItemList, _Mapping]] = ...) -> None: ...
 
 class CSOCitadelParty(_message.Message):
-    __slots__ = ("party_id", "members", "invites", "dev_server_command", "left_members", "join_code", "bot_difficulty", "match_mode", "game_mode", "match_making_start_time", "server_search_key", "is_high_skill_range_party", "chat_mode", "region_mode", "is_private_lobby", "private_lobby_settings", "desires_laning_together", "mm_preference", "hideout_search_key")
+    __slots__ = ("party_id", "members", "invites", "dev_server_command", "left_members", "join_code", "bot_difficulty", "match_mode", "game_mode", "match_making_start_time", "server_search_key", "is_high_skill_range_party", "chat_mode", "region_mode", "is_private_lobby", "private_lobby_settings", "desires_laning_together", "mm_preference", "hideout_search_key", "candidate_cabals", "active_cabal", "party_min_cabal_tier", "party_active_cabal_tier", "ranked_type", "rank_interval")
     class EMemberRights(int, metaclass=_enum_type_wrapper.EnumTypeWrapper):
         __slots__ = ()
         k_eMemberRights_Admin: _ClassVar[CSOCitadelParty.EMemberRights]
@@ -524,7 +615,7 @@ class CSOCitadelParty(_message.Message):
         region_id: int
         def __init__(self, region_id: _Optional[int] = ...) -> None: ...
     class PrivateLobbySettings(_message.Message):
-        __slots__ = ("min_roster_size", "match_slots", "randomize_lanes", "server_region", "is_publicly_visible", "cheats_enabled", "available_regions", "duplicate_heroes_enabled")
+        __slots__ = ("min_roster_size", "match_slots", "randomize_lanes", "server_region", "is_publicly_visible", "cheats_enabled", "available_regions", "duplicate_heroes_enabled", "corrupted_item_shop_spawn_minutes")
         MIN_ROSTER_SIZE_FIELD_NUMBER: _ClassVar[int]
         MATCH_SLOTS_FIELD_NUMBER: _ClassVar[int]
         RANDOMIZE_LANES_FIELD_NUMBER: _ClassVar[int]
@@ -533,6 +624,7 @@ class CSOCitadelParty(_message.Message):
         CHEATS_ENABLED_FIELD_NUMBER: _ClassVar[int]
         AVAILABLE_REGIONS_FIELD_NUMBER: _ClassVar[int]
         DUPLICATE_HEROES_ENABLED_FIELD_NUMBER: _ClassVar[int]
+        CORRUPTED_ITEM_SHOP_SPAWN_MINUTES_FIELD_NUMBER: _ClassVar[int]
         min_roster_size: int
         match_slots: _containers.RepeatedCompositeFieldContainer[CSOCitadelParty.PrivateLobbySlot]
         randomize_lanes: bool
@@ -541,9 +633,23 @@ class CSOCitadelParty(_message.Message):
         cheats_enabled: bool
         available_regions: _containers.RepeatedCompositeFieldContainer[CSOCitadelParty.ServerRegion]
         duplicate_heroes_enabled: bool
-        def __init__(self, min_roster_size: _Optional[int] = ..., match_slots: _Optional[_Iterable[_Union[CSOCitadelParty.PrivateLobbySlot, _Mapping]]] = ..., randomize_lanes: _Optional[bool] = ..., server_region: _Optional[int] = ..., is_publicly_visible: _Optional[bool] = ..., cheats_enabled: _Optional[bool] = ..., available_regions: _Optional[_Iterable[_Union[CSOCitadelParty.ServerRegion, _Mapping]]] = ..., duplicate_heroes_enabled: _Optional[bool] = ...) -> None: ...
+        corrupted_item_shop_spawn_minutes: int
+        def __init__(self, min_roster_size: _Optional[int] = ..., match_slots: _Optional[_Iterable[_Union[CSOCitadelParty.PrivateLobbySlot, _Mapping]]] = ..., randomize_lanes: _Optional[bool] = ..., server_region: _Optional[int] = ..., is_publicly_visible: _Optional[bool] = ..., cheats_enabled: _Optional[bool] = ..., available_regions: _Optional[_Iterable[_Union[CSOCitadelParty.ServerRegion, _Mapping]]] = ..., duplicate_heroes_enabled: _Optional[bool] = ..., corrupted_item_shop_spawn_minutes: _Optional[int] = ...) -> None: ...
+    class RankedScores(_message.Message):
+        __slots__ = ("rank_type", "rank_interval", "rank_display_badge", "unlocked_heroes", "in_calibration")
+        RANK_TYPE_FIELD_NUMBER: _ClassVar[int]
+        RANK_INTERVAL_FIELD_NUMBER: _ClassVar[int]
+        RANK_DISPLAY_BADGE_FIELD_NUMBER: _ClassVar[int]
+        UNLOCKED_HEROES_FIELD_NUMBER: _ClassVar[int]
+        IN_CALIBRATION_FIELD_NUMBER: _ClassVar[int]
+        rank_type: ECitadelRankedType
+        rank_interval: int
+        rank_display_badge: int
+        unlocked_heroes: _containers.RepeatedScalarFieldContainer[int]
+        in_calibration: bool
+        def __init__(self, rank_type: _Optional[_Union[ECitadelRankedType, str]] = ..., rank_interval: _Optional[int] = ..., rank_display_badge: _Optional[int] = ..., unlocked_heroes: _Optional[_Iterable[int]] = ..., in_calibration: _Optional[bool] = ...) -> None: ...
     class Member(_message.Message):
-        __slots__ = ("account_id", "persona_name", "rights_flags", "is_ready", "player_type", "compatibility_version", "platform", "team", "hero_roster", "permissions", "new_player_progress", "owned_heroes", "low_priority_games_remaining")
+        __slots__ = ("account_id", "persona_name", "rights_flags", "is_ready", "player_type", "compatibility_version", "platform", "team", "hero_roster", "permissions", "new_player_progress", "owned_heroes", "low_priority_games_remaining", "ranked_scores", "player_cabals")
         ACCOUNT_ID_FIELD_NUMBER: _ClassVar[int]
         PERSONA_NAME_FIELD_NUMBER: _ClassVar[int]
         RIGHTS_FLAGS_FIELD_NUMBER: _ClassVar[int]
@@ -557,6 +663,8 @@ class CSOCitadelParty(_message.Message):
         NEW_PLAYER_PROGRESS_FIELD_NUMBER: _ClassVar[int]
         OWNED_HEROES_FIELD_NUMBER: _ClassVar[int]
         LOW_PRIORITY_GAMES_REMAINING_FIELD_NUMBER: _ClassVar[int]
+        RANKED_SCORES_FIELD_NUMBER: _ClassVar[int]
+        PLAYER_CABALS_FIELD_NUMBER: _ClassVar[int]
         account_id: int
         persona_name: str
         rights_flags: int
@@ -570,7 +678,9 @@ class CSOCitadelParty(_message.Message):
         new_player_progress: int
         owned_heroes: _containers.RepeatedScalarFieldContainer[int]
         low_priority_games_remaining: int
-        def __init__(self, account_id: _Optional[int] = ..., persona_name: _Optional[str] = ..., rights_flags: _Optional[int] = ..., is_ready: _Optional[bool] = ..., player_type: _Optional[_Union[CSOCitadelParty.EPlayerType, str]] = ..., compatibility_version: _Optional[int] = ..., platform: _Optional[_Union[_steammessages_pb2.EGCPlatform, str]] = ..., team: _Optional[int] = ..., hero_roster: _Optional[_Union[CMsgHeroSelectionMatchInfo, _Mapping]] = ..., permissions: _Optional[int] = ..., new_player_progress: _Optional[int] = ..., owned_heroes: _Optional[_Iterable[int]] = ..., low_priority_games_remaining: _Optional[int] = ...) -> None: ...
+        ranked_scores: _containers.RepeatedCompositeFieldContainer[CSOCitadelParty.RankedScores]
+        player_cabals: _containers.RepeatedScalarFieldContainer[int]
+        def __init__(self, account_id: _Optional[int] = ..., persona_name: _Optional[str] = ..., rights_flags: _Optional[int] = ..., is_ready: _Optional[bool] = ..., player_type: _Optional[_Union[CSOCitadelParty.EPlayerType, str]] = ..., compatibility_version: _Optional[int] = ..., platform: _Optional[_Union[_steammessages_pb2.EGCPlatform, str]] = ..., team: _Optional[int] = ..., hero_roster: _Optional[_Union[CMsgHeroSelectionMatchInfo, _Mapping]] = ..., permissions: _Optional[int] = ..., new_player_progress: _Optional[int] = ..., owned_heroes: _Optional[_Iterable[int]] = ..., low_priority_games_remaining: _Optional[int] = ..., ranked_scores: _Optional[_Iterable[_Union[CSOCitadelParty.RankedScores, _Mapping]]] = ..., player_cabals: _Optional[_Iterable[int]] = ...) -> None: ...
     class LeftMember(_message.Message):
         __slots__ = ("account_id", "rights_flags", "player_type")
         ACCOUNT_ID_FIELD_NUMBER: _ClassVar[int]
@@ -608,6 +718,12 @@ class CSOCitadelParty(_message.Message):
     DESIRES_LANING_TOGETHER_FIELD_NUMBER: _ClassVar[int]
     MM_PREFERENCE_FIELD_NUMBER: _ClassVar[int]
     HIDEOUT_SEARCH_KEY_FIELD_NUMBER: _ClassVar[int]
+    CANDIDATE_CABALS_FIELD_NUMBER: _ClassVar[int]
+    ACTIVE_CABAL_FIELD_NUMBER: _ClassVar[int]
+    PARTY_MIN_CABAL_TIER_FIELD_NUMBER: _ClassVar[int]
+    PARTY_ACTIVE_CABAL_TIER_FIELD_NUMBER: _ClassVar[int]
+    RANKED_TYPE_FIELD_NUMBER: _ClassVar[int]
+    RANK_INTERVAL_FIELD_NUMBER: _ClassVar[int]
     party_id: int
     members: _containers.RepeatedCompositeFieldContainer[CSOCitadelParty.Member]
     invites: _containers.RepeatedCompositeFieldContainer[CSOCitadelParty.Invite]
@@ -627,7 +743,13 @@ class CSOCitadelParty(_message.Message):
     desires_laning_together: bool
     mm_preference: ECitadelMMPreference
     hideout_search_key: str
-    def __init__(self, party_id: _Optional[int] = ..., members: _Optional[_Iterable[_Union[CSOCitadelParty.Member, _Mapping]]] = ..., invites: _Optional[_Iterable[_Union[CSOCitadelParty.Invite, _Mapping]]] = ..., dev_server_command: _Optional[str] = ..., left_members: _Optional[_Iterable[_Union[CSOCitadelParty.LeftMember, _Mapping]]] = ..., join_code: _Optional[int] = ..., bot_difficulty: _Optional[_Union[ECitadelBotDifficulty, str]] = ..., match_mode: _Optional[_Union[ECitadelMatchMode, str]] = ..., game_mode: _Optional[_Union[ECitadelGameMode, str]] = ..., match_making_start_time: _Optional[int] = ..., server_search_key: _Optional[str] = ..., is_high_skill_range_party: _Optional[bool] = ..., chat_mode: _Optional[_Union[CSOCitadelParty.EChatMode, str]] = ..., region_mode: _Optional[_Union[ECitadelRegionMode, str]] = ..., is_private_lobby: _Optional[bool] = ..., private_lobby_settings: _Optional[_Union[CSOCitadelParty.PrivateLobbySettings, _Mapping]] = ..., desires_laning_together: _Optional[bool] = ..., mm_preference: _Optional[_Union[ECitadelMMPreference, str]] = ..., hideout_search_key: _Optional[str] = ...) -> None: ...
+    candidate_cabals: _containers.RepeatedScalarFieldContainer[int]
+    active_cabal: int
+    party_min_cabal_tier: ECitadelCabalMMTier
+    party_active_cabal_tier: ECitadelCabalMMTier
+    ranked_type: ECitadelRankedType
+    rank_interval: int
+    def __init__(self, party_id: _Optional[int] = ..., members: _Optional[_Iterable[_Union[CSOCitadelParty.Member, _Mapping]]] = ..., invites: _Optional[_Iterable[_Union[CSOCitadelParty.Invite, _Mapping]]] = ..., dev_server_command: _Optional[str] = ..., left_members: _Optional[_Iterable[_Union[CSOCitadelParty.LeftMember, _Mapping]]] = ..., join_code: _Optional[int] = ..., bot_difficulty: _Optional[_Union[ECitadelBotDifficulty, str]] = ..., match_mode: _Optional[_Union[ECitadelMatchMode, str]] = ..., game_mode: _Optional[_Union[ECitadelGameMode, str]] = ..., match_making_start_time: _Optional[int] = ..., server_search_key: _Optional[str] = ..., is_high_skill_range_party: _Optional[bool] = ..., chat_mode: _Optional[_Union[CSOCitadelParty.EChatMode, str]] = ..., region_mode: _Optional[_Union[ECitadelRegionMode, str]] = ..., is_private_lobby: _Optional[bool] = ..., private_lobby_settings: _Optional[_Union[CSOCitadelParty.PrivateLobbySettings, _Mapping]] = ..., desires_laning_together: _Optional[bool] = ..., mm_preference: _Optional[_Union[ECitadelMMPreference, str]] = ..., hideout_search_key: _Optional[str] = ..., candidate_cabals: _Optional[_Iterable[int]] = ..., active_cabal: _Optional[int] = ..., party_min_cabal_tier: _Optional[_Union[ECitadelCabalMMTier, str]] = ..., party_active_cabal_tier: _Optional[_Union[ECitadelCabalMMTier, str]] = ..., ranked_type: _Optional[_Union[ECitadelRankedType, str]] = ..., rank_interval: _Optional[int] = ...) -> None: ...
 
 class CMsgMatchPlayerPathsData(_message.Message):
     __slots__ = ("version", "interval_s", "x_resolution", "y_resolution", "paths")
@@ -747,16 +869,6 @@ class CMsgMatchPlayerDamageMatrix(_message.Message):
     sample_time_s: _containers.RepeatedScalarFieldContainer[int]
     source_details: CMsgMatchPlayerDamageMatrix.SourceDetails
     def __init__(self, damage_dealers: _Optional[_Iterable[_Union[CMsgMatchPlayerDamageMatrix.DamageDealer, _Mapping]]] = ..., sample_time_s: _Optional[_Iterable[int]] = ..., source_details: _Optional[_Union[CMsgMatchPlayerDamageMatrix.SourceDetails, _Mapping]] = ...) -> None: ...
-
-class CMsgHeroXPGrant(_message.Message):
-    __slots__ = ("hero_id", "xp_grant", "reason")
-    HERO_ID_FIELD_NUMBER: _ClassVar[int]
-    XP_GRANT_FIELD_NUMBER: _ClassVar[int]
-    REASON_FIELD_NUMBER: _ClassVar[int]
-    hero_id: int
-    xp_grant: int
-    reason: EHeroXPGrantReason
-    def __init__(self, hero_id: _Optional[int] = ..., xp_grant: _Optional[int] = ..., reason: _Optional[_Union[EHeroXPGrantReason, str]] = ...) -> None: ...
 
 class CMsgMatchPlayerRankData(_message.Message):
     __slots__ = ("initial_display_rank", "initial_flat_progress", "final_flat_progress", "desired_progress_change", "initial_calibration_games", "initial_demotion_protection_games", "consumed_demotion_protection", "initial_win_streak")
@@ -894,14 +1006,18 @@ class CMsgMatchMetaDataContents(_message.Message):
         id: int
         def __init__(self, value: _Optional[int] = ..., id: _Optional[int] = ...) -> None: ...
     class PowerUpBuff(_message.Message):
-        __slots__ = ("type", "value", "is_permanent")
+        __slots__ = ("type", "value", "is_permanent", "pickup_times_s", "pickup_stat_values")
         TYPE_FIELD_NUMBER: _ClassVar[int]
         VALUE_FIELD_NUMBER: _ClassVar[int]
         IS_PERMANENT_FIELD_NUMBER: _ClassVar[int]
+        PICKUP_TIMES_S_FIELD_NUMBER: _ClassVar[int]
+        PICKUP_STAT_VALUES_FIELD_NUMBER: _ClassVar[int]
         type: str
         value: int
         is_permanent: bool
-        def __init__(self, type: _Optional[str] = ..., value: _Optional[int] = ..., is_permanent: _Optional[bool] = ...) -> None: ...
+        pickup_times_s: _containers.RepeatedScalarFieldContainer[int]
+        pickup_stat_values: _containers.RepeatedScalarFieldContainer[float]
+        def __init__(self, type: _Optional[str] = ..., value: _Optional[int] = ..., is_permanent: _Optional[bool] = ..., pickup_times_s: _Optional[_Iterable[int]] = ..., pickup_stat_values: _Optional[_Iterable[float]] = ...) -> None: ...
     class PlayerStats(_message.Message):
         __slots__ = ("time_stamp_s", "net_worth", "gold_player", "gold_player_orbs", "gold_lane_creep_orbs", "gold_neutral_creep_orbs", "gold_boss", "gold_boss_orb", "gold_treasure", "gold_denied", "gold_death_loss", "gold_lane_creep", "gold_neutral_creep", "kills", "deaths", "assists", "creep_kills", "neutral_kills", "possible_creeps", "creep_damage", "player_damage", "neutral_damage", "boss_damage", "denies", "player_healing", "ability_points", "self_healing", "player_damage_taken", "max_health", "weapon_power", "tech_power", "shots_hit", "shots_missed", "damage_absorbed", "absorption_provided", "hero_bullets_hit", "hero_bullets_hit_crit", "heal_prevented", "heal_lost", "gold_sources", "custom_user_stats", "damage_mitigated", "level", "player_barriering", "teammate_healing", "teammate_barriering", "self_damage", "bullet_kills", "melee_kills", "ability_kills", "headshot_kills")
         TIME_STAMP_S_FIELD_NUMBER: _ClassVar[int]
@@ -1165,7 +1281,7 @@ class CMsgMatchMetaDataContents(_message.Message):
         winning_team: ECitadelLobbyTeam
         def __init__(self, round_duration_s: _Optional[int] = ..., winning_team: _Optional[_Union[ECitadelLobbyTeam, str]] = ...) -> None: ...
     class MatchInfo(_message.Message):
-        __slots__ = ("duration_s", "match_outcome", "winning_team", "players", "start_time", "match_id", "legacy_objectives_mask", "game_mode", "match_mode", "objectives", "match_paths", "damage_matrix", "match_pauses", "custom_user_stats", "watched_death_replays", "objectives_mask_team0", "objectives_mask_team1", "mid_boss", "is_high_skill_range_parties", "low_pri_pool", "new_player_pool", "average_badge_team0", "average_badge_team1", "game_mode_version", "rewards_eligible", "not_scored", "team_score", "match_tracked_stats", "teams", "bot_difficulty", "street_brawl_rounds", "ranked_type", "rank_interval")
+        __slots__ = ("duration_s", "match_outcome", "winning_team", "players", "start_time", "match_id", "legacy_objectives_mask", "game_mode", "match_mode", "objectives", "match_paths", "damage_matrix", "match_pauses", "custom_user_stats", "watched_death_replays", "objectives_mask_team0", "objectives_mask_team1", "mid_boss", "is_high_skill_range_parties", "low_pri_pool", "new_player_pool", "average_badge_team0", "average_badge_team1", "game_mode_version", "rewards_eligible", "not_scored", "team_score", "match_tracked_stats", "teams", "bot_difficulty", "street_brawl_rounds", "ranked_type", "rank_interval", "corrupted_penalty_seed", "extra_messages")
         DURATION_S_FIELD_NUMBER: _ClassVar[int]
         MATCH_OUTCOME_FIELD_NUMBER: _ClassVar[int]
         WINNING_TEAM_FIELD_NUMBER: _ClassVar[int]
@@ -1199,6 +1315,8 @@ class CMsgMatchMetaDataContents(_message.Message):
         STREET_BRAWL_ROUNDS_FIELD_NUMBER: _ClassVar[int]
         RANKED_TYPE_FIELD_NUMBER: _ClassVar[int]
         RANK_INTERVAL_FIELD_NUMBER: _ClassVar[int]
+        CORRUPTED_PENALTY_SEED_FIELD_NUMBER: _ClassVar[int]
+        EXTRA_MESSAGES_FIELD_NUMBER: _ClassVar[int]
         duration_s: int
         match_outcome: CMsgMatchMetaDataContents.EMatchOutcome
         winning_team: ECitadelLobbyTeam
@@ -1232,7 +1350,9 @@ class CMsgMatchMetaDataContents(_message.Message):
         street_brawl_rounds: _containers.RepeatedCompositeFieldContainer[CMsgMatchMetaDataContents.StreetBrawlRound]
         ranked_type: ECitadelRankedType
         rank_interval: int
-        def __init__(self, duration_s: _Optional[int] = ..., match_outcome: _Optional[_Union[CMsgMatchMetaDataContents.EMatchOutcome, str]] = ..., winning_team: _Optional[_Union[ECitadelLobbyTeam, str]] = ..., players: _Optional[_Iterable[_Union[CMsgMatchMetaDataContents.Players, _Mapping]]] = ..., start_time: _Optional[int] = ..., match_id: _Optional[int] = ..., legacy_objectives_mask: _Optional[int] = ..., game_mode: _Optional[_Union[ECitadelGameMode, str]] = ..., match_mode: _Optional[_Union[ECitadelMatchMode, str]] = ..., objectives: _Optional[_Iterable[_Union[CMsgMatchMetaDataContents.Objective, _Mapping]]] = ..., match_paths: _Optional[_Union[CMsgMatchPlayerPathsData, _Mapping]] = ..., damage_matrix: _Optional[_Union[CMsgMatchPlayerDamageMatrix, _Mapping]] = ..., match_pauses: _Optional[_Iterable[_Union[CMsgMatchMetaDataContents.Pause, _Mapping]]] = ..., custom_user_stats: _Optional[_Iterable[_Union[CMsgMatchMetaDataContents.CustomUserStatInfo, _Mapping]]] = ..., watched_death_replays: _Optional[_Iterable[_Union[CMsgMatchMetaDataContents.WatchedDeathReplay, _Mapping]]] = ..., objectives_mask_team0: _Optional[int] = ..., objectives_mask_team1: _Optional[int] = ..., mid_boss: _Optional[_Iterable[_Union[CMsgMatchMetaDataContents.MidBoss, _Mapping]]] = ..., is_high_skill_range_parties: _Optional[bool] = ..., low_pri_pool: _Optional[bool] = ..., new_player_pool: _Optional[bool] = ..., average_badge_team0: _Optional[int] = ..., average_badge_team1: _Optional[int] = ..., game_mode_version: _Optional[int] = ..., rewards_eligible: _Optional[bool] = ..., not_scored: _Optional[bool] = ..., team_score: _Optional[_Iterable[int]] = ..., match_tracked_stats: _Optional[_Iterable[_Union[CMsgTrackedStat, _Mapping]]] = ..., teams: _Optional[_Iterable[_Union[CMsgMatchMetaDataContents.Teams, _Mapping]]] = ..., bot_difficulty: _Optional[_Union[ECitadelBotDifficulty, str]] = ..., street_brawl_rounds: _Optional[_Iterable[_Union[CMsgMatchMetaDataContents.StreetBrawlRound, _Mapping]]] = ..., ranked_type: _Optional[_Union[ECitadelRankedType, str]] = ..., rank_interval: _Optional[int] = ...) -> None: ...
+        corrupted_penalty_seed: int
+        extra_messages: _containers.RepeatedCompositeFieldContainer[_gcsdk_gcmessages_pb2.CExtraMsgBlock]
+        def __init__(self, duration_s: _Optional[int] = ..., match_outcome: _Optional[_Union[CMsgMatchMetaDataContents.EMatchOutcome, str]] = ..., winning_team: _Optional[_Union[ECitadelLobbyTeam, str]] = ..., players: _Optional[_Iterable[_Union[CMsgMatchMetaDataContents.Players, _Mapping]]] = ..., start_time: _Optional[int] = ..., match_id: _Optional[int] = ..., legacy_objectives_mask: _Optional[int] = ..., game_mode: _Optional[_Union[ECitadelGameMode, str]] = ..., match_mode: _Optional[_Union[ECitadelMatchMode, str]] = ..., objectives: _Optional[_Iterable[_Union[CMsgMatchMetaDataContents.Objective, _Mapping]]] = ..., match_paths: _Optional[_Union[CMsgMatchPlayerPathsData, _Mapping]] = ..., damage_matrix: _Optional[_Union[CMsgMatchPlayerDamageMatrix, _Mapping]] = ..., match_pauses: _Optional[_Iterable[_Union[CMsgMatchMetaDataContents.Pause, _Mapping]]] = ..., custom_user_stats: _Optional[_Iterable[_Union[CMsgMatchMetaDataContents.CustomUserStatInfo, _Mapping]]] = ..., watched_death_replays: _Optional[_Iterable[_Union[CMsgMatchMetaDataContents.WatchedDeathReplay, _Mapping]]] = ..., objectives_mask_team0: _Optional[int] = ..., objectives_mask_team1: _Optional[int] = ..., mid_boss: _Optional[_Iterable[_Union[CMsgMatchMetaDataContents.MidBoss, _Mapping]]] = ..., is_high_skill_range_parties: _Optional[bool] = ..., low_pri_pool: _Optional[bool] = ..., new_player_pool: _Optional[bool] = ..., average_badge_team0: _Optional[int] = ..., average_badge_team1: _Optional[int] = ..., game_mode_version: _Optional[int] = ..., rewards_eligible: _Optional[bool] = ..., not_scored: _Optional[bool] = ..., team_score: _Optional[_Iterable[int]] = ..., match_tracked_stats: _Optional[_Iterable[_Union[CMsgTrackedStat, _Mapping]]] = ..., teams: _Optional[_Iterable[_Union[CMsgMatchMetaDataContents.Teams, _Mapping]]] = ..., bot_difficulty: _Optional[_Union[ECitadelBotDifficulty, str]] = ..., street_brawl_rounds: _Optional[_Iterable[_Union[CMsgMatchMetaDataContents.StreetBrawlRound, _Mapping]]] = ..., ranked_type: _Optional[_Union[ECitadelRankedType, str]] = ..., rank_interval: _Optional[int] = ..., corrupted_penalty_seed: _Optional[int] = ..., extra_messages: _Optional[_Iterable[_Union[_gcsdk_gcmessages_pb2.CExtraMsgBlock, _Mapping]]] = ...) -> None: ...
     MATCH_INFO_FIELD_NUMBER: _ClassVar[int]
     match_info: CMsgMatchMetaDataContents.MatchInfo
     def __init__(self, match_info: _Optional[_Union[CMsgMatchMetaDataContents.MatchInfo, _Mapping]] = ...) -> None: ...
@@ -1300,12 +1420,14 @@ class CMsgTrackedStat(_message.Message):
     def __init__(self, tracked_stat_id: _Optional[int] = ..., tracked_stat_value: _Optional[int] = ...) -> None: ...
 
 class CMsgGCAccountData(_message.Message):
-    __slots__ = ("account_id", "cheater_report_score")
+    __slots__ = ("account_id", "cheater_report_score", "num_comms_reports")
     ACCOUNT_ID_FIELD_NUMBER: _ClassVar[int]
     CHEATER_REPORT_SCORE_FIELD_NUMBER: _ClassVar[int]
+    NUM_COMMS_REPORTS_FIELD_NUMBER: _ClassVar[int]
     account_id: int
     cheater_report_score: float
-    def __init__(self, account_id: _Optional[int] = ..., cheater_report_score: _Optional[float] = ...) -> None: ...
+    num_comms_reports: int
+    def __init__(self, account_id: _Optional[int] = ..., cheater_report_score: _Optional[float] = ..., num_comms_reports: _Optional[int] = ...) -> None: ...
 
 class CMsgHeroBuild(_message.Message):
     __slots__ = ("hero_build_id", "hero_id", "author_account_id", "last_updated_timestamp", "name", "description", "language", "version", "origin_build_id", "details", "tags", "development_build", "publish_timestamp")
@@ -1398,6 +1520,144 @@ class CMsgHeroBuildPreference(_message.Message):
     reported: bool
     def __init__(self, favorited: _Optional[bool] = ..., ignored: _Optional[bool] = ..., reported: _Optional[bool] = ...) -> None: ...
 
+class CMsgCitadelCombatLogEntry(_message.Message):
+    __slots__ = ("type", "target_name", "target_source_name", "attacker_name", "damage_source_name", "inflictor_name", "is_attacker_hero", "is_target_hero", "is_visible_sapphire", "is_visible_amber", "value", "health", "timestamp", "timestamp_raw", "attacker_team", "target_team", "is_ability_toggle_on", "is_ability_toggle_off", "damage_type", "networth", "currency_type", "currency_source", "location_x", "location_y", "ability_upgrade_bits", "modifier_duration", "assist_players", "target_objective_id", "target_is_self", "target_class", "is_ultimate_ability", "uses_charges", "inflictor_is_stolen_ability", "spell_generated_attack", "heal_from_lifesteal", "regenerated_health", "will_reincarnate", "modifier_ability", "modifier_hidden", "modifier_elapsed_duration", "hidden_modifier", "silence_modifier", "modifier_purged", "long_range_kill", "aura_modifier", "immobilize_modifier", "modifier_purge_npc", "modifier_purge_ability", "modifier_purged_duration", "movement_control_modifier", "powerup_type", "is_primary_weapon", "is_headshot", "ability_name", "full_refresh", "hits")
+    TYPE_FIELD_NUMBER: _ClassVar[int]
+    TARGET_NAME_FIELD_NUMBER: _ClassVar[int]
+    TARGET_SOURCE_NAME_FIELD_NUMBER: _ClassVar[int]
+    ATTACKER_NAME_FIELD_NUMBER: _ClassVar[int]
+    DAMAGE_SOURCE_NAME_FIELD_NUMBER: _ClassVar[int]
+    INFLICTOR_NAME_FIELD_NUMBER: _ClassVar[int]
+    IS_ATTACKER_HERO_FIELD_NUMBER: _ClassVar[int]
+    IS_TARGET_HERO_FIELD_NUMBER: _ClassVar[int]
+    IS_VISIBLE_SAPPHIRE_FIELD_NUMBER: _ClassVar[int]
+    IS_VISIBLE_AMBER_FIELD_NUMBER: _ClassVar[int]
+    VALUE_FIELD_NUMBER: _ClassVar[int]
+    HEALTH_FIELD_NUMBER: _ClassVar[int]
+    TIMESTAMP_FIELD_NUMBER: _ClassVar[int]
+    TIMESTAMP_RAW_FIELD_NUMBER: _ClassVar[int]
+    ATTACKER_TEAM_FIELD_NUMBER: _ClassVar[int]
+    TARGET_TEAM_FIELD_NUMBER: _ClassVar[int]
+    IS_ABILITY_TOGGLE_ON_FIELD_NUMBER: _ClassVar[int]
+    IS_ABILITY_TOGGLE_OFF_FIELD_NUMBER: _ClassVar[int]
+    DAMAGE_TYPE_FIELD_NUMBER: _ClassVar[int]
+    NETWORTH_FIELD_NUMBER: _ClassVar[int]
+    CURRENCY_TYPE_FIELD_NUMBER: _ClassVar[int]
+    CURRENCY_SOURCE_FIELD_NUMBER: _ClassVar[int]
+    LOCATION_X_FIELD_NUMBER: _ClassVar[int]
+    LOCATION_Y_FIELD_NUMBER: _ClassVar[int]
+    ABILITY_UPGRADE_BITS_FIELD_NUMBER: _ClassVar[int]
+    MODIFIER_DURATION_FIELD_NUMBER: _ClassVar[int]
+    ASSIST_PLAYERS_FIELD_NUMBER: _ClassVar[int]
+    TARGET_OBJECTIVE_ID_FIELD_NUMBER: _ClassVar[int]
+    TARGET_IS_SELF_FIELD_NUMBER: _ClassVar[int]
+    TARGET_CLASS_FIELD_NUMBER: _ClassVar[int]
+    IS_ULTIMATE_ABILITY_FIELD_NUMBER: _ClassVar[int]
+    USES_CHARGES_FIELD_NUMBER: _ClassVar[int]
+    INFLICTOR_IS_STOLEN_ABILITY_FIELD_NUMBER: _ClassVar[int]
+    SPELL_GENERATED_ATTACK_FIELD_NUMBER: _ClassVar[int]
+    HEAL_FROM_LIFESTEAL_FIELD_NUMBER: _ClassVar[int]
+    REGENERATED_HEALTH_FIELD_NUMBER: _ClassVar[int]
+    WILL_REINCARNATE_FIELD_NUMBER: _ClassVar[int]
+    MODIFIER_ABILITY_FIELD_NUMBER: _ClassVar[int]
+    MODIFIER_HIDDEN_FIELD_NUMBER: _ClassVar[int]
+    MODIFIER_ELAPSED_DURATION_FIELD_NUMBER: _ClassVar[int]
+    HIDDEN_MODIFIER_FIELD_NUMBER: _ClassVar[int]
+    SILENCE_MODIFIER_FIELD_NUMBER: _ClassVar[int]
+    MODIFIER_PURGED_FIELD_NUMBER: _ClassVar[int]
+    LONG_RANGE_KILL_FIELD_NUMBER: _ClassVar[int]
+    AURA_MODIFIER_FIELD_NUMBER: _ClassVar[int]
+    IMMOBILIZE_MODIFIER_FIELD_NUMBER: _ClassVar[int]
+    MODIFIER_PURGE_NPC_FIELD_NUMBER: _ClassVar[int]
+    MODIFIER_PURGE_ABILITY_FIELD_NUMBER: _ClassVar[int]
+    MODIFIER_PURGED_DURATION_FIELD_NUMBER: _ClassVar[int]
+    MOVEMENT_CONTROL_MODIFIER_FIELD_NUMBER: _ClassVar[int]
+    POWERUP_TYPE_FIELD_NUMBER: _ClassVar[int]
+    IS_PRIMARY_WEAPON_FIELD_NUMBER: _ClassVar[int]
+    IS_HEADSHOT_FIELD_NUMBER: _ClassVar[int]
+    ABILITY_NAME_FIELD_NUMBER: _ClassVar[int]
+    FULL_REFRESH_FIELD_NUMBER: _ClassVar[int]
+    HITS_FIELD_NUMBER: _ClassVar[int]
+    type: ECitadelCombatLogTypes
+    target_name: int
+    target_source_name: int
+    attacker_name: int
+    damage_source_name: int
+    inflictor_name: int
+    is_attacker_hero: bool
+    is_target_hero: bool
+    is_visible_sapphire: bool
+    is_visible_amber: bool
+    value: int
+    health: int
+    timestamp: float
+    timestamp_raw: float
+    attacker_team: int
+    target_team: int
+    is_ability_toggle_on: bool
+    is_ability_toggle_off: bool
+    damage_type: int
+    networth: int
+    currency_type: int
+    currency_source: int
+    location_x: float
+    location_y: float
+    ability_upgrade_bits: int
+    modifier_duration: float
+    assist_players: _containers.RepeatedScalarFieldContainer[int]
+    target_objective_id: int
+    target_is_self: bool
+    target_class: int
+    is_ultimate_ability: bool
+    uses_charges: bool
+    inflictor_is_stolen_ability: bool
+    spell_generated_attack: bool
+    heal_from_lifesteal: bool
+    regenerated_health: float
+    will_reincarnate: bool
+    modifier_ability: int
+    modifier_hidden: bool
+    modifier_elapsed_duration: float
+    hidden_modifier: bool
+    silence_modifier: bool
+    modifier_purged: bool
+    long_range_kill: bool
+    aura_modifier: bool
+    immobilize_modifier: bool
+    modifier_purge_npc: int
+    modifier_purge_ability: int
+    modifier_purged_duration: float
+    movement_control_modifier: bool
+    powerup_type: int
+    is_primary_weapon: bool
+    is_headshot: bool
+    ability_name: int
+    full_refresh: int
+    hits: int
+    def __init__(self, type: _Optional[_Union[ECitadelCombatLogTypes, str]] = ..., target_name: _Optional[int] = ..., target_source_name: _Optional[int] = ..., attacker_name: _Optional[int] = ..., damage_source_name: _Optional[int] = ..., inflictor_name: _Optional[int] = ..., is_attacker_hero: _Optional[bool] = ..., is_target_hero: _Optional[bool] = ..., is_visible_sapphire: _Optional[bool] = ..., is_visible_amber: _Optional[bool] = ..., value: _Optional[int] = ..., health: _Optional[int] = ..., timestamp: _Optional[float] = ..., timestamp_raw: _Optional[float] = ..., attacker_team: _Optional[int] = ..., target_team: _Optional[int] = ..., is_ability_toggle_on: _Optional[bool] = ..., is_ability_toggle_off: _Optional[bool] = ..., damage_type: _Optional[int] = ..., networth: _Optional[int] = ..., currency_type: _Optional[int] = ..., currency_source: _Optional[int] = ..., location_x: _Optional[float] = ..., location_y: _Optional[float] = ..., ability_upgrade_bits: _Optional[int] = ..., modifier_duration: _Optional[float] = ..., assist_players: _Optional[_Iterable[int]] = ..., target_objective_id: _Optional[int] = ..., target_is_self: _Optional[bool] = ..., target_class: _Optional[int] = ..., is_ultimate_ability: _Optional[bool] = ..., uses_charges: _Optional[bool] = ..., inflictor_is_stolen_ability: _Optional[bool] = ..., spell_generated_attack: _Optional[bool] = ..., heal_from_lifesteal: _Optional[bool] = ..., regenerated_health: _Optional[float] = ..., will_reincarnate: _Optional[bool] = ..., modifier_ability: _Optional[int] = ..., modifier_hidden: _Optional[bool] = ..., modifier_elapsed_duration: _Optional[float] = ..., hidden_modifier: _Optional[bool] = ..., silence_modifier: _Optional[bool] = ..., modifier_purged: _Optional[bool] = ..., long_range_kill: _Optional[bool] = ..., aura_modifier: _Optional[bool] = ..., immobilize_modifier: _Optional[bool] = ..., modifier_purge_npc: _Optional[int] = ..., modifier_purge_ability: _Optional[int] = ..., modifier_purged_duration: _Optional[float] = ..., movement_control_modifier: _Optional[bool] = ..., powerup_type: _Optional[int] = ..., is_primary_weapon: _Optional[bool] = ..., is_headshot: _Optional[bool] = ..., ability_name: _Optional[int] = ..., full_refresh: _Optional[int] = ..., hits: _Optional[int] = ...) -> None: ...
+
+class CSerializedCombatLog(_message.Message):
+    __slots__ = ("version", "dictionary", "entries")
+    class Dictionary(_message.Message):
+        __slots__ = ("strings",)
+        class DictString(_message.Message):
+            __slots__ = ("id", "value")
+            ID_FIELD_NUMBER: _ClassVar[int]
+            VALUE_FIELD_NUMBER: _ClassVar[int]
+            id: int
+            value: str
+            def __init__(self, id: _Optional[int] = ..., value: _Optional[str] = ...) -> None: ...
+        STRINGS_FIELD_NUMBER: _ClassVar[int]
+        strings: _containers.RepeatedCompositeFieldContainer[CSerializedCombatLog.Dictionary.DictString]
+        def __init__(self, strings: _Optional[_Iterable[_Union[CSerializedCombatLog.Dictionary.DictString, _Mapping]]] = ...) -> None: ...
+    VERSION_FIELD_NUMBER: _ClassVar[int]
+    DICTIONARY_FIELD_NUMBER: _ClassVar[int]
+    ENTRIES_FIELD_NUMBER: _ClassVar[int]
+    version: int
+    dictionary: CSerializedCombatLog.Dictionary
+    entries: _containers.RepeatedCompositeFieldContainer[CMsgCitadelCombatLogEntry]
+    def __init__(self, version: _Optional[int] = ..., dictionary: _Optional[_Union[CSerializedCombatLog.Dictionary, _Mapping]] = ..., entries: _Optional[_Iterable[_Union[CMsgCitadelCombatLogEntry, _Mapping]]] = ...) -> None: ...
+
 class CMsgHeroReleaseVoteTally(_message.Message):
     __slots__ = ("remaining_votes", "votes_cast", "daily_reward_time_stamp")
     REMAINING_VOTES_FIELD_NUMBER: _ClassVar[int]
@@ -1407,3 +1667,33 @@ class CMsgHeroReleaseVoteTally(_message.Message):
     votes_cast: _containers.RepeatedScalarFieldContainer[int]
     daily_reward_time_stamp: int
     def __init__(self, remaining_votes: _Optional[int] = ..., votes_cast: _Optional[_Iterable[int]] = ..., daily_reward_time_stamp: _Optional[int] = ...) -> None: ...
+
+class CMsgMatchHeroReleaseVotes(_message.Message):
+    __slots__ = ("categories",)
+    class EHeroReleaseVoteCategory(int, metaclass=_enum_type_wrapper.EnumTypeWrapper):
+        __slots__ = ()
+        k_eMatchCompleted: _ClassVar[CMsgMatchHeroReleaseVotes.EHeroReleaseVoteCategory]
+        k_eMatchWon: _ClassVar[CMsgMatchHeroReleaseVotes.EHeroReleaseVoteCategory]
+        k_eDailyBonus: _ClassVar[CMsgMatchHeroReleaseVotes.EHeroReleaseVoteCategory]
+    k_eMatchCompleted: CMsgMatchHeroReleaseVotes.EHeroReleaseVoteCategory
+    k_eMatchWon: CMsgMatchHeroReleaseVotes.EHeroReleaseVoteCategory
+    k_eDailyBonus: CMsgMatchHeroReleaseVotes.EHeroReleaseVoteCategory
+    class HeroVote(_message.Message):
+        __slots__ = ("vote_player_slot", "vote_hero_id", "vote_count")
+        VOTE_PLAYER_SLOT_FIELD_NUMBER: _ClassVar[int]
+        VOTE_HERO_ID_FIELD_NUMBER: _ClassVar[int]
+        VOTE_COUNT_FIELD_NUMBER: _ClassVar[int]
+        vote_player_slot: int
+        vote_hero_id: int
+        vote_count: int
+        def __init__(self, vote_player_slot: _Optional[int] = ..., vote_hero_id: _Optional[int] = ..., vote_count: _Optional[int] = ...) -> None: ...
+    class Category(_message.Message):
+        __slots__ = ("vote_category", "hero_votes")
+        VOTE_CATEGORY_FIELD_NUMBER: _ClassVar[int]
+        HERO_VOTES_FIELD_NUMBER: _ClassVar[int]
+        vote_category: CMsgMatchHeroReleaseVotes.EHeroReleaseVoteCategory
+        hero_votes: _containers.RepeatedCompositeFieldContainer[CMsgMatchHeroReleaseVotes.HeroVote]
+        def __init__(self, vote_category: _Optional[_Union[CMsgMatchHeroReleaseVotes.EHeroReleaseVoteCategory, str]] = ..., hero_votes: _Optional[_Iterable[_Union[CMsgMatchHeroReleaseVotes.HeroVote, _Mapping]]] = ...) -> None: ...
+    CATEGORIES_FIELD_NUMBER: _ClassVar[int]
+    categories: _containers.RepeatedCompositeFieldContainer[CMsgMatchHeroReleaseVotes.Category]
+    def __init__(self, categories: _Optional[_Iterable[_Union[CMsgMatchHeroReleaseVotes.Category, _Mapping]]] = ...) -> None: ...

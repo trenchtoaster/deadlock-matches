@@ -151,6 +151,11 @@ class Matches(Table):
         "an early abandon), winning_team is still set and match history still "
         "shows the result",
     )
+    corrupted_penalty_seed = Column(
+        pl.Int64,
+        "Seed Valve recorded for the corrupted item penalty, null before build 6712 "
+        "(late September 2026) when the field did not exist",
+    )
 
 
 class Players(Table):
@@ -365,6 +370,34 @@ class Buffs(Table):
     )
     count = Column(pl.Int64, "How many of that buff the player gained")
     permanent = Column(pl.Boolean, "Permanent stat buffs, false for the timed bridge buffs")
+
+
+class BuffPickups(Table):
+    """Each permanent statue buff a player picked up, one row per pickup.
+
+    - only matches from build 6712 on carry pickup times, older matches and the
+      timed bridge buffs have no rows here, so buffs.count stays the total
+    """
+
+    match_id = MATCH_ID
+    start_time = START_TIME
+    account_id = ACCOUNT_ID
+    hero_id = HERO_ID
+    type = Column(
+        pl.String,
+        "Engine class name of the buff pickup, the same values as buffs.type",
+    )
+    pickup = Column(
+        pl.Int64,
+        "Order of this pickup within its type for the player, starting at 0, "
+        "two pickups can share a second",
+    )
+    game_time_s = Column(pl.Int64, "When the buff was picked up, seconds from match start")
+    value = Column(
+        pl.Float64,
+        "Stat the pickup granted in the statue catalog unit (percent, flat health, "
+        "move speed in engine units per second)",
+    )
 
 
 class Stacks(Table):
@@ -776,6 +809,7 @@ TABLES: dict[str, dict[str, Column]] = {
     "item_events": ItemEvents.spec(),
     "accolades": Accolades.spec(),
     "buffs": Buffs.spec(),
+    "buff_pickups": BuffPickups.spec(),
     "stacks": Stacks.spec(),
     "custom_stats": CustomStats.spec(),
     "damage": Damage.spec(),
@@ -831,6 +865,7 @@ IDENTITY: dict[str, tuple[str, ...]] = {
     "item_events": ("match_id", "account_id", "game_time_s", "item_id"),
     "accolades": ("match_id", "account_id", "accolade_id"),
     "buffs": ("match_id", "account_id", "type"),
+    "buff_pickups": ("match_id", "account_id", "type", "pickup"),
     "stacks": ("match_id", "account_id", "ability_id"),
     "damage": ("match_id", "account_id", "target_player_slot", "source_class", "stat"),
     "damage_sources": (

@@ -188,10 +188,11 @@ def test_cell_formats_one_number_to_a_fixed_width(value, kwargs, text):
 
 
 def test_gained_cell_marks_an_unknown_family_and_an_empty_one():
-    assert render.gained_cell(None, percent=False) == "?"
-    assert render.gained_cell(0, percent=False) == "-"
-    assert render.gained_cell(4.5, percent=True) == "+4.5%"
-    assert render.gained_cell(50, percent=False) == "+50"
+    assert render.gained_cell(None) == "?"
+    assert render.gained_cell(0, suffix="%") == "-"
+    assert render.gained_cell(4.5, suffix="%") == "+4.5%"
+    assert render.gained_cell(50) == "+50"
+    assert render.gained_cell(7.874 / 39.37, suffix=" m/s") == "+0.2 m/s"
 
 
 def test_count_cell_shows_the_share_of_the_base_count():

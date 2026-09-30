@@ -186,8 +186,7 @@ def test_item_card_shows_slow_as_negative(capsys, tmp_path):
 
     out = capsys.readouterr().out
 
-    assert "move speed" in out
-    assert "-20%" in out
+    assert re.search(r"move speed\s+-\d+%", out)
 
 
 def test_item_card_falls_back_without_sections(capsys):

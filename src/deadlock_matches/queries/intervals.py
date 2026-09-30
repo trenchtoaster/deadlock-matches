@@ -7,9 +7,13 @@ from typing import TYPE_CHECKING
 
 import polars as pl
 
-from deadlock_matches.queries.core import player_rows, scan
+from deadlock_matches.queries.core import player_rows, scan, table_exists
 from deadlock_matches.queries.delivery import damage_category, hero_damage, with_delivery
-from deadlock_matches.queries.labels import damage_source_name, with_soul_source_name
+from deadlock_matches.queries.labels import (
+    damage_source_name,
+    with_buff_labels,
+    with_soul_source_name,
+)
 from deadlock_matches.queries.semantic import Dimension, Measure, MetricView, view
 
 if TYPE_CHECKING:
@@ -29,6 +33,17 @@ SOUL_COMPOSITES = {
     "other": ("trophy_collector", "cultist_sacrifice", "assassinate", "goose_egg"),
 }
 
+
+BUFF_INTERVAL_SCHEMA = pl.Schema(
+    {
+        "interval": pl.Int64,
+        "start_s": pl.Int64,
+        "end_s": pl.Int64,
+        "buff": pl.String,
+        "pickups": pl.Int64,
+        "value": pl.Float64,
+    }
+)
 
 COMPARE_STATS = (
     "souls",
@@ -1020,6 +1035,76 @@ def source_totals(
         .agg(pl.col("damage").sum())
         .sort([*keys, "damage"], descending=[False, False, True])
         .select(*keys, "source_name", "delivery", "damage")
+    )
+
+
+def buff_intervals(
+    match_id: int,
+    account_id: int,
+    interval_s: int = 300,
+    parquet_dir: str | Path | None = None,
+) -> pl.DataFrame:
+    """Count the statue buffs one player picked up in each interval, per buff family.
+
+    - reads buff_pickups, so only matches from build 6712 on have rows
+    - every family the player picked up gets every interval up to the match end,
+      with 0 where nothing was picked up, and the last end_s clips to the duration
+    - value sums the recorded per pickup stat in the statue catalog unit, null
+      when any pickup in the cell lacks its stat
+    - an empty frame means the match has no pickup times, not that nothing was picked up
+
+    Args:
+        match_id: Match to split.
+        account_id: Player whose pickups to count.
+        interval_s: Interval length in seconds.
+        parquet_dir: Parquet store to read, the default store when None.
+    """
+    empty = pl.DataFrame(schema=BUFF_INTERVAL_SCHEMA)
+
+    if not table_exists("buff_pickups", parquet_dir):
+        return empty
+
+    duration = (
+        scan("matches", parquet_dir).filter(pl.col("match_id") == match_id).select("duration_s")
+    )
+    pickups = (
+        with_buff_labels(scan("buff_pickups", parquet_dir))
+        .filter(pl.col("match_id") == match_id, pl.col("account_id") == account_id)
+        .select(pl.coalesce("buff", "type").alias("buff"), "game_time_s", "value")
+    )
+    duration, pickups = pl.collect_all([duration, pickups])
+
+    if duration.is_empty() or pickups.is_empty():
+        return empty
+
+    duration_s = int(duration.item())
+    counts = (
+        pickups.with_columns(_bucket("game_time_s", interval_s))
+        .group_by("buff", "interval")
+        .agg(
+            pl.len().cast(pl.Int64).alias("pickups"),
+            pl.when(pl.col("value").null_count() == 0).then(pl.col("value").sum()).alias("value"),
+        )
+    )
+
+    n = max((duration_s - 1) // interval_s, int(counts.select(pl.col("interval").max()).item())) + 1
+    intervals = pl.DataFrame({"interval": range(n)}, schema={"interval": pl.Int64})
+    grid = counts.select("buff").unique().join(intervals, how="cross")
+
+    return (
+        grid.join(counts, on=["buff", "interval"], how="left")
+        .with_columns(
+            pl.col("pickups").fill_null(0),
+            pl.when(pl.col("pickups").is_null())
+            .then(0.0)
+            .otherwise(pl.col("value"))
+            .alias("value"),
+            (pl.col("interval") * interval_s).alias("start_s"),
+            ((pl.col("interval") + 1) * interval_s).clip(upper_bound=duration_s).alias("end_s"),
+        )
+        .sort("buff", "interval")
+        .select(*BUFF_INTERVAL_SCHEMA)
+        .cast(BUFF_INTERVAL_SCHEMA)
     )
 
 

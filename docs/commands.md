@@ -396,6 +396,26 @@ Blue
   Gained uses the per statue values from the patch the match was played on.
 ```
 
+- matches from the late September 2026 update on record when each statue was picked up and what it granted. Gained then sums the recorded values, and a pickup table follows `--interval`. The same update added the bullet resist, spirit resist, ability range, and move speed statues. Older matches print the table above with no pickup times
+
+```
+  Statue pickups, 10-minute intervals
+  Buff                   0-10m  10-20m  20-30m  30-31m   Total
+  max health                 0       3       3       0       6
+  spirit power               0       2       1       0       3
+  weapon damage              1       3       0       0       4
+  fire rate                  0       1       2       0       3
+  ammo                       0       0       3       0       3
+  cooldown reduction         1       2       1       0       4
+  bullet resist              1       2       1       0       4
+  spirit resist              1       1       2       0       4
+  ability range              0       1       1       0       2
+  move speed                 0       1       0       0       1
+  Total                      4      16      14       0      34
+
+  Gained sums the stat each pickup recorded.
+```
+
 #### `--stacks`: stack counters (Sticky Bomb, Trophy Collector, etc)
 
 - the stack counts for every player in the match, from the abilities and items that track stacks

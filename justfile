@@ -56,6 +56,13 @@ sweep *args: install-uv
     @test -f tests/cli_sweep.sh || (echo "tests/cli_sweep.sh is a local maintainer script, skip this recipe" && exit 1)
     bash tests/cli_sweep.sh {{args}}
 
+protos: install-uv
+    @echo "-----------------------------------"
+    @echo "- Compiling the vendored protos -"
+    @echo "-----------------------------------"
+    uv run python -m grpc_tools.protoc -I protos --python_out=src/deadlock_matches/gen --pyi_out=src/deadlock_matches/gen citadel_gcmessages_common.proto base_gcmessages.proto gcsdk_gcmessages.proto steammessages.proto valveextensions.proto steammessages_steamlearn.steamworkssdk.proto steammessages_unified_base.steamworkssdk.proto
+    @grep -h "Protobuf Python Version" src/deadlock_matches/gen/*_pb2.py | sort -u
+
 check: lint test
 
 clean:

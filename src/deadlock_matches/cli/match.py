@@ -994,13 +994,21 @@ def accolades_report(row: dict[str, Any], args: argparse.Namespace) -> None:
 
 
 BUFF_LABELS = {
-    "hp": ("max health", False),
-    "spirit": ("spirit power", False),
-    "wp": ("weapon damage", True),
-    "firerate": ("fire rate", True),
-    "ammo": ("ammo", True),
-    "cd": ("cooldown reduction", True),
+    "hp": ("max health", ""),
+    "spirit": ("spirit power", ""),
+    "wp": ("weapon damage", "%"),
+    "firerate": ("fire rate", "%"),
+    "ammo": ("ammo", "%"),
+    "cd": ("cooldown reduction", "%"),
+    "bulletresist": ("bullet resist", "%"),
+    "spiritresist": ("spirit resist", "%"),
+    "range": ("ability range", "%"),
+    "movespeed": ("move speed", " m/s"),
 }
+
+LATER_BUFFS = {"bulletresist", "spiritresist", "range", "movespeed"}
+
+BUFF_SCALES = {"movespeed": 1 / UNITS_PER_METER}
 
 TEMP_BUFF_LABELS = {
     "gun": "weapon",
@@ -1015,9 +1023,10 @@ SINNER_JACKPOT_ACCOLADE = 14
 def buffs_report(row: dict[str, Any], args: argparse.Namespace) -> None:
     """Print the buffs one player ended the match with.
 
-    - permanent buffs per family and level, valued against the committed statue
-      history era live at match time, so old matches use the values their patch granted
+    - permanent buffs per family and level, valued with the recorded per pickup
+      stat when the match carries one, else the statue history era live at match time
     - the temporary bridge buffs the player claimed
+    - the statue pickups per interval, for matches that record pickup times
     - a sources breakdown from the pickup counters, sinner jackpots, and mid boss kills
     """
     if not queries.table_exists("buffs", args.parquet):
@@ -1039,6 +1048,7 @@ def buffs_report(row: dict[str, Any], args: argparse.Namespace) -> None:
         return
 
     catalog = statues.statue_map_asof(row["start_time"])
+    recorded = _recorded_gains(row, args)
     counts: dict[str, dict[int, int]] = {}
     gained: dict[str, float] = {}
     unknown: set[str] = set()
@@ -1048,21 +1058,27 @@ def buffs_report(row: dict[str, Any], args: argparse.Namespace) -> None:
         counts.setdefault(buff, {})[r["level"] or 0] = r["count"]
         entry = catalog.get(r["type"])
 
-        if entry is not None and entry.value is not None:
+        if r["type"] in recorded:
+            gained[buff] = gained.get(buff, 0) + recorded[r["type"]]
+        elif entry is not None and entry.value is not None:
             gained[buff] = gained.get(buff, 0) + r["count"] * entry.value
         elif r["count"]:
             unknown.add(buff)
 
-    labels = {**BUFF_LABELS, **{b: (b, False) for b in counts if b not in BUFF_LABELS}}
+    era = {statue.buff for statue in catalog.values()}
+    absent = {b for b in LATER_BUFFS if b not in era and b not in counts}
+    known = {b: entry for b, entry in BUFF_LABELS.items() if b not in absent}
+    labels = {**known, **{b: (b, "") for b in counts if b not in BUFF_LABELS}}
     width = max(len(label) for label, _ in labels.values()) + 2
 
     print("\n  Permanent buffs")
     print(f"  {'Buff':<{width}} {'lv1':>5} {'lv2':>5} {'lv3':>5} {'Total':>6} {'Gained':>10}")
 
-    for buff, (label, percent) in labels.items():
+    for buff, (label, suffix) in labels.items():
         levels = counts.get(buff, {})
         total = sum(levels.values())
-        cell = render.gained_cell(None if buff in unknown else gained.get(buff, 0), percent=percent)
+        amount = None if buff in unknown else gained.get(buff, 0) * BUFF_SCALES.get(buff, 1)
+        cell = render.gained_cell(amount, suffix=suffix)
 
         print(
             f"  {label:<{width}} {levels.get(1, 0):>5} {levels.get(2, 0):>5} "
@@ -1078,9 +1094,82 @@ def buffs_report(row: dict[str, Any], args: argparse.Namespace) -> None:
             label = TEMP_BUFF_LABELS.get(r["buff"], r["buff"] or r["type"])
             print(f"  {label:<{width}} {r['count']:>5}")
 
+    _buff_timeline(row, args, labels)
     _buff_sources(row, args, sum(sum(lv.values()) for lv in counts.values()), width)
 
-    print("\n  Gained uses the per statue values from the patch the match was played on.")
+    if recorded:
+        print("\n  Gained sums the stat each pickup recorded.")
+    else:
+        print("\n  Gained uses the per statue values from the patch the match was played on.")
+
+
+def _recorded_gains(row: dict[str, Any], args: argparse.Namespace) -> dict[str, float]:
+    """Sum the recorded pickup stat per buff type, empty for matches without pickup times.
+
+    - a type with any pickup missing its stat is left out, so it falls back to the catalog
+
+    Args:
+        row: The resolved match row for the player.
+        args: Parsed CLI arguments, for the parquet store.
+    """
+    if not queries.table_exists("buff_pickups", args.parquet):
+        return {}
+
+    df = (
+        queries.scan("buff_pickups", args.parquet)
+        .filter(
+            pl.col("match_id") == row["match_id"],
+            pl.col("account_id") == row["account_id"],
+        )
+        .group_by("type")
+        .agg(pl.col("value").sum(), pl.col("value").null_count().alias("missing"))
+        .filter(pl.col("missing") == 0)
+        .collect()
+    )
+
+    return dict(zip(df["type"], df["value"], strict=True))
+
+
+def _buff_timeline(
+    row: dict[str, Any], args: argparse.Namespace, labels: dict[str, tuple[str, str]]
+) -> None:
+    """Print the statue pickups per interval, when the match records pickup times.
+
+    - one row per buff family in the permanent table order, one column per interval
+    - cells are pickup counts, Total matches the permanent table Total
+
+    Args:
+        row: The resolved match row for the player.
+        args: Parsed CLI arguments, for the interval and the parquet store.
+        labels: Buff family to display label and unit suffix, in table order.
+    """
+    df = queries.buff_intervals(
+        row["match_id"], row["account_id"], args.interval * 60, args.parquet
+    )
+
+    if df.is_empty():
+        return
+
+    spans = df.select("start_s", "end_s").unique().sort("start_s")
+    order = [*labels, *sorted(set(df["buff"]) - set(labels))]
+    width = max(len(labels.get(b, (b, ""))[0]) for b in order) + 2
+    header = "".join(f"{_span(r):>8}" for r in spans.iter_rows(named=True))
+    zeros = [0] * spans.height
+
+    print(f"\n  Statue pickups, {args.interval}-minute intervals")
+    print(f"  {'Buff':<{width}}{header}{'Total':>8}")
+
+    for buff in order:
+        counts = df.filter(pl.col("buff") == buff).sort("start_s")["pickups"].to_list() or zeros
+        cells = "".join(f"{n:>8}" for n in counts)
+        label = labels.get(buff, (buff, ""))[0]
+
+        print(f"  {label:<{width}}{cells}{sum(counts):>8}")
+
+    sums = df.group_by("start_s").agg(pl.col("pickups").sum()).sort("start_s")
+    cells = "".join(f"{n:>8}" for n in sums["pickups"])
+
+    print(f"  {'Total':<{width}}{cells}{int(df['pickups'].sum()):>8}")
 
 
 def _buff_sources(row: dict[str, Any], args: argparse.Namespace, total: int, width: int) -> None:
