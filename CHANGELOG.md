@@ -1,6 +1,13 @@
 # Changelog
 
 All notable changes to this project are documented here.
+## [0.15.1] - 2026-10-22
+
+### Fixed
+
+- Read the two damage stat types from the 2026-10-20 update ([56bb399](https://github.com/trenchtoaster/deadlock-matches/commit/56bb399a28c6c152002de7ed7b571857e1a675ff))
+
+
 ## [0.15.0] - 2026-09-30
 
 ### Added
