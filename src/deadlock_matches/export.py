@@ -536,6 +536,15 @@ def build_tables(
             )
 
         details = info.damage_matrix.source_details
+
+        if len(details.stat_type) != len(details.source_name):
+            msg = (
+                f"match {info.match_id} has {len(details.source_name)} damage sources but "
+                f"{len(details.stat_type)} stat types, so it uses a stat type the protos do not "
+                "know. Refresh the protos (protos/README.md) and reinstall."
+            )
+            raise ValueError(msg)
+
         sample_times = list(info.damage_matrix.sample_time_s)
         cumulative: dict[tuple[int, int, bool], dict[int, int]] = {}
         per_target: dict[tuple[int, int, int], dict[int, int]] = {}

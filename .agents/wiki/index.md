@@ -17,7 +17,7 @@ Patterns are the verified traps in the data, one page per table or subsystem. Ea
 - [Stats snapshots](patterns/stats.md): `max()` over the snapshots is wrong, because net worth and the power columns fall on a death loss or a sale. Snapshot kills and deaths drift from the scoreboard through the Rejuvenator, and samples land every 3 minutes then every 5. Take the last sample through `stat_snapshots`, `final_stats`, and `match_intervals`.
 - [Soul sources](patterns/soul-sources.md): the in-game figure is `souls + souls_orbs`, because the orb portion is a separate deniable quantity. Source 7 is team-shared deny income, not personal denies, and gross souls are not net worth. `soul_source_games` and the soul helpers apply the rules.
 - [Item events](patterns/item-events.md): a `flags=1` row is a component consumed by an upgrade, not a sell, and prices resolve as of match time from the dated snapshots. No 4800 tier exists. A corrupted buy looks like a normal buy, because no wire field marks it. `item_buys`, `item_games`, and `item_events_effective` apply the rules.
-- [Damage tables](patterns/damage.md): `damage_sources` and `damage_targets` are cumulative timelines, so a plain sum overcounts about 5 times. `damage` is the totals table, total rows and detail rows double count together, and a null target is farm. `damage_source_games`, `hero_damage_games`, `source_totals`, and the interval helpers apply the rules.
+- [Damage tables](patterns/damage.md): `damage_sources` and `damage_targets` are cumulative timelines, so a plain sum overcounts about 5 times. `damage` is the totals table, total rows and detail rows double count together, a null target is farm, and two stat types arrived on 2026-10-20. `damage_source_games`, `hero_damage_games`, `source_totals`, and the interval helpers apply the rules.
 - [Objectives and mid boss](patterns/objectives-and-mid-boss.md): the mitigation fields are zero on every objective, and the protobuf records one claiming team per boss kill. No row records a Rift win or an Urn delivery. Both come from treasure gains and decode only on the 2026-06-30 build. `with_objective_labels` and `deadlock match --teams` apply the rules.
 - [Movement and deaths](patterns/movement-and-deaths.md): the movement track is left-aligned and quantized to about 200 units, unlike the damage matrix, and profiles vary by hero. `movement` is opt-out while `movement_intervals` is always built, and `deaths` is the record that matches the scoreboard. `movement_games`, `movement_profile`, and `death_context` apply the rules.
 - [Custom stats](patterns/custom-stats.md): counter ids are registered per match, so a name lands at different ids in different games. The `Bullet Stats` values are percents and cannot be diffed, parries include Counterspell blocks, and incoming fire has no per-enemy split. Statue pickup times exist only from build 6712, so an empty timeline is not zero pickups and `buffs.count` stays the total. `combat_games`, `queries.custom_stats`, `buff_intervals`, and `deadlock match --buffs` apply the rules.
@@ -29,11 +29,19 @@ Patterns are the verified traps in the data, one page per table or subsystem. Ea
 
 Contracts describe a stable interface. Read the matching page before you touch the code it describes.
 
+- [Commands](contracts/commands.md): every CLI command and the question it answers, the rules that `--help` does not carry, and the `match` view flags.
 - [Parquet tables](contracts/tables.md): the table list, the hive layout, read-time labels, the schema drift and rebuild rules, and the engine and ordering rules.
 - [Storage](contracts/storage.md): where the config, the archive, the parquet stores, the API caches, and the Steam cache live.
 - [Match metadata](contracts/match-metadata.md): the protobuf shape, which wire field feeds which table, alignment, and ids.
 - [Queries](contracts/queries.md): the public surface of the `queries` package. The one catalog to keep current when a helper changes.
 - [Module map](contracts/module-map.md): what each module under `src/deadlock_matches/` owns.
+
+## Guides
+
+Guides hold the procedures that the skill body routes to.
+
+- [Config and accounts](guides/config.md): how `[accounts]`, `--account`, and the `[players.<Hero>]` pool decide whose games a command reads.
+- [Analysis](guides/analysis.md): ad-hoc polars through `queries.summarize()`, the four caveats that bite most, the scratch-script rules, the results table, and the data paths.
 
 ## Maintenance
 

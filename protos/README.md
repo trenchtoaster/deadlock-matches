@@ -9,3 +9,5 @@ To refresh it, fetch each file of the compile closure from `https://raw.githubus
 The recipe uses grpcio-tools from the dev group. It prints the `Protobuf Python Version` the gencode stamps, and that version must not be newer than the `protobuf` floor in `pyproject.toml`, because the gencode checks the runtime version on import. Raise the floor when the generator moves past it.
 
 Valve renames enum values now and then (`k_ECitadelRankedType_*` became `k_eCitadelRankedType_*`). After a refresh, grep the source for every enum prefix it strips, since a stale prefix only leaves the label unstripped and raises nothing.
+
+These protos are proto2, so their enums are closed. A number that an enum does not list is dropped from the parsed field, and a packed repeated enum comes back shorter than its sibling fields. When an export raises "uses a stat type the protos do not know", refresh the protos.

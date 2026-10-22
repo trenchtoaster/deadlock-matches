@@ -2,7 +2,7 @@
 status: active
 scope: the `damage`, `damage_sources`, and `damage_targets` tables
 first_seen: 2026-07-08
-last_confirmed: 2026-08-10
+last_confirmed: 2026-10-23
 ---
 
 # Damage tables
@@ -38,6 +38,12 @@ First seen 2026-07-08.
 Always filter `target_account_id.is_not_null()` for hero damage. A null target is a non-player (creeps and objectives, raw slot 0). Without the filter, farm damage inflates every source. Creep headshots once made gun-crit look 9 times larger than body damage. Hero-only detail sums reconcile with snapshot `player_damage`.
 
 On `damage_sources` the same split is the `vs_heroes` column.
+
+## Stat types added in October 2026
+
+First seen 2026-10-23.
+
+Matches from 2026-10-20 carry two new `stat` values, `crowd_control` (6) and `mitigated_by_source` (7). Each adds rows next to the old figures, so a sum without a `stat` filter now counts them too. Every helper here already filters on `stat`. What `crowd_control` measures is not yet verified.
 
 ## Healing rows
 

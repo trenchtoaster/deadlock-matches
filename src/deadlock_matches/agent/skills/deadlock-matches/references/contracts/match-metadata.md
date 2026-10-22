@@ -31,6 +31,14 @@ Valve renames enum values without changing their numbers. `k_ECitadelRankedType_
 
 Recheck the prefixes after every refresh.
 
+## Closed enums drop new values
+
+First seen 2026-10-23.
+
+The protos are proto2, so every enum is closed. The parser moves a number the enum does not list into the unknown fields, and a packed repeated enum comes back shorter. `source_details.stat_type` lost the new values 6 and 7 that way, fell out of line with `source_name`, and crashed `sync` with an `IndexError`. `build_tables` now raises a `ValueError` that names the match when the two lengths differ. The fix is a proto refresh.
+
+On 2026-10-23 only the two `EStatType` values were added to the vendored file. The upstream copy also adds `boxed_type` options, new imports, and lobby fields. Those were left out because no match table reads them.
+
 ## Build 6712 fields
 
 First seen 2026-10-01.

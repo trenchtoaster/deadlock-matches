@@ -1,20 +1,21 @@
 # Purpose
 
-Each row maps a part of `SKILL.md` to the knowledge that motivates it. A rule with no wiki page rests on the CLI help, the code, or a session lesson, and the row says which. Update a row when its rule changes. Delete the rule when its source page drops the trap.
+Each row maps a part of `SKILL.md`, or of a page it moved to, to the knowledge that motivates it. A rule with no wiki page rests on the CLI help, the code, or a session lesson, and the row says which. Update a row when its rule changes. Delete the rule when its source page drops the trap.
 
 ## Sections
 
 | Skill section | Source |
 | --- | --- |
-| Invoking the CLI | `pyproject.toml` scripts entry and the `uv tool install` setup |
-| User config | [Storage](references/contracts/storage.md) and `config.py` |
-| Common questions, the table | `deadlock <command> --help` |
-| The `match` view flags | The pattern pages each bullet links |
-| Aggregate questions | [Queries](references/contracts/queries.md) and [Parquet tables](references/contracts/tables.md) |
-| Caveats | [Soul sources](references/patterns/soul-sources.md), [Damage tables](references/patterns/damage.md), [Stats snapshots](references/patterns/stats.md) |
-| Ad-hoc rules | Session lessons from 2026-07. The rule text records them |
-| Presenting results | Session lessons, no page |
-| Where the data is | [Storage](references/contracts/storage.md) and [Steam cache and API](references/patterns/steam-cache.md) |
+| Run the CLI | `pyproject.toml` scripts entry, `deadlock <command> --help`, and [Commands](references/contracts/commands.md) |
+| The missing match line | [Steam cache and API](references/patterns/steam-cache.md) |
+| Config | [Config and accounts](references/guides/config.md), [Storage](references/contracts/storage.md), and `config.py` |
+| Custom analysis | [Queries](references/contracts/queries.md), [Soul sources](references/patterns/soul-sources.md), [Damage tables](references/patterns/damage.md), and [Stats snapshots](references/patterns/stats.md) |
+| Present results | Session lessons, no page |
+| Extend the code | [Module map](references/contracts/module-map.md) and the wiki maintenance rules |
+
+## Moved sections
+
+The command table, the command rules, and the `match` view flags live in [Commands](references/contracts/commands.md). The scratch-script rules and the data paths live in [Analysis](references/guides/analysis.md). The table below still maps each command rule to its source.
 
 ## Command rules
 

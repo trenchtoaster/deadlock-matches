@@ -1,6 +1,6 @@
 # Agent notes
 
-The agent skill lives in `.agents/skills/deadlock-matches/SKILL.md`. It holds the CLI workflow, the config handling, and the query rules. Read it before you answer a match question or extend the tooling. `.claude/skills/deadlock-matches` is a symlink to the same directory, so Claude Code lists the skill by itself.
+The agent skill lives in `.agents/skills/deadlock-matches/SKILL.md`. It holds the core rules and routes to the CLI workflow, the config handling, and the query rules in the wiki. Read it before you answer a match question or extend the tooling. `.claude/skills/deadlock-matches` is a symlink to the same directory, so Claude Code lists the skill by itself.
 
 Project knowledge lives in `.agents/wiki/`. Start at `.agents/wiki/index.md`. The `patterns/` pages hold the dated data traps, one page per table. The `contracts/` pages hold the table layout, the storage paths, the protobuf shape, the `queries` catalog, and the module map. The skill's `references/` link points at the wiki, so a page path in the skill resolves in a source checkout and in an installed copy alike.
 

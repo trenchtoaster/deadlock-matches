@@ -828,12 +828,16 @@ class CMsgMatchPlayerDamageMatrix(_message.Message):
         k_eType_Mitigated: _ClassVar[CMsgMatchPlayerDamageMatrix.EStatType]
         k_eType_LethalDamage: _ClassVar[CMsgMatchPlayerDamageMatrix.EStatType]
         k_eType_Regen: _ClassVar[CMsgMatchPlayerDamageMatrix.EStatType]
+        k_eType_CrowdControl: _ClassVar[CMsgMatchPlayerDamageMatrix.EStatType]
+        k_eType_MitigatedBySource: _ClassVar[CMsgMatchPlayerDamageMatrix.EStatType]
     k_eType_Damage: CMsgMatchPlayerDamageMatrix.EStatType
     k_eType_Healing: CMsgMatchPlayerDamageMatrix.EStatType
     k_eType_HealPrevented: CMsgMatchPlayerDamageMatrix.EStatType
     k_eType_Mitigated: CMsgMatchPlayerDamageMatrix.EStatType
     k_eType_LethalDamage: CMsgMatchPlayerDamageMatrix.EStatType
     k_eType_Regen: CMsgMatchPlayerDamageMatrix.EStatType
+    k_eType_CrowdControl: CMsgMatchPlayerDamageMatrix.EStatType
+    k_eType_MitigatedBySource: CMsgMatchPlayerDamageMatrix.EStatType
     class DamageToPlayer(_message.Message):
         __slots__ = ("target_player_slot", "damage")
         TARGET_PLAYER_SLOT_FIELD_NUMBER: _ClassVar[int]

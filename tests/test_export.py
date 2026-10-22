@@ -296,6 +296,34 @@ def test_damage_sources_right_aligns_short_arrays():
     assert hero_rows.get_column("damage").to_list() == [100, 879]
 
 
+def test_damage_new_stat_types_have_names():
+    info = build_export_match()
+    details = info.damage_matrix.source_details
+    details.stat_type[0] = pb.CMsgMatchPlayerDamageMatrix.k_eType_CrowdControl
+
+    damage = export.build_tables([info])["damage"]
+
+    assert "crowd_control" in damage.get_column("stat").to_list()
+    assert export.STAT_NAMES[7] == "mitigated_by_source"
+
+
+def test_damage_unknown_stat_type_raises_clear_error():
+    info = build_export_match()
+    details = info.damage_matrix.source_details
+    names = list(details.source_name)
+    packed = bytes([0] * (len(names) - 1) + [99])
+    raw = bytes([0x0A, len(packed)]) + packed
+    for name in names:
+        raw += bytes([0x12, len(name)]) + name.encode()
+
+    details.Clear()
+    details.MergeFromString(raw)
+
+    assert len(details.stat_type) == len(names) - 1
+    with pytest.raises(ValueError, match="Refresh the protos"):
+        export.build_tables([info])
+
+
 def test_damage_targets_keeps_per_enemy_samples():
     tables = export.build_tables([build_export_match()])
     dt_rows = tables["damage_targets"]
