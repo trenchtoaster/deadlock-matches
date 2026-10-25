@@ -3,7 +3,6 @@ import datetime as dt
 import re
 import unicodedata
 import zoneinfo
-from pathlib import Path
 
 import polars as pl
 import pytest
@@ -854,9 +853,7 @@ def test_skill_command_prints_agent_install_path(agent, directory, capsys, tmp_p
 
     main(["skill", "path", "--agent", agent], config=tmp_path / "none.json")
 
-    assert capsys.readouterr().out.strip() == str(
-        Path("~") / directory / "skills" / "deadlock-matches" / "SKILL.md"
-    )
+    assert capsys.readouterr().out.strip() == f"~/{directory}/skills/deadlock-matches/SKILL.md"
 
 
 def test_skill_command_uses_codex_home(capsys, tmp_path, monkeypatch):
@@ -874,9 +871,7 @@ def test_skill_command_empty_codex_home_falls_back(capsys, tmp_path, monkeypatch
 
     main(["skill", "path", "--agent", "codex"], config=tmp_path / "none.json")
 
-    assert capsys.readouterr().out.strip() == str(
-        Path("~") / ".codex" / "skills" / "deadlock-matches" / "SKILL.md"
-    )
+    assert capsys.readouterr().out.strip() == "~/.codex/skills/deadlock-matches/SKILL.md"
 
 
 def test_skill_command_installs_bundled_agent_skill(capsys, tmp_path):
