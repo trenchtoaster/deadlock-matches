@@ -138,19 +138,18 @@ SOUL_SHARES = (
 )
 
 
-def _source_rows(sources: pl.DataFrame, width: int, dwidth: int) -> None:
+def _source_rows(sources: pl.DataFrame, width: int) -> None:
     """Print the per source rows under their column header."""
     print(
-        f"\n  {'Games':>5}  {'Source':<{width}}{'Delivery':<{dwidth}}"
+        f"\n  {'Games':>5}  {'Source':<{width}}"
         f"{'Total':>12}{'/game':>9}{'/min':>9}{'/min owned':>12}{'/1k souls':>11}{'%':>7}"
     )
 
     for r in sources.iter_rows(named=True):
-        label = DELIVERY_LABELS.get(r["delivery"], r["delivery"])
         owned = f"{r['per_min_owned']:,.1f}" if r["per_min_owned"] is not None else "-"
         per_1k = f"{r['per_1k']:,.1f}" if r["per_1k"] is not None else "-"
         print(
-            f"  {r['games']:>5}  {r['source_name']:<{width}}{label:<{dwidth}}"
+            f"  {r['games']:>5}  {r['source_name']:<{width}}"
             f"{r['total']:>12,}{r['total'] / r['games']:>9,.0f}{r['per_min']:>9,.1f}"
             f"{owned:>12}{per_1k:>11}{r['percent']:>6.1f}%"
         )
@@ -173,7 +172,6 @@ def _source_tables(
         names = pl.concat([names, prevented.get_column("source_name")])
 
     width = max(max(len(n) for n in names), 14) + 2
-    dwidth = max(len(label) for label in DELIVERY_LABELS.values()) + 2
 
     print(f"  {'Delivery':<{width}}{'Total':>12}{'/game':>9}{'/min':>9}{'%':>7}")
 
@@ -190,11 +188,11 @@ def _source_tables(
 
     print(f"  {'Total':<{width}}{total:>12,}{total / n_games:>9,.0f}{total / minutes:>9,.1f}")
 
-    _source_rows(sources, width, dwidth)
+    _source_rows(sources, width)
 
     if prevented is not None:
         print("\nHealing prevented:")
-        _source_rows(prevented, width, dwidth)
+        _source_rows(prevented, width)
 
     print(
         "\n  /game divides a delivery row by every game and a source row by the games"
