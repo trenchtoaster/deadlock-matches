@@ -135,11 +135,20 @@ def current(now: float | None = None) -> Season | None:
     return seasons[0] if seasons else None
 
 
+def _short_name(name: str) -> str:
+    """Reduce a season name to the form a flag is typed in, like beta1.
+
+    Args:
+        name: A season name or a typed --season value.
+    """
+    return re.sub(r"season|[^a-z0-9]", "", name.lower())
+
+
 def pick(text: str | None) -> Season | None:
     """Turn a --season value into a season, with None standing for every season.
 
     Args:
-        text: current, all, pre, or a season number.
+        text: current, all, pre, a season number, or a name like beta1.
     """
     word = (text or CURRENT).strip().lower()
 
@@ -154,9 +163,10 @@ def pick(text: str | None) -> Season | None:
 
     seasons = known()
     wanted = int(word) if word.isdigit() else None
+    short = _short_name(word)
 
     for season in seasons:
-        if season.number == wanted:
+        if season.number == wanted or _short_name(season.name) == short:
             return season
 
     numbers = ", ".join(str(s.number) for s in seasons)

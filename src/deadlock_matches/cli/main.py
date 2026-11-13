@@ -36,7 +36,8 @@ RANKED_PLAY_MODE = queries.RANKED_PLAY
 STANDARD_MODE = (extract.MATCH_MODE_STANDARD, extract.GAME_MODE_NORMAL, False)
 ALL_MODE = queries.ALL_PLAY
 SEASON_HELP = (
-    "which Ranked season to read: current (the default), a season number like 1, "
+    "which Ranked season to read: current (the default), a season number like 1 "
+    "or a name like beta1, "
     "pre for the ranked games before Beta Season 1, or all for every season together"
 )
 PLACEMENT_MODE = (extract.MATCH_MODE_PLACEMENT, extract.GAME_MODE_NORMAL, None)

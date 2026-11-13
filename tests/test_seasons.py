@@ -80,6 +80,8 @@ def test_pick_reads_each_season_word(live_seasons, monkeypatch):
     assert seasons.pick("pre") == seasons.PRE_SEASON
     assert seasons.pick("Pre-Season") == seasons.PRE_SEASON
     assert seasons.pick("all") is None
+    assert seasons.pick("beta1") == seasons.known()[0]
+    assert seasons.pick("Beta Season 2") == seasons.known()[1]
 
 
 def test_pick_rejects_an_unknown_season(live_seasons):
