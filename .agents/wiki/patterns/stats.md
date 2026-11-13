@@ -17,7 +17,7 @@ First seen 2026-07-25.
 
 Collapse each match and player to the last sample by `time_stamp_s`. Most columns only climb, so `max()` and `last()` agree on them. `net_worth`, `max_health`, `weapon_power`, and `tech_power` fall after a death loss or a sold item, so their peak is not their final value.
 
-Evidence from 2026-07-26: `players.net_worth` matched `last()` on 61 of the 62 disagreeing player-games and matched `max()` on none.
+On 2026-07-26, `players.net_worth` matched `last()` on 61 of the 62 disagreeing player-games and matched `max()` on none.
 
 Every measure on `stat_snapshots` carries a semiadditive window, so the view collapses each player-game before anything is summed.
 
@@ -25,7 +25,7 @@ Every measure on `stat_snapshots` carries a semiadditive window, so the view col
 
 First seen 2026-07-11.
 
-Sample times are exact and identical in every archived match. Samples land every 3 minutes through 15:00 (180, 360, ..., 900) and every 5 minutes from 20:00 on (1200, 1500, ...). One final off-grid sample lands at match end. `soul_sources` and `custom_stats` ride the same clock. `damage_sources` does not. It has its own per-source clock of about 3 minutes with no late-game switch.
+Sample times are exact and identical in every archived match. Samples land every 3 minutes through 15:00 (180, 360, ..., 900) and every 5 minutes from 20:00 on (1200, 1500, ...). One final off-grid sample lands at match end. `soul_sources` and `custom_stats` ride the same clock. `damage_sources` does not, because it has its own per-source clock of about 3 minutes with no late-game switch.
 
 The two grids share 900, so 5-minute intervals align exactly from 15:00 on. Before that, gains land in the interval that holds the recording sample. The printed 0-5, 5-10, and 10-15 rows really cover 0-3, 3-9, and 9-15. An interval finer than the local cadence forward-fills, so it prints zero-gain rows and then a lump.
 
@@ -51,7 +51,7 @@ Nothing is reversed, so the drift lands on opposite teams. Measured across singl
 
 Counting `deaths` rows by `killer_account_id` matches the scoreboard on 10,313 of 10,332 player-games, so that is the kill source that `match_intervals` uses. The drift is not a post-victory artifact. The final sample lands exactly at match end in 14,760 of 14,760 player-games, so nothing scores after it.
 
-Open residual: the claiming team also runs slightly under on kills (13.1%, mean -0.11). Three explanations are ruled out. It is not post-victory scoring. It is not a winner effect. Claiming and lost reads -0.02 while non-claiming and won reads +0.35, so it tracks the claim and not the result. It is not the revive rolling back the revived player's own counters, because revived and non-revived claiming-team players under-count identically (-0.105 against -0.119). The effect is team level and tracks the Rejuvenator claim. The cause is unknown.
+One residual is open, in that the claiming team also runs slightly under on kills (13.1%, mean -0.11). Three explanations are ruled out. It is not post-victory scoring, and it is not a winner effect, because claiming and lost reads -0.02 while non-claiming and won reads +0.35, so it tracks the claim and not the result. It is also not the revive rolling back the revived player's own counters, because revived and non-revived claiming-team players under-count identically (-0.105 against -0.119). The effect is team level and tracks the Rejuvenator claim, and its cause is unknown.
 
 Recheck when a patch changes the Rejuvenator revive rules.
 
@@ -59,7 +59,7 @@ Recheck when a patch changes the Rejuvenator revive rules.
 
 First seen 2026-07-08.
 
-Snapshot `deaths` also counts Rejuvenator self-revives, which the scoreboard does not. The overcount is 1 to 3 in about 26% of player-games. 93% of the extra ticks follow an own-team Rejuvenator claim, carry no `gold_death_loss`, and have no `death_details` entry. The `deaths` table, exported from `player.death_details`, matches the scoreboard exactly. Use it for the real count.
+Snapshot `deaths` also counts Rejuvenator self-revives, which the scoreboard leaves out. The overcount is 1 to 3 in about 26% of player-games. 93% of the extra ticks follow an own-team Rejuvenator claim, carry no `gold_death_loss`, and have no `death_details` entry. The `deaths` table, exported from `player.death_details`, matches the scoreboard exactly. Use it for the real count.
 
 ## Net worth trails the scoreboard
 

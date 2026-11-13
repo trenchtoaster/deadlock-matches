@@ -31,7 +31,7 @@ Recheck when the asset history gains a new era.
 
 First seen 2026-07-08.
 
-In `player.items`, `flags=1` means the item was consumed as a component of an upgrade. It is not a sell. Cross-check with `Item.components`. Ability upgrades also appear in the items list as if they were items. Filter by cost or known item ids when you read builds.
+In `player.items`, `flags=1` means the item was consumed as a component of an upgrade, not sold. Cross-check with `Item.components`. Ability upgrades also appear in the items list as if they were items. Filter by cost or known item ids when you read builds.
 
 ## Ownership windows
 
@@ -51,7 +51,7 @@ First seen 2026-10-01.
 
 From build 6712 the assets API puts `corrupted_info` on 95 of 250 upgrade records. 49 are tier 3 and 46 are tier 4, and 90 of the 95 are shopable. It holds `property_upgrades` (name, bonus as a string, optional `round_corrupted_bonus`) and `excluded_penalties`. No record carries a corruption price or a corrupted variant id.
 
-The match metadata has no per-purchase corrupted marker. Item `flags` keeps the same 0 and 1 values, and `upgrade_info` is unchanged. The five post-6712 bodies checked on 2026-10-01 show no unknown wire fields on items or on `MatchInfo`. So `item_events` cannot separate a corrupted buy from a normal one, and the era price is the normal shop price. `matches.corrupted_penalty_seed` is an opaque seed and does not mark a buy.
+The match metadata has no per-purchase corrupted marker. Item `flags` keeps the same 0 and 1 values, and `upgrade_info` is unchanged. The five post-6712 bodies checked on 2026-10-01 show no unknown wire fields on items or on `MatchInfo`. `item_events` therefore cannot separate a corrupted buy from a normal one, and the era price is the normal shop price. `matches.corrupted_penalty_seed` is an opaque seed and does not mark a buy.
 
 `_item_snapshot` in `assets/snapshots.py` drops `corrupted_info`, so neither `items.json` nor `item_history` holds it.
 

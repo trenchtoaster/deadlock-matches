@@ -1,6 +1,6 @@
 # Deadlock matches knowledge
 
-This directory is the version-controlled knowledge of the project. It is not specific to one agent. The skill in `.agents/skills/deadlock-matches/` holds the procedures, and its `references/` link points at this directory. An installed user gets a copy of both from `deadlock skill install`, so a page must stand on its own without the repository.
+This directory is the version-controlled knowledge of the project, and no one agent owns it. The skill in `.agents/skills/deadlock-matches/` holds the procedures, and its `references/` link points at this directory. An installed user gets a copy of both from `deadlock skill install`, so a page must stand on its own without the repository.
 
 Use this index for routing and read only the pages you need. The CLI commands and the `queries` helpers already apply every pattern below. Read a pattern page before you hand-write polars against a table that no helper covers. Read a contract page before you change the code it describes.
 
@@ -33,7 +33,7 @@ Contracts describe a stable interface. Read the matching page before you touch t
 - [Parquet tables](contracts/tables.md): the table list, the hive layout, read-time labels, the schema drift and rebuild rules, and the engine and ordering rules.
 - [Storage](contracts/storage.md): where the config, the archive, the parquet stores, the API caches, and the Steam cache live.
 - [Match metadata](contracts/match-metadata.md): the protobuf shape, which wire field feeds which table, alignment, and ids.
-- [Queries](contracts/queries.md): the public surface of the `queries` package. The one catalog to keep current when a helper changes.
+- [Queries](contracts/queries.md): the public surface of the `queries` package, and the one catalog to keep current when a helper changes.
 - [Module map](contracts/module-map.md): what each module under `src/deadlock_matches/` owns.
 
 ## Guides

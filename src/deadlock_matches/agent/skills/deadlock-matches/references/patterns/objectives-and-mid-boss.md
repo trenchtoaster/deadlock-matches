@@ -21,9 +21,9 @@ First seen 2026-07-08.
 
 First seen 2026-07-11.
 
-`player_damage` is total hero damage, gun and spirit combined. `player_spirit_damage` is the spirit portion, a subset that never exceeds it. Verified across the whole archive. Both are per objective and summed over all attackers. No per-player split exists in the metadata.
+`player_damage` is total hero damage, gun and spirit combined. `player_spirit_damage` is the spirit portion, a subset that never exceeds it, verified across the whole archive. Both are per objective and summed over all attackers. No per-player split exists in the metadata.
 
-The proto fields `player_damage_mitigated` and `creep_damage_mitigated` are zero on every objective ever checked. They are dead fields. Do not hunt for them.
+The proto fields `player_damage_mitigated` and `creep_damage_mitigated` are zero on every objective ever checked. They are dead fields, so do not hunt for them.
 
 ## Only one claiming team per boss kill
 

@@ -9,7 +9,7 @@ last_confirmed: 2026-09-06
 
 ## Why this page exists
 
-`matches` and `players` are the two tables that every own-game view joins. The fields below look simple and are not. Each entry names the view or helper that already applies the rule. Read the entry only when you hand-write polars against the raw table.
+`matches` and `players` are the two tables that every own-game view joins. The fields below are harder to read than they look. Each entry names the view or helper that already applies the rule. Read the entry only when you hand-write polars against the raw table.
 
 ## Two mode enums, both filtered
 
@@ -87,7 +87,7 @@ First seen 2026-07-11.
 
 Valve removed the field from the metadata on 2026-03-12, so it is null on everything after. deadlock-api also has null for every recent match. Older archived matches keep it as an unknown wire field that `extract.player_party` recovers. The API json path (`from_api_json`) drops unknown fields, so a match backfilled from the API is null regardless of age.
 
-Consequence for Ranked: the season rule about solo or duo queue lives only in the season asset. Party size is not checkable from the tables and no report may claim it.
+For Ranked, the season rule about solo or duo queue therefore lives only in the season asset. Party size is not checkable from the tables and no report may claim it.
 
 ## Abandons and reconnects
 

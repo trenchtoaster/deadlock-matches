@@ -31,6 +31,6 @@ Data and cache directories come from `paths.py`: `~/.local/share` and `~/.cache`
 
 ## Local Steam accounts
 
-`deadlock accounts` lists the Steam accounts on this PC that ran Deadlock. The `userdata/` folder names are Steam32 ids. The account and profile names come from `loginusers.vdf`. The archived game count comes with the first and last game day. It prints a paste-ready `[accounts]` block with neutral main and altN names. `extract.steam_accounts()` is the underlying reader.
+`deadlock accounts` lists the Steam accounts on this PC that ran Deadlock. Each row carries the Steam32 id from its `userdata/` folder name, the account and profile names from `loginusers.vdf`, and the archived game count with the first and last game day. It prints a paste-ready `[accounts]` block with neutral main and altN names. `extract.steam_accounts()` is the underlying reader.
 
 The suggested names are deliberately not the Steam account names. The Steam account names are half of the login credentials, and config names print in report headers. In the output, "Account name" is the private login and "Profile name" is the public persona, which are Steam's own terms.

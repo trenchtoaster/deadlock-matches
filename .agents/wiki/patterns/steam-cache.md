@@ -23,11 +23,11 @@ Recheck when a fresh entry fails to decompress.
 
 First seen 2026-07-08.
 
-The cache only holds matches that this client downloaded. The httpcache caps at 10,000 entries shared with all Steam HTTP traffic. Entries carry max-age of one year, so nothing times out, and re-viewing a match refreshes its slot. Measured 2026-07-08: a days-old match that was never reopened was evicted while a months-old one survived.
+The cache only holds matches that this client downloaded. The httpcache caps at 10,000 entries shared with all Steam HTTP traffic. Entries carry max-age of one year, so nothing times out, and re-viewing a match refreshes its slot. A measurement on 2026-07-08 found that a days-old match that was never reopened was evicted while a months-old one survived.
 
 A match is cached by viewing it in game (Escape, then Account in the top right, then click the game in match history). Playing alone does not cache it. If a recent match does not appear, tell the user to open it in match history and rerun.
 
-Valve's replay servers still serve evicted `.meta.bz2` files months later, over plain HTTP only. HTTPS fails.
+Valve's replay servers still serve evicted `.meta.bz2` files months later, over plain HTTP only, and HTTPS fails.
 
 ## The archive is the only irreplaceable data
 

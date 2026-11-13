@@ -23,7 +23,7 @@ First seen 2026-07-08.
 
 Every player's per-second track comes from `match_info.match_paths`. `x` and `y` are world units. `health_percent` runs 0 to 100 and is 0 while dead. `combat_type` is out, player, enemy_npc, or neutral. `move_type` is normal, ability, ability_debuff, ground_dash, slide, rope_climbing, ziplining, in_air, or air_dash.
 
-The track is left-aligned, unlike the damage matrix. The sample index is the game second. Verified against death positions: the median error is about 209 units at offset 0 and about 8,000 one second off. Trailing samples past `duration_s` are end-screen noise and are dropped at export.
+The track is left-aligned, unlike the damage matrix. The sample index is the game second. Death positions verify the alignment, with a median error of about 209 units at offset 0 and about 8,000 one second off. Trailing samples past `duration_s` are end-screen noise and are dropped at export.
 
 Positions are quantized to a per-player 14-bit bounding box, so there is about 200 units of jitter, and there is no z. Velocity is the distance between consecutive seconds. Clamp respawn and zipline teleport spikes before averaging.
 
@@ -49,4 +49,4 @@ First seen 2026-07-08.
 
 `deaths` holds one row per death from `player.death_details`: `game_time_s`, `time_to_kill_s`, `death_duration_s` (the respawn timer), `killer_account_id` (null for a non-player), and the death and killer `x`, `y`, and `z`. It is the death record that matches the scoreboard. Snapshot `deaths` overcounts, see [Stats snapshots](stats.md).
 
-Join to `movement` at `game_time_s` to count allies and enemies within a radius at the moment of death. About 2,000 units is in the fight. Enemies with `combat_type == "player"` in the preceding seconds were participants, not bystanders.
+Join to `movement` at `game_time_s` to count allies and enemies within a radius at the moment of death. A distance of about 2,000 units counts as in the fight. Enemies with `combat_type == "player"` in the preceding seconds were participants, not bystanders.

@@ -47,7 +47,7 @@ The ledger holds more than the comparison pool. Old `--account` downloads and `-
 
 First seen 2026-07-11.
 
-A player who is not on the leaderboard still has an account id. It is the steam64 in the Steam profile URL minus `extract.STEAM64_BASE` (76561197960265728). A match you shared with the player already holds the exact id in the `players` table, so read it there when you can.
+A player who is not on the leaderboard still has an account id, which is the steam64 in the Steam profile URL minus `extract.STEAM64_BASE` (76561197960265728). A match you shared with the player already holds the exact id in the `players` table, so read it there when you can.
 
 ## The pool is ranked play by default
 

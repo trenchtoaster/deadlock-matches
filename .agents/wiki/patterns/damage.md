@@ -15,7 +15,7 @@ Three tables describe damage, and only one of them is safe to sum. Every overcou
 
 First seen 2026-07-18.
 
-`damage` holds one row per dealer, source, and target with the final match-end totals and no time axis. A plain sum by source is safe. Reach for it for any "how much damage from X" number, never for `damage_sources`. `stat` names the figure (damage, healing, mitigated, and so on).
+`damage` holds one row per dealer, source, and target with the final match-end totals and no time axis. A plain sum by source is safe. Use it for any "how much damage from X" number, and never `damage_sources`. `stat` names the figure (damage, healing, mitigated, and so on).
 
 The `damage_source_games` view aggregates it per source, `hero_damage_games` per dealer and target, and `queries.source_totals` is the frame under them.
 
@@ -49,7 +49,7 @@ Matches from 2026-10-20 carry two new `stat` values, `crowd_control` (6) and `mi
 
 First seen 2026-07-08.
 
-Healing rows (`stat == "healing"`) contain no base hero regen and no fountain regen. Verified: `player_healing` equals the source sum in every player-game checked. Item regen is included and credited to the item, for example Fortitude and Radiant or Mystic Regeneration.
+Healing rows (`stat == "healing"`) contain no base hero regen and no fountain regen. `player_healing` equals the source sum in every player-game checked. Item regen is included and credited to the item, for example Fortitude and Radiant or Mystic Regeneration.
 
 A source in a player's block does not imply ownership. Spirit Shredder Bullets grants allies spirit lifesteal, so its class lands in non-owner blocks. Ivy's Kudzu tether splits credit between Ivy and each tethered player.
 
@@ -59,7 +59,7 @@ The healing report reconciles exactly with the scoreboard: `player_healing` with
 
 First seen 2026-07-08.
 
-`damage_sources` holds the damage table's sources over time, cumulative per dealer, source, and stat sample, like the in-game damage graph. The `damage` column is a running total. Summing a source across its `time_stamp_s` rows multiplies by the sample count. The overcount is about 5 times. It was seen 2026-07-18.
+`damage_sources` holds the damage table's sources over time, cumulative per dealer, source, and stat sample, like the in-game damage graph. The `damage` column is a running total. Summing a source across its `time_stamp_s` rows multiplies by the sample count, an overcount of about 5 times seen on 2026-07-18.
 
 For a total, take the last sample per source, use the `damage` table, or summarize the `damage_source_games` view. For a timeline, use `queries.source_intervals` or `damage_intervals`. They diff the table into the view behind `deadlock match --damage` and reproduce the in-game tooltip exactly.
 

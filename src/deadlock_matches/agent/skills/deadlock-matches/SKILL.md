@@ -41,7 +41,7 @@ For a count, rate, or total over your matches, call `queries.summarize()` on a m
 - the in-game soul figure is `souls + souls_orbs`
 - `damage_sources` and `damage_targets` are cumulative, so a plain sum overcounts about 5 times
 - take the last `stats` sample per match and account, not `max()`
-- never diff sparse samples by hand. Use the `*_intervals` helpers
+- never diff sparse samples by hand; use the `*_intervals` helpers
 
 [Analysis](references/guides/analysis.md) holds the scratch-script rules, the results table layout, and the data paths.
 

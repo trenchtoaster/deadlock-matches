@@ -1,6 +1,6 @@
 # deadlock-matches
 
-Deadlock match metadata is stored in the Steam HTTP cache (`appcache/httpcache` inside your Steam folder) after the client loads a match. This is the same data that you upload to Statlocker for analysis, so my original goal was to parse the data locally and be able to answer questions about it.
+Deadlock match metadata is stored in the Steam HTTP cache (`appcache/httpcache` inside your Steam folder) after the client loads a match. It is the same data that you upload to Statlocker for analysis, so my original goal was to parse the data locally and be able to answer questions about it.
 
 This project is built upon [polars](https://pola.rs) and protobuf. Personal match analysis runs locally against your own Deadlock data, and the comparison commands can also pull public matches from [deadlock-api](https://api.deadlock-api.com).
 
@@ -33,11 +33,11 @@ The complex protobuf data is parsed to simple parquet tables on your computer. T
 uv tool install deadlock-matches
 ```
 
-This adds the `deadlock` command to your PATH and [uv](https://docs.astral.sh/uv/) downloads Python if needed. On Python 3.12 or newer, `pip install deadlock-matches` works too.
+The install adds the `deadlock` command to your PATH and [uv](https://docs.astral.sh/uv/) downloads Python if needed. On Python 3.12 or newer, `pip install deadlock-matches` works too.
 
 To update to a new release later, run `uv tool upgrade deadlock-matches`. Running the install command again does not upgrade a tool that is already installed.
 
-The examples below use `deadlock <command>`. Running from a clone instead? Prepend `uv run`, so `deadlock history` becomes `uv run deadlock history`.
+The examples below use `deadlock <command>`. If you run from a clone, prepend `uv run`, so `deadlock history` becomes `uv run deadlock history`.
 
 ### 2. Create and check config.toml
 
@@ -55,7 +55,7 @@ Then open the file and paste that block in. `deadlock config --edit` creates the
 deadlock config --edit
 ```
 
-- the name is just a label so you can use your Steam account name, profile name, or just a nickname like "main" or "alt"
+- the name is only a label, so you can use your Steam account name, profile name, or a nickname like "main" or "alt"
 - the name can be used for any `--account` filter as well, like `--account main`
 
 Finally, `deadlock config` prints the exact path and current settings so you can confirm your accounts and timezone read back correctly.
@@ -95,9 +95,9 @@ main = 111222333
   - the per second rows only matter when a question needs exact positions or health at a specific second. `deadlock deaths` uses them to check who was nearby when you died, and custom queries like gank detection or route heatmaps need them too
   - to export them, delete `"movement"` from the list and run `deadlock sync`. The missing table triggers a full rebuild on its own
 - commands that read your matches archive the cache into `~/.local/share/deadlock-matches/matches/` (`%LOCALAPPDATA%\deadlock-matches\matches` on Windows)
-  - Steam's cache only keeps the last 10,000 files it used for all of Steam combined - archiving the matches ensures you do not lose historical data
+  - Steam's cache only keeps the last 10,000 files it used for all of Steam combined, so archiving the matches ensures you do not lose historical data
   - opening game history and clicking a match puts it back in the cache (or keeps it there), so it works as recovery too
-- newly archived matches update the parquet tables automatically. Only the new matches get read each run and running `deadlock sync` yourself stays quick. `deadlock sync --full` rebuilds every table from scratch after a backfill or a schema change and prints progress every 50 archive files
+- newly archived matches update the parquet tables automatically. Each run reads only the new matches, so running `deadlock sync` yourself stays quick. `deadlock sync --full` rebuilds every table from scratch after a backfill or a schema change and prints progress every 50 archive files
 
 ### 3. Import matches
 
@@ -133,7 +133,7 @@ Once matches are synced, `deadlock match` reads your most recent game. It prints
 deadlock match
 ```
 
-This is the main analysis command. A stack of flags swap the interval table for other views of the same game, like `--souls`, `--damage`, `--laning`, and `--items`. See [the match views in docs/commands.md](docs/commands.md#one-match) for the full set and example output.
+`deadlock match` is the main analysis command. A stack of flags swaps the interval table for other views of the same game, like `--souls`, `--damage`, `--laning`, and `--items`. See [the match views in docs/commands.md](docs/commands.md#one-match) for the full set and example output.
 
 ### 5. Optional: install the agent skill
 
@@ -166,7 +166,7 @@ The marimo notebooks are example/reference files in the repository. If you want 
 > **Every command has a full example with real output in [docs/commands.md](docs/commands.md).**
 > The list below is a quick index, followed by a few examples. The reference page shows what each one actually prints, so it is the best way to see what the data can answer.
 
-*Note - hero, item, and ability examples can drift when Deadlock patches. Asset data from 2026-01-01 onward is included with the package. Current cards use the latest snapshot, and `--as-of` / `--changes` read that history.*
+*Note: hero, item, and ability examples can drift when Deadlock patches. Asset data from 2026-01-01 onward is included with the package. Current cards use the latest snapshot, and `--as-of` / `--changes` read that history.*
 
 A few flags repeat across commands:
 
@@ -178,7 +178,7 @@ A few flags repeat across commands:
 - `--days N` filters your last N days of games (`--days 7`)
 - `--since YYYY-MM-DD` filters for data since a date (`--since 2026-07-01`)
 - `--hero Mirage` filters a report to one hero (required for the tracked player commands since players are tracked per hero). Quote names with spaces: `--hero "Mo & Krill"`, though capitals and punctuation are optional (`--hero "mo krill"` works too)
-- reports default to your Ranked games of the current season, Beta Season 2 as of 2026-11-05. `--season 1` reads a previous season, `--season pre` reads the Pre-Season (the ranked games in the Standard queue before build 6652 moved ranked play on 2026-07-30), and `--season all` reads every season as one record. `--standard` selects the unranked queue, `--all` reads Ranked and Standard together, and `--placement`, `--street-brawl`, and `--private-lobby` select those modes; `--calibration` remains an alias for `--placement`. A season applies to Ranked only, so `--season` next to another mode flag is an error. Tracked-player downloads default to Ranked, since match history carries no marker to split the older queue by. Stored matches are retained across modes, but modes never mix in a report or comparison
+- reports default to your Ranked games of the current season, Beta Season 2 as of 2026-11-05. `--season 1` or `--season beta1` reads a previous season, `--season pre` reads the Pre-Season (the ranked games in the Standard queue before build 6652 moved ranked play on 2026-07-30), and `--season all` reads every season as one record. `--standard` selects the unranked queue, `--all` reads Ranked and Standard together, and `--placement`, `--street-brawl`, and `--private-lobby` select those modes; `--calibration` remains an alias for `--placement`. A season applies to Ranked only, so `--season` next to another mode flag is an error. Tracked-player downloads default to Ranked, since match history carries no marker to split the older queue by. Stored matches are retained across modes, but modes never mix in a report or comparison
 - `--min-rating Oracle` limits public stats to lobbies at that average skill rating or higher. `winrate` and `item` default to Eternus, `meta` counts every rating, and `all` disables the filter
 
 ### Command index
@@ -224,9 +224,9 @@ A few flags repeat across commands:
 
 ### A few of the reports
 
-Here are some examples of the reports which will print out to your terminal. Please take a look at [docs/commands.md](docs/commands.md) for more detailed views for anything which looks interesting to you.
+These are examples of the reports that print to your terminal. See [docs/commands.md](docs/commands.md) for more detailed views of anything that interests you.
 
-The full scoreboard for a match, then your own play in 5-minute intervals. As you can see, this also includes metrics like healing prevented and permanent buffs per player which are not shown in game:
+The full scoreboard for a match, then your own play in 5-minute intervals. The scoreboard also includes metrics like healing prevented and permanent buffs per player, which are not shown in game:
 
 
 ```
@@ -311,7 +311,7 @@ Lobby average: The Hidden King Oracle I, The Archmother Archon VI
   Victor        enemy  15,558    446        9.9%   10.2%   15.1%     6.6%     23.4%      65       127
 ```
 
-`match --teams` prints out a timeline of every objective in order, each Unstable Rift win, and each Soul Urn run with the runner. A late-game slice:
+`match --teams` prints out a timeline of every objective in order, each Unstable Rift win, and each Soul Urn run with the runner. Here is a late-game slice:
 
 ```
    28:02  your team destroys the enemy Walker (yellow)
@@ -398,7 +398,7 @@ Leaderboards, match histories, and analytics responses are cached as json under 
 
 ### Removing everything
 
-All data lives in two directories. On Linux and macOS, this removes the local data and cache:
+All data lives in two directories. On Linux and macOS, the following command removes the local data and cache:
 
 ```
 rm -rf ~/.local/share/deadlock-matches ~/.cache/deadlock-matches
@@ -451,7 +451,7 @@ Sizes scale with the archive. Here is the data per 100 matches based on a real a
 | `mid_boss` | 160 | <0.1 MB |
 | `matches` | 100 | <0.1 MB |
 
-That is about 43 MB per 100 matches, but the vast majority is from the per-second movement data which is why the default config excludes it. The asset-history tables under `assets/` are a fixed ~0.4 MB and do not grow with the archive.
+The total is about 43 MB per 100 matches, and the vast majority of it is the per-second movement data, which is why the default config excludes it. The asset-history tables under `assets/` are a fixed ~0.4 MB and do not grow with the archive.
 
 ## Writing your own queries
 
@@ -462,13 +462,13 @@ Questions like these are a few lines of polars each:
 - when do I usually buy an item, and do I win more when I get it early?
 - has my farm at 10 minutes improved recently?
 
-The `deadlock_matches.queries` module handles common joins and filters, so a query is mostly the aggregation. Metric views carry that further. They declare the dimensions and measures a report can ask for, so a count or a rate comes out right at whatever grain you group by. `deadlock schema --views` lists them. Use `deadlock schema [table] --sample` to see the real rows, then see [docs/data.md](docs/data.md) for table descriptions and query patterns.
+The `deadlock_matches.queries` module handles common joins and filters, so a query is mostly the aggregation. Metric views go further and declare the dimensions and measures a report can ask for, so a count or a rate comes out right at whatever grain you group by. `deadlock schema --views` lists them. Use `deadlock schema [table] --sample` to see the real rows, then see [docs/data.md](docs/data.md) for table descriptions and query patterns.
 
 This repository also has optional marimo notebooks under [`notebooks/`](notebooks/) if you are browsing a source checkout. They are examples only and are not installed with the CLI.
 
 ## Accuracy
 
-The numbers are checked against sources that don't depend on this code:
+The numbers are checked against sources that do not depend on this code:
 
 - match metadata processed locally matches [deadlock-api](https://api.deadlock-api.com) field for field
 - damage per source reproduces the damage graph the game shows after a match

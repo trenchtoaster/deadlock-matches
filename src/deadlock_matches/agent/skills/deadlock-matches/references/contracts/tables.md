@@ -29,17 +29,17 @@ Use the label helpers in [Queries](queries.md) rather than joining or persisting
 
 ## The exporter is faithful, the queries judge
 
-`export.py` builds the tables from a faithful decode only. Judgment lives in the `queries` package. Queries never manufacture a missing column. An old protobuf becomes real nulls only when the exporter rebuilds it.
+`export.py` builds the tables from a faithful decode only, and judgment lives in the `queries` package. Queries never manufacture a missing column. An old protobuf becomes real nulls only when the exporter rebuilds it.
 
 ## Schema drift and rebuilds
 
 Data reports check the physical parquet schema before reading and rebuild a drifted store even when Steam yielded no new cache entry. A quick `deadlock history` first therefore guarantees fresh tables. `deadlock sync --full` forces a full rebuild.
 
-A schema change needs no manual step. `export.schema_drift` compares every month file against `schemas.py` in both stores. It reads footers only. A change that only removes columns reshapes the parquet files in place. A missing table or a newly required column triggers the full archive rebuild automatically. The rebuild prints archive progress every 50 files and ends with one "Rebuilt all tables" line.
+A schema change needs no manual step. `export.schema_drift` compares every month file against `schemas.py` in both stores and reads footers only. A change that only removes columns reshapes the parquet files in place. A missing table or a newly required column triggers the full archive rebuild automatically. The rebuild prints archive progress every 50 files and ends with one "Rebuilt all tables" line.
 
 Never hand-patch a drifted month file. Reshapes replace each file atomically, and rebuilds stream bounded batches of matches, so both stay recoverable and memory bounded at any archive size. The tracked-player store redownloads bodies that the archive lacks.
 
-A report rebuild preserves the account filter recorded by the existing main export when config has no `[accounts]` table. It never broadens the store to every archived match. A `downloads.parquet` ledger identifies a tracked-player store even at a custom `--parquet` path, so it uses the tracked rebuild path. An explicit `deadlock sync` still filters to the config accounts. It refuses to run without an `[accounts]` table and refuses an `--account` id that is not in it.
+A report rebuild preserves the account filter recorded by the existing main export when config has no `[accounts]` table. It never broadens the store to every archived match. A `downloads.parquet` ledger identifies a tracked-player store even at a custom `--parquet` path, so it uses the tracked rebuild path. An explicit `deadlock sync` still filters to the config accounts, and it refuses to run without an `[accounts]` table and refuses an `--account` id that is not in it.
 
 ## Engine and ordering
 
@@ -49,4 +49,4 @@ Do not rely on output row order after a join or a group_by. Sort explicitly befo
 
 ## Time zones
 
-`config.config_timezone()` gives the zone for grouping matches into local days. The starter config pins the detected zone at creation. Always `convert_time_zone()` with it before `.dt.date()`. `start_time` is UTC, so a late-night session splits across days otherwise.
+`config.config_timezone()` gives the zone for grouping matches into local days. The starter config pins the detected zone at creation. Always `convert_time_zone()` with it before `.dt.date()`, because `start_time` is UTC and a late-night session otherwise splits across days.

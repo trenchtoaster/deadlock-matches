@@ -24,7 +24,7 @@ Use `deadlock schema [table]` when you want the exact columns, data types, and d
 - `stacks`: the final counters from stacking abilities and items, one row per counter per player. Parquet stores `ability_id`; `queries.with_stack_labels()` adds its current class and display name.
 - `custom_stats`: the named stat counters the game tracks but never shows, one row per stat per player per snapshot with the family and name split out. Examples include parries, accuracy against heroes, damage by range, comeback souls, and per-hero counters.
 - `damage`: damage, healing, and mitigation per source and target. Parquet stores stable `source_class`; `queries.hero_damage()` and `queries.with_damage_source_name()` add current labels such as Dust Devil or "Promises Kept (crit)". `queries.damage_category()` distinguishes match-screen totals from individual sources.
-- `damage_sources`: the same sources over time, cumulative like the in-game damage graph. Summed over targets, split into hero targets and everything else.
+- `damage_sources`: the same sources over time, cumulative like the in-game damage graph. Rows are summed over targets and split into hero targets and everything else.
 - `mid_boss`: one row per midboss kill, with when it died, which team killed it, and which team claimed the Rejuvenator.
 - `movement`: the position of every player, health percent, and movement state (sliding, dashing, ziplining, in combat or not) for every second of the match. The starter config excludes it because it is larger than every other table combined. Delete it from `exclude` if you want exact position or nearby-player queries.
 - `deaths`: one row per death with the time, position, killer, and respawn timer. Joined to `movement`, this answers things like "was I alone when I died" or "how many enemies killed me".
@@ -33,7 +33,7 @@ Use `deadlock schema [table]` when you want the exact columns, data types, and d
 - `objectives`: one row per objective per team, covering guardians, walkers, base guardians, shrines, and the patron. Parquet stores `objective_id`. `queries.with_objective_labels()` adds the objective name and lane color.
 - `movement_intervals`: one row per player per minute, with movement state counts, dashes, and distance. The minute rollup stays queryable when the starter config excludes the raw `movement` table.
 
-The tables do not cover everything Valve stores yet. The full structure is `CMsgMatchMetaDataContents` in [`protos/citadel_gcmessages_common.proto`](../protos/citadel_gcmessages_common.proto). This is a work in progress, and new columns and tables get added as more of that data turns out to be interesting to query.
+The tables do not cover everything Valve stores yet. The full structure is `CMsgMatchMetaDataContents` in [`protos/citadel_gcmessages_common.proto`](../protos/citadel_gcmessages_common.proto). The tables are a work in progress, and new columns and tables get added as more of that data turns out to be interesting to query.
 
 `deadlock download --hero` builds the same tables for matches from other players in the `parquet-players/` directory: the players tracked under `[players.<Hero>]` in config, plus any account or match id you pass to `--account` / `--match`. Ranked is downloaded by default, because match history carries no `ranked_type` to split the older queue by. `--standard`, `--placement`, `--street-brawl`, and `--private-lobby` explicitly fetch those modes (`--calibration` remains an alias for `--placement`). The layout is identical, so query patterns work on their games too. An extra `downloads` table records which player each match came from, their rank at the time, and when it was retrieved. A match pulled by id has no player, so those columns are null.
 
@@ -56,7 +56,7 @@ A metric view declares which dimensions you can group by and which measures you 
 
 - `my_games`: one row per ranked match you played by default, spanning both queue eras, with the local day for grouping by session. Pass mode arguments or use `queries.mode_context` for another mode.
 - `record_games`: one row per match in the winrate window. Its wins count matches where `my_games` counts account-games. Its readable `match_mode`, `game_mode`, and `ranked_type` dimensions back `deadlock winrate --by mode`; pass `None` for `match_mode`, `game_mode`, and `ranked` to summarize every stored mode.
-- `stat_snapshots`: the selected-mode `stats` table collapsed to each player-game's last sample before anything is summed. Ranked play is the default when it selects games itself; an explicit `games=` frame is trusted as-is. That collapse is what stops cumulative snapshots from being added up by accident. Net worth, damage, accuracy, headshot rate, and the K/D/A counters.
+- `stat_snapshots`: the selected-mode `stats` table collapsed to each player-game's last sample before anything is summed. Ranked play is the default when it selects games itself; an explicit `games=` frame is trusted as-is. The collapse stops cumulative snapshots from being added up by accident. Its measures include net worth, damage, accuracy, headshot rate, and the K/D/A counters.
 - `hero_damage_games`, `damage_source_games`, `soul_source_games`, `movement_games`, `combat_games`, `buff_games`, `stack_games`: the views behind the damage, souls, movement, combat, and buff reports.
 - `compare_intervals`, `cumulative_marks`, `milestone_games`: gains per interval, totals at a mark, and the minute a net worth was first reached.
 
@@ -65,14 +65,14 @@ A metric view declares which dimensions you can group by and which measures you 
 - `queries.scan("damage")` to read any table by name.
 - `queries.player_rows()` to read `players` with the current hero display name.
 - `queries.view_frame(queries.my_games())` for the rows behind a view instead of an aggregate.
-- `queries.final_stats()` for the last stats snapshot of every player in every match. Opponents included.
+- `queries.final_stats()` for the last stats snapshot of every player in every match, opponents included.
 - item and death helpers for the frames behind those CLI reports.
 
-Every query in the module is a lazy polars plan and all collections use the streaming engine. Nothing is read until `.collect()`, the plan prunes the scan down to the columns and rows it actually touches, and memory stays bounded at any archive size. Keep your own queries lazy from `scan()` to `.collect()` and they get the same treatment.
+Every query in the module is a lazy polars plan and all collections use the streaming engine. Nothing is read until `.collect()`, the plan prunes the scan down to the columns and rows it touches, and memory stays bounded at any archive size. Keep your own queries lazy from `scan()` to `.collect()` and they get the same treatment.
 
 Labels are deliberately not stored in match parquet. Hero, damage/healing source, imbued abilities, stack, and accolade labels resolve from their stable IDs or engine classes when queried, so an asset refresh fixes match displays without a full archive rebuild. The fixed mappings work the same way: soul source slugs, lane colors, objective names, and buff family/level all derive from the stored ids at read time, so a mapping fix is a code edit rather than a rebuild. Aggregate on the stable key first and attach the label to the reduced frame when writing a new aggregate query.
 
-Here is the general shape. A rate like `win_rate` is total wins over total scored games at whatever grain you ask for. It is never the mean of per-day rates. Measures come back raw. A rate is a proportion and scaling it to a percent is yours to do where you print:
+Here is the general shape. A rate like `win_rate` is total wins over total scored games at whatever grain you ask for, never the mean of per-day rates. Measures come back raw, so a rate is a proportion, and scaling it to a percent is yours to do where you print:
 
 ```python
 import datetime as dt

@@ -23,13 +23,13 @@ First seen 2026-07-08.
 
 First seen 2026-07-08.
 
-Weapon records in `abilities.json` carry `weapon` gun stats: `bullet_damage`, `clip_size`, falloff and crit ranges, and dps. Weapon distances are game units (inches). Divide by 39.37 (`queries.movement.UNITS_PER_METER`) for the meters the game shows. Promises Kept falloff 787 to 2264 units equals the in-game card's 20 m to 58 m. The card verified the conversion. Ability `properties` distances are already meters.
+Weapon records in `abilities.json` carry `weapon` gun stats: `bullet_damage`, `clip_size`, falloff and crit ranges, and dps. Weapon distances are game units (inches). Divide by 39.37 (`queries.movement.UNITS_PER_METER`) for the meters the game shows. Promises Kept falloff of 787 to 2264 units equals the in-game card's 20 m to 58 m, and the card verified the conversion. Ability `properties` distances are already meters.
 
 ## Vyper's crit scale is missing
 
 First seen 2026-07-08.
 
-Vyper's in-game "Crit Bonus Scale: -30%" exists nowhere in the assets API. The gun record says the standard 1.65 crit bonus, and no -30 or 0.7 field exists in any Vyper record. Checked 2026-07-07. Do not hunt for it. Do not confuse it with `crit_damage_received_scale`, which scales the crits a hero receives: Seven 0.45, Mo & Krill 0.8, Rem 0.9.
+Vyper's in-game "Crit Bonus Scale: -30%" exists nowhere in the assets API. The gun record says the standard 1.65 crit bonus, and no -30 or 0.7 field exists in any Vyper record. Checked 2026-07-07, so do not hunt for it. Do not confuse it with `crit_damage_received_scale`, which scales the crits a hero receives: Seven 0.45, Mo & Krill 0.8, Rem 0.9.
 
 Recheck when the assets API adds a per-hero crit field.
 
@@ -45,7 +45,7 @@ First seen 2026-07-08.
 
 Hero level scaling sits on `Hero`. `level_up` holds the per-boon stat increments, `levels` the soul thresholds per level, and `purchase_bonuses` the old shop tier bonuses. `base_health(level)`, `spirit_power(level)`, and `level_for_souls(souls)` compute expected base health and spirit at any point in a match, because the snapshot stats carry each player's `level`.
 
-`Hero.stats_at(souls)` and `boon_stats(level)` return level, health, spirit, bullet damage bonus, light and heavy melee, and ability points and unlocks. `deadlock hero <name> --souls N` (or `--level N`) prints them with gun dps. Melee boons: the per-boon melee increment applies to light melee, and heavy keeps the hero's base heavy to light ratio, mostly 2.32. Wiki confirmed: Mirage +1.58 light and +3.67 heavy per boon.
+`Hero.stats_at(souls)` and `boon_stats(level)` return level, health, spirit, bullet damage bonus, light and heavy melee, and ability points and unlocks. `deadlock hero <name> --souls N` (or `--level N`) prints them with gun dps. For melee boons, the per-boon melee increment applies to light melee, and heavy keeps the hero's base heavy to light ratio, mostly 2.32. The wiki confirmed Mirage at +1.58 light and +3.67 heavy per boon.
 
 The assets API returns `purchase_bonuses` empty for every hero from build 6712. That was checked 2026-10-01 on the cached builds 6712, 6722, and 6723. Every hero had it at 6697, 6698, and 6701. The API changelog names build 6711, which is not cached. The field stays on `Hero` for the old eras. `cost_bonuses` stays filled, and `investment_bonus` reads it.
 
@@ -53,7 +53,7 @@ The assets API returns `purchase_bonuses` empty for every hero from build 6712. 
 
 First seen 2026-07-08.
 
-`Hero.cost_bonuses` and `investment_bonus(slot, spent)` are the shop's souls-invested bonus curve, the graph above each category. The steps are deliberately uneven. 4,800 invested is a designed power spike in every category. Spirit gives +19 spirit power there against +4 and +7 for the neighbors, weapon gives +28%, and vitality gives +18. Spirit spikes again at 28,800 (+25).
+`Hero.cost_bonuses` and `investment_bonus(slot, spent)` are the shop's souls-invested bonus curve, the graph above each category. The steps are deliberately uneven, and 4,800 invested is a designed power spike in every category. Spirit gives +19 spirit power there against +4 and +7 for the neighbors, weapon gives +28%, and vitality gives +18. Spirit spikes again at 28,800 (+25).
 
 ## Weapon scaling, sandbox verified
 
@@ -61,7 +61,7 @@ First seen 2026-07-11. Verified against live damage 2026-07-10.
 
 `base_weapon_damage_increase` abilities (Gutshot, Ira Domini, Consecrating Grenade, Witching Hour) consume bonus weapon damage in percent points. The points are item percent plus weapon investment percent from `cost_bonuses`, with boons excluded. Gutshot measured 85/115 bare and 126/202 at 58 points (Weighted Shots 40 plus 18 for its own 3,200 souls invested), exactly `value + scale * points`. `deadlock ability --weapon` resolves this.
 
-Kinetic Carbine is different. Actual damage is `5 + 2.75 * full burst`. A full burst is 5 bullets (`burst_shot_count` in the raw API weapon_info, while the bundled weapon record says `bullets: 1`) times bullet damage including boons times `(1 + weapon %)`. Measured 99/223/151/351 across boons and Weighted Shots. Boons multiply with items. The in-game tooltip model (2.80) overshoots actual damage by about 2%, so the ability card leaves Carbine symbolic on purpose. `bullet_damage` (Hellfire Salvo) and `weapon_damage_scale` (Sleight of Hand, Infernal Brand) are still unmeasured.
+Kinetic Carbine works differently, and its actual damage is `5 + 2.75 * full burst`. A full burst is 5 bullets (`burst_shot_count` in the raw API weapon_info, while the bundled weapon record says `bullets: 1`) times bullet damage including boons times `(1 + weapon %)`. Measured 99/223/151/351 across boons and Weighted Shots. Boons multiply with items. The in-game tooltip model (2.80) overshoots actual damage by about 2%, so the ability card leaves Carbine symbolic on purpose. `bullet_damage` (Hellfire Salvo) and `weapon_damage_scale` (Sleight of Hand, Infernal Brand) are still unmeasured.
 
 Recheck when a patch touches the weapon damage formula.
 
@@ -97,7 +97,7 @@ Recheck when a vote hero becomes selectable.
 
 First seen 2026-07-08.
 
-No cast events exist anywhere in the metadata. `player.ability_stats` is only the handful of stacking items and abilities. Those counters are Trophy Collector trophies, Glass Cannon stacks, Sticky Bomb bonus, Restorative Locket charges, and Guided Owl and Assassinate counters. It is exported as the `stacks` table and shown by `match --stacks`. `custom_user_stats` is the named counter pool behind `custom_stats`, see [Custom stats](custom-stats.md).
+No cast events exist anywhere in the metadata. `player.ability_stats` is only the handful of stacking items and abilities. Those counters are Trophy Collector trophies, Glass Cannon stacks, Sticky Bomb bonus, Restorative Locket charges, and Guided Owl and Assassinate counters. It is exported as the `stacks` table and shown by `match --stacks`. `custom_user_stats` is the named counter pool behind `custom_stats`. See [Custom stats](custom-stats.md).
 
 Active item presses (Debuff Remover), stuns, and debuff windows live only in replay demos, which nothing in this project parses. Do not promise cast counts.
 

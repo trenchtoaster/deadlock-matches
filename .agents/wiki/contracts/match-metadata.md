@@ -37,7 +37,7 @@ First seen 2026-10-23.
 
 The protos are proto2, so every enum is closed. The parser moves a number the enum does not list into the unknown fields, and a packed repeated enum comes back shorter. `source_details.stat_type` lost the new values 6 and 7 that way, fell out of line with `source_name`, and crashed `sync` with an `IndexError`. `build_tables` now raises a `ValueError` that names the match when the two lengths differ. The fix is a proto refresh.
 
-On 2026-10-23 only the two `EStatType` values were added to the vendored file. The upstream copy also adds `boxed_type` options, new imports, and lobby fields. Those were left out because no match table reads them.
+On 2026-10-23 only the two `EStatType` values were added to the vendored file. The upstream copy also adds `boxed_type` options, new imports, and lobby fields, which were left out because no match table reads them.
 
 ## Build 6712 fields
 
@@ -45,7 +45,7 @@ First seen 2026-10-01.
 
 Client build 6712 added three wire fields. Match 108628471 on 2026-09-29 22:25 UTC is the first archived body that carries them, and none of the 1855 older bodies do.
 
-- `MatchInfo.corrupted_penalty_seed` exports as `matches.corrupted_penalty_seed`. It is null before build 6712. It is an opaque seed and joins to nothing.
+- `MatchInfo.corrupted_penalty_seed` exports as `matches.corrupted_penalty_seed`. It is null before build 6712, and as an opaque seed it joins to nothing.
 - `PowerUpBuff.pickup_times_s` and `pickup_stat_values` export as `buff_pickups`. See [Custom stats](../patterns/custom-stats.md).
 
 `MatchInfo.extra_messages` can carry `hero_release_votes`, message type 2 (`CMsgMatchHeroReleaseVotes`). Its categories are match_completed, match_won, and daily_bonus, each with hero votes of slot, hero id, and count. It was empty in every archived body on 2026-10-01, including the five after build 6712, so nothing exports it.

@@ -17,7 +17,7 @@ First seen 2026-07-27. Extended 2026-08-10.
 
 `match_mode 1` was the ranked queue until build 6652 (2026-07-30 12:04 UTC). It is the unranked Standard queue after that build. `matches.ranked_type` is the discriminator. It is null on every game before 6652, `0` for unranked, and `1` for Ranked.
 
-The standing filter is ranked play. It reads `match_mode in (1, 4)`, `game_mode 1`, and `ranked_type` not `0`. That filter gives one continuous competitive record across both eras. Null `ranked_type` counts as ranked because those games predate the field.
+The standing filter is ranked play, which reads `match_mode in (1, 4)`, `game_mode 1`, and `ranked_type` not `0`. That filter gives one continuous competitive record across both eras. Null `ranked_type` counts as ranked because those games predate the field.
 
 The CLI flags map onto the enums this way. `--standard` selects the unranked queue `(1, 1, ranked_type 0)`. `--all` reads Ranked and Standard together `((1, 4), 1)` with the `ranked_type` check lifted. `--ranked` is a hidden alias of the default. `--placement`, `--street-brawl`, and `--private-lobby` select `(8, 1)`, `(1, 4)`, and `(2, 1)`. Storage stays cumulative, and modes never mix unless the filters are explicitly lifted.
 
@@ -75,13 +75,13 @@ Recheck when a season changes `base_win_loss_point_grant`, or when a win or a ga
 
 First seen 2026-08-10.
 
-Beta Season 1 interval 1 runs 2026-07-30 to 2026-10-08. Unlocking Ranked needs 60 account wins, 3 heroes at 15 wins each, 8 placement matches, and a solo or duo queue. The numbers come from `v1/assets/ranked-seasons` through `cli.rank.season_rules`, with `SEASON_FALLBACK` shipped for a failed request.
+Beta Season 1 ran 2026-07-30 to 2026-11-05. Unlocking Ranked needs 60 account wins, 3 heroes at 15 wins each, 8 placement matches, and a solo or duo queue. The numbers come from `v1/assets/ranked-seasons` through `cli.rank.season_rules`, with `SEASON_FALLBACK` shipped for a failed request.
 
 The solo or duo rule exists only in that season asset. The per-player party field was dropped from match metadata on 2026-03-12, so party size is not checkable from the tables. See [Matches and players](matches-and-players.md).
 
 An account with zero stored Ranked games prints the eligibility panel instead of the rank table. The panel counts scored wins from the local archive, Standard and Ranked, so unarchived games are not counted and the printed note says so.
 
-Recheck when interval 2 games exist.
+Recheck when a season changes the unlock rules.
 
 ## Season One has two intervals
 

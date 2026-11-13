@@ -9,7 +9,7 @@ last_confirmed: 2026-10-02
 
 ## Invoking the CLI
 
-The examples call `deadlock <command>`, the name that an installed tool puts on PATH (`uv tool install deadlock-matches` is the recommended setup). A source clone has no `deadlock` on PATH. Prepend `uv run` from the repo root, so `deadlock history` becomes `uv run deadlock history`. Check which case applies before you run a command. `command -v deadlock` finds an installed tool. Otherwise look for a `pyproject.toml` that names `deadlock-matches` in the working directory and use `uv run`. The ad-hoc Python in [Analysis](../guides/analysis.md) assumes a clone and runs scripts with `uv run` from the repo root.
+The examples call `deadlock <command>`, the name that an installed tool puts on PATH (`uv tool install deadlock-matches` is the recommended setup). A source clone has no `deadlock` on PATH, so prepend `uv run` from the repo root and `deadlock history` becomes `uv run deadlock history`. Check which case applies before you run a command. `command -v deadlock` finds an installed tool. Otherwise look for a `pyproject.toml` that names `deadlock-matches` in the working directory and use `uv run`. The ad-hoc Python in [Analysis](../guides/analysis.md) assumes a clone and runs scripts with `uv run` from the repo root.
 
 ## Common questions
 
@@ -52,11 +52,11 @@ Every command answers one question. Run `<command> --help` for the flags, the de
 - `deadlock match` splits the game into 5-minute intervals by default, and `--ago` rejects a match id alongside it
 - a match none of your accounts played never reaches your tables. `deadlock download --match ID` pulls it into the players tables, and `deadlock match` falls back to them by itself
 - `deadlock item "Name" --hero H` drops the stat card, so run the bare form for the card. The meta stats default to Eternus lobbies and above
-- the track flow is `leaderboard`, then a paste into `config.toml`, then `download`. Nothing is downloaded from the leaderboard on its own
+- the track flow is `leaderboard`, then a paste into `config.toml`, then `download`, and `leaderboard` downloads nothing on its own
 - read a tracked player's games with `--account <name>` on an archive report, or one downloaded match with `deadlock match ID --hero H`
 - both sides of `deadlock compare` read parquet offline. Your games come from your tables and theirs from `parquet-players/` filtered to the config pool
-- never hand-roll a win rate in polars. Relay `deadlock winrate` instead
-- `deadlock winrate --by mode` lifts the mode filter on purpose. Do not combine it with a mode-selection flag
+- never hand-roll a win rate in polars; relay `deadlock winrate` instead
+- `deadlock winrate --by mode` lifts the mode filter on purpose, so do not combine it with a mode-selection flag
 - `deadlock winrate --hero H` adds the public win rate on the default selection only, because public stats cannot match an explicit mode
 - `deadlock winrate` keeps abandoned games in the table and reports the not-scored games under it
 - `deadlock rank` reads net points over the window, while the record and the rating read the whole stored season
@@ -64,20 +64,20 @@ Every command answers one question. Run `<command> --help` for the flags, the de
 - `deadlock laning` counts scored games only
 - `--hero` is required on `damage`, `healing`, `souls`, `combat`, and `movement`, and fuzzy names resolve, so "mo krill" works
 - comeback souls, unspent balances, and the stray-counter Other section stay in `deadlock match --combat`
-- archive aim percentiles are not in the CLI. Use `queries.aim_rates` for them
+- archive aim percentiles are not in the CLI, so use `queries.aim_rates` for them
 - the tracked-player movement comparison is `deadlock compare movement`, not `deadlock movement`
 - `deadlock souls --milestones` interpolates the minute between the 5-minute snapshots
 - `deadlock ability --spirit` and `--melee` reject `--souls` and `--level`, because a total already includes boons. `--weapon` takes the item percent plus the weapon shop investment percent, and it is boon free, so it does combine with them
 - `deadlock meta --hero H` defaults `--by` to week. The API recomputes any historical window and carries no region dimension, so nothing accumulates locally
 - `deadlock meta --min-rating` filters both teams while the buckets use the match average, so a floor shrinks the boundary bucket. Read distributions without a floor
-- `deadlock sync --source api` may not find every game. The rest need a click in the in-game match history
+- `deadlock sync --source api` may not find every game, and the rest need a click in the in-game match history
 - `deadlock sync` self-heals the asset history after a client update, and it carries on when the asset update fails
 
 ## The `match` view flags
 
 - `--souls` Total is gross souls earned. Net worth adds starting souls and subtracts death losses. See [Soul sources](../patterns/soul-sources.md)
 - `--damage` groups the sources into gun, abilities, and item procs at read time. See [Damage tables](../patterns/damage.md)
-- `--healing` adds a healing-prevented table per anti-heal item. The game shows healing per source nowhere
+- `--healing` adds a healing-prevented table per anti-heal item. The game does not show healing per source anywhere
 - `--teams` decodes only matches on the 2026-06-30 rework build. See [Objectives and mid boss](../patterns/objectives-and-mid-boss.md)
 - `--laning` defaults to 9 minutes, which sits on the 3-minute snapshot cadence. Kills, deaths, and guardian falls filter by event time. The flag ignores `--interval`. See [Stats snapshots](../patterns/stats.md)
 - `--items` prices each buy at the era shop price and pairs an upgrade to the component buys it consumed. See [Item events](../patterns/item-events.md)
@@ -89,4 +89,4 @@ Every command answers one question. Run `<command> --help` for the flags, the de
 - `--movement` divides the slide, air, zipline, and fighting percents by alive seconds, and stationary by moving seconds. See [Movement and deaths](../patterns/movement-and-deaths.md)
 - `--deaths` and `--kills` read the `deaths` table directly, with no movement join. See [Movement and deaths](../patterns/movement-and-deaths.md)
 
-`compare` has report subcommands. They are `souls`, `damage`, `healing`, `combat`, and `movement`. Do not suggest `--stat`, `soul_sources`, or individual soul groups as public compare modes. `--since` filters your games. `--pool-since` filters tracked games by local match date. `--against someplayer` narrows the tracked pool. `--account someplayer` instead makes that player the subject.
+The `compare` report subcommands are `souls`, `damage`, `healing`, `combat`, and `movement`. Do not suggest `--stat`, `soul_sources`, or individual soul groups as public compare modes. `--since` filters your games. `--pool-since` filters tracked games by local match date. `--against someplayer` narrows the tracked pool. `--account someplayer` instead makes that player the subject.

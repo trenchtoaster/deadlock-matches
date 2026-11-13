@@ -19,7 +19,7 @@ Always sum both columns. `souls` is the guaranteed portion. `souls_orbs` is the 
 
 The design ratio is the share of a trooper bounty placed in the orb. It was 40% before the 2026-06-30 patch and 50% after it, per the patch notes. The secured share, `souls_orbs / (souls + souls_orbs)`, is lower because orbs get denied or missed. Measured medians run about 27% before the patch and 30% after, and individual matches swing past 40%.
 
-Never pin a fixed figure. The sum-both rule is invariant. The magnitude drifts by patch and by how well the player confirms orbs.
+Never pin a fixed figure. The sum-both rule is invariant, while the magnitude drifts by patch and by how well the player confirms orbs.
 
 Recheck when a patch changes the orb share in the notes.
 
@@ -35,7 +35,7 @@ A per-source `/game` row divides by the games that recorded that source, not by 
 
 First seen 2026-07-11.
 
-Source 7, screen label "Denies", is team-shared income. Every teammate gets about 9 to 10 souls per denied orb, and the source hits zero only when the whole team never denies. Verified across the archive: the flat `souls_denied` equals it exactly and its `souls_orbs` is always 0.
+Source 7, screen label "Denies", is team-shared income. Every teammate gets about 9 to 10 souls per denied orb, and the source hits zero only when the whole team never denies. A check across the archive found that the flat `souls_denied` equals it exactly and its `souls_orbs` is always 0.
 
 A player with 0 scoreboard denies still earns these souls. Never read source 7 as personal denying. The scoreboard `denies` column is the personal count.
 
