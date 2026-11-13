@@ -1,6 +1,27 @@
 # Changelog
 
 All notable changes to this project are documented here.
+## [0.16.0] - 2026-11-13
+
+### Added
+
+- Drop the delivery column from the source table ([e34b071](https://github.com/trenchtoaster/deadlock-matches/commit/e34b071abac7eb706beeec4f6ae79a12f0bf8caa))
+
+- Read the current Ranked season by default ([6f94a4a](https://github.com/trenchtoaster/deadlock-matches/commit/6f94a4aea827b24ab5d642e507324e342d7d9890))
+
+- Let --season take a season name like beta1 ([ba8d80e](https://github.com/trenchtoaster/deadlock-matches/commit/ba8d80e0245517820c93db4859b8b7a448eeeb20))
+
+
+### Documentation
+
+- Plain prose pass over the docs, wiki and skill ([9d289e2](https://github.com/trenchtoaster/deadlock-matches/commit/9d289e2f175cbdad4fa7ee09cd7493c3965d7060))
+
+
+### Fixed
+
+- Expect the posix skill path on Windows ([08b9387](https://github.com/trenchtoaster/deadlock-matches/commit/08b93875d176cb1f77fdd0cd456668a4bb383672))
+
+
 ## [0.15.1] - 2026-10-22
 
 ### Fixed
