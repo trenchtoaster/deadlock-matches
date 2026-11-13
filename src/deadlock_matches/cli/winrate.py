@@ -27,6 +27,8 @@ NET_POINTS = queries.view_measure(queries.record_games, "net_points").display_fo
 
 NET_POINTS_WIDTH = 12
 
+POINT_PART_WIDTH = 9
+
 RANKED_LABEL = "Ranked"
 
 
@@ -35,13 +37,18 @@ def _net_points_cell(points: int | None) -> str:
     return NET_POINTS.render(points, render.BLANK, sign=True).rjust(NET_POINTS_WIDTH)
 
 
+def _point_part_cell(points: int | None) -> str:
+    """Print one share of a Rank Point change in the narrower split columns."""
+    return NET_POINTS.render(points, render.BLANK, sign=True).rjust(POINT_PART_WIDTH)
+
+
 def win_rate(wins: int, games: int) -> str:
     """Print a win rate the way record_games declares it."""
     return WIN_RATE.render(wins / games if games else None, render.BLANK)
 
 
 def winrate_report(args: argparse.Namespace, config: str | Path | None = None) -> None:
-    """Print W/L by mode or over time with net wins and a running total."""
+    """Print W/L by mode or over time with net wins and the Rank Points split."""
     tz = config_timezone(config)
 
     if args.by == "mode":
@@ -78,26 +85,41 @@ def winrate_report(args: argparse.Namespace, config: str | Path | None = None) -
         return
 
     ranked = _has_ranked_games(games)
-    points_heading = f"{'Net points':>{NET_POINTS_WIDTH}}" if ranked else ""
+    points_heading = (
+        f"{'Net points':>{NET_POINTS_WIDTH}}{'Streak':>{POINT_PART_WIDTH}}"
+        f"{'Shields':>{POINT_PART_WIDTH}}"
+        if ranked
+        else ""
+    )
+
+    season = queries.selected_season()
+
+    if season is not None and _default_mode(args):
+        print(f"Ranked {season.name}. --season picks another, like --season 1 or --season all.")
 
     print(f"Dates below are grouped by {tz} {args.by}.\n")
     print(
         f"  {args.by.capitalize():<12}{'Games':>7}{'W':>5}{'L':>5}"
         f"{'Win rate':>11}{'Lobby':>14}{'MVP':>6}{'Key':>6}{'Abandons':>10}"
-        f"{'Net wins':>11}{'Cumulative net':>17}{points_heading}"
+        f"{'Net wins':>11}{points_heading}"
     )
 
     for r in df.iter_rows(named=True):
         day = f"{r['day']:%Y-%m}" if args.by == "month" else r["day"]
         left = str(r["abandons"]) if r["abandons"] else ""
         lobby = r["lobby"] or ""
-        points = _net_points_cell(r["net_points"]) if ranked else ""
+        points = (
+            f"{_net_points_cell(r['net_points'])}{_point_part_cell(r['streak_points'])}"
+            f"{_point_part_cell(r['shield_points'])}"
+            if ranked
+            else ""
+        )
 
         print(
             f"  {day!s:<12}{r['games']:>7}{r['wins']:>5}{r['losses']:>5}"
             f"{WIN_RATE.render(r['win_rate'], render.BLANK):>11}{lobby:>14}"
             f"{r['mvps']:>6}{r['key_players']:>6}{left:>10}"
-            f"{r['net']:>+11}{r['cum_net']:>+17}{points}"
+            f"{r['net']:>+11}{points}"
         )
 
     overall = queries.summarize(
@@ -113,6 +135,9 @@ def winrate_report(args: argparse.Namespace, config: str | Path | None = None) -
             "rated_games",
             "last_rated_at",
             "net_points",
+            "result_points",
+            "streak_points",
+            "shield_points",
         ),
         lf=games.lazy(),
     ).collect()
@@ -144,6 +169,9 @@ def winrate_report(args: argparse.Namespace, config: str | Path | None = None) -
         f"\nOverall: {total_games} games, {wins}-{total_games - wins}, {rate} win rate, "
         f"{net:+} net wins, {mvps} MVP, {keys} Key Player{lobbies}{season}."
     )
+
+    if ranked and net_points is not None:
+        _points_line(overall)
 
     abandons = queries.abandon_record(args.parquet, accounts=args.account, games=games)
 
@@ -302,6 +330,22 @@ def _winrate_account_report(
         )
 
     _unscored_line(games)
+
+
+def _points_line(overall: pl.DataFrame) -> None:
+    """Print where the net points came from under the overall line.
+
+    Args:
+        overall: The one row summary holding the three point shares.
+    """
+    results, streaks, shields = (
+        NET_POINTS.render(overall.item(0, name), render.BLANK, sign=True)
+        for name in ("result_points", "streak_points", "shield_points")
+    )
+
+    print(
+        f"Points: {results} from results, {streaks} win-streak bonuses, {shields} saved by shields."
+    )
 
 
 def _mode_pair_label(

@@ -29,7 +29,7 @@ A few flags repeat across commands:
 - `--days N` filters your last N days of games (`--days 7`)
 - `--since YYYY-MM-DD` filters for data since a date (`--since 2026-07-01`)
 - `--hero Mirage` filters a report to one hero (required for the tracked player commands since players are tracked per hero). Quote names with spaces: `--hero "Mo & Krill"`, though capitals and punctuation are optional (`--hero "mo krill"` works too)
-- your ranked games are the default for reports and comparisons. Build 6652 moved ranked play out of the Standard queue on 2026-07-30, so the default reads Standard before that date and Ranked after it, keeping one continuous record. `--standard` selects the unranked queue that build introduced, `--ranked` selects Ranked Season 1 alone, and `--placement`, `--street-brawl`, and `--private-lobby` select those modes; `--calibration` remains an alias for `--placement`. Tracked-player downloads default to Ranked, because match history carries no `ranked_type` to split the older queue by. The archive and player store retain every downloaded mode, but a report never mixes them
+- your Ranked games of the current season are the default for reports and comparisons, Beta Season 2 as of 2026-11-05. `--season 1` reads a previous season, `--season pre` reads the Pre-Season (the ranked games in the Standard queue before build 6652 moved ranked play on 2026-07-30), and `--season all` reads every season as one record. The season names and dates come from the `ranked-seasons` asset of `deadlock-api.com`, with a copy shipped for a failed request. `--standard` selects the unranked queue, `--all` reads Ranked and Standard together, and `--placement`, `--street-brawl`, and `--private-lobby` select those modes; `--calibration` remains an alias for `--placement`. A season applies to Ranked only, so `--season` next to another mode flag is an error. Tracked-player downloads default to Ranked, because match history carries no `ranked_type` to split the older queue by. The archive and player store retain every downloaded mode, but a report never mixes them
 - `--min-rating Oracle` limits public stats to lobbies at that average skill rating or higher. `winrate` and `item` default to Eternus, `meta` counts every rating, and `all` disables the filter
 
 ## Match analysis
@@ -42,7 +42,7 @@ deadlock history
 
 - one line per game of yours with the match ID, newest last
 - shows your last 10 games, `--days` and `--since` reach further back
-- your ranked games are shown by default, spanning both queue eras; use `--standard`, `--ranked`, `--placement`, `--street-brawl`, or `--private-lobby` for those histories
+- your Ranked games of the current season are shown by default; use `--season` for another season, or `--standard`, `--all`, `--placement`, `--street-brawl`, or `--private-lobby` for those histories
 - the ID feeds the other commands: `match 12345678`, `download --match 12345678`
 - matches you only viewed in game stay hidden unless you name their players with `--account`
 
@@ -61,7 +61,7 @@ deadlock match
 
 - the final scoreboard of a single match and the per-5-minute interval data for your character by default
 - `deadlock match 12345678` reads THAT match from your tables, `deadlock match` your most recent one. `--ago 1` steps back to the game before that (`--ago 2` two back, and so on) without needing the ID. `--hero Wraith` follows another player from the match instead (your games keep all 12 players), and `--interval 10` changes the bucket size
-- without a match ID, your latest ranked game is the default, whichever queue era it came from; `--standard`, `--ranked`, `--placement`, `--street-brawl`, and `--private-lobby` select the latest game in those modes. An explicit match ID is always read regardless of mode
+- without a match ID, your latest Ranked game of the current season is the default; `--season` picks another season, and `--standard`, `--all`, `--placement`, `--street-brawl`, and `--private-lobby` select the latest game in those modes. An explicit match ID is always read regardless of mode
 - the scoreboard shows the match screen numbers while the interval columns come from the minute snapshots, so the Last hits totals can differ slightly. Troopers and Neutrals split the interval Last hits column
 - a game that is not yours works too: `deadlock download --match <id>` pulls it into the players tables once, and `deadlock match <id> --hero Wraith` reads it from there automatically
 - a Ranked match adds two columns to the scoreboard, shown further down: the skill rating each of the 12 players carried into the game and the Rank Points it paid them. Other modes print the scoreboard unchanged
@@ -600,17 +600,18 @@ deadlock winrate
   Ranked games in the window add the Net points column here too
 - `--hero Mirage` filters to one hero and, on the default selection, also adds the public win rate from `deadlock-api.com` under the table, scoped by `--min-rating` (Eternus+ by default). Every explicit mode flag omits that line because the public analytics endpoint has no matching mode filter
 - Lobby is the average lobby skill rating of the row, averaged in subrank steps. Games before build 6652 read the average Valve published with each match. Season One Ranked publishes none, so the average there is computed from the starting ranks of the placed players in the lobby and needs at least half of them placed. The label uses the rank names in effect at the row's newest rated game, so rows from before a rank rename keep the names their era used
-- Ranked games in the window add a Net points column, the Rank Points that bucket won minus the ones it lost, and the Overall line ends with the net for the whole window. The default selection includes Ranked games, so the column appears without any flag. A bucket without a points reading leaves the column blank, and placement games add nothing because their bank resets every game. `--by mode` always prints the column and only the Ranked row fills it, since no other mode moves points
+- Ranked games in the window add a Net points column, the Rank Points that bucket won minus the ones it lost, and the Overall line ends with the net for the whole window. The default selection includes Ranked games, so the column appears without any flag.
+- Streak and Shields follow Net points on the date table. Streak is what wins paid above the base grant of their season, 300 points in Beta Season 1 and 350 in Beta Season 2. Shields is what demotion protection kept on a loss stopped at the subrank floor, the applied change minus the assigned one. A Points line under Overall splits the window net into results, win-streak bonuses, and shield savings, and the three add up to the net. A bucket without a points reading leaves the column blank, and placement games add nothing because their bank resets every game. `--by mode` always prints the column and only the Ranked row fills it, since no other mode moves points.
 - games where someone abandoned stay in the table (they are still wins and losses), a footer separates them: who left with each record, how many leavers reconnected and finished, and your record without them
 - games Valve flagged as not scored are left out of the table and reported under it, match history still shows their result
 
 ```
 Dates below are grouped by America/Chicago week.
 
-  Week          Games    W    L   Win rate         Lobby   MVP   Key  Abandons   Net wins   Cumulative net
-  2026-06-01        5    3    2      60.0%   Ritualist I     0     0         1         +1               +1
-  2026-06-08        7    5    2      71.4%  Ritualist II     0     0                   +3               +4
-  2026-06-15        3    1    2      33.3%  Ritualist IV     0     0                   -1               +3
+  Week          Games    W    L   Win rate         Lobby   MVP   Key  Abandons   Net wins
+  2026-06-01        5    3    2      60.0%   Ritualist I     0     0         1         +1
+  2026-06-08        7    5    2      71.4%  Ritualist II     0     0                   +3
+  2026-06-15        3    1    2      33.3%  Ritualist IV     0     0                   -1
 
 Overall: 15 games, 9-6, 60.0% win rate, +3 net wins, 0 MVP, 0 Key Player, Ritualist II lobbies.
 
@@ -644,16 +645,18 @@ Standard gets two rows because the queue changed meaning: it was the ranked queu
 The same column on the date table, for a Ranked window:
 
 ```
-deadlock winrate --ranked --days 2
+deadlock winrate --days 2
 ```
 
 ```
+Ranked Beta Season 1. --season picks another, like --season 1 or --season all.
 Dates below are grouped by America/Chicago week.
 
-  Week          Games    W    L   Win rate         Lobby   MVP   Key  Abandons   Net wins   Cumulative net  Net points
-  2026-07-27        3    2    1      66.7%  Ritualist II     0     0                   +1               +1        +375
+  Week          Games    W    L   Win rate         Lobby   MVP   Key  Abandons   Net wins  Net points   Streak  Shields
+  2026-07-27        3    2    1      66.7%  Ritualist II     0     0                   +1        +375      +70       +5
 
 Overall: 3 games, 2-1, 66.7% win rate, +1 net wins, 0 MVP, 0 Key Player, Ritualist II lobbies, +375 net points.
+Points: +300 from results, +70 win-streak bonuses, +5 saved by shields.
 ```
 
 ### Ranked progress
@@ -662,14 +665,15 @@ Overall: 3 games, 2-1, 66.7% win rate, +1 net wins, 0 MVP, 0 Key Player, Rituali
 deadlock rank
 ```
 
-- every Ranked game of the current season you have stored, oldest first, with the Rank Points it paid
+- every Ranked game of the current season you have stored, oldest first, with the Rank Points it paid. The first line names the season
+- `--season 1` lists a previous season instead. The command reads one season at a time, because Rank Points reset between seasons, so `--season all` and `--season pre` print a note instead of a table
 - `--account`, `--days`, and `--since` narrow the table. The lines under it always read your whole stored season, so a short window never rewrites your record
 - Rating is the rating you started the match on, `Placing` while the placement matches run
 - Points is your total before and after the game, Change is what the game actually moved
 - a loss stops at the floor of your subrank. The number in parentheses is the change the matchmaker assigned before the clamp, so `+0 (-375)` is a loss that cost nothing
 - Streak is the win streak you carried into the game. A longer streak pays more for a win
 - the Note column marks the placement matches you have left, the losses demotion protection absorbed, and games Valve did not score
-- the footer holds your current rating, how far into the subrank you are (subranks I to V span 1,000 points, VI spans 2,000, so a full rank is 7,000), your season record, and the net points over the window shown
+- the footer holds your current rating, how far into the subrank you are (subranks I to V span 1,000 points, and VI spans 2,000 in Beta Season 1 and 1,500 in Beta Season 2, so a full rank is 7,000 points in Beta Season 1 and 6,500 in Beta Season 2), your season record, and the net points over the window shown
 - Eternus subranks are percentile-based instead of point-based, so an Eternus footer shows the points without the subrank progress
 - placement games bank points that reset every game, so they never count toward the net and the footer shows no point total while you are placing
 - a game that starts on different points than the game before it ended on means the archive skipped games in between. The row gets an `archive gap before this` note and the footer says how many games are affected, `deadlock sync --source api` backfills what the API still has
@@ -1267,7 +1271,7 @@ deadlock builds --hero Mirage
 
 - items your tracked players buy (in wins vs losses), from their downloaded games
 - `--min-percent 30` hides items bought in fewer than 30% of the builds
-- your ranked games are the default pool, spanning both queue eras. `--standard`, `--ranked`, `--placement`, `--street-brawl`, or `--private-lobby` reads builds from that mode alone
+- your Ranked games of the current season are the default pool. `--season` reads another season, and `--standard`, `--all`, `--placement`, `--street-brawl`, or `--private-lobby` reads builds from that selection instead
 - an expensive late item with a big win/loss gap usually just means the winner got rich enough to buy it
 
 ```
@@ -1299,7 +1303,7 @@ deadlock compare souls --hero Mirage
 - `compare souls` starts with income-source gaps, then net worth over time. `--milestones` flips it to the median minute each side reaches each net-worth mark
 - `compare damage` and `compare healing` start with the source breakdown, grouped like the standalone commands, then print the interval table underneath. Healing includes a healing-prevented section when anti-heal rows exist
 - `compare combat` compares aim, incoming fire, and parries as whole-window counters. `compare movement` prints whole-game movement averages and has its own section below
-- the interval reports use the same 5-minute windows the `match` command uses (`--interval 10` for wider rows). Ranked play is the default on both sides, spanning both queue eras. `--standard`, `--ranked`, `--placement`, `--street-brawl`, or `--private-lobby` swaps both sides to that mode
+- the interval reports use the same 5-minute windows the `match` command uses (`--interval 10` for wider rows). Ranked play of the current season is the default on both sides. `--season` swaps both sides to another season, and `--standard`, `--all`, `--placement`, `--street-brawl`, or `--private-lobby` swaps both sides to that selection
 - the summary table shows each player as one row with their whole-game rate, you first for contrast
 - every interval cell is the median of the per-game rates inside that window, so a game only counts while it lasts. The cumulative gap column keeps the running total of the gap column. Positive means you are ahead by that point in a typical game, negative means you trail
 - late intervals are not shown once too few games reach them on either side, sparse records would skew the medians

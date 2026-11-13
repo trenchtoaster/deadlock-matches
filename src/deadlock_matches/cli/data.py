@@ -676,7 +676,7 @@ def rebuild_history(args: argparse.Namespace) -> None:
 
 MODE_FLAGS = {
     (extract.MATCH_MODE_STANDARD, extract.GAME_MODE_NORMAL, False): " --standard",
-    (extract.MATCH_MODE_RANKED, extract.GAME_MODE_NORMAL, None): " --ranked",
+    queries.ALL_PLAY: " --all",
     (extract.MATCH_MODE_PLACEMENT, extract.GAME_MODE_NORMAL, None): " --placement",
     (extract.MATCH_MODE_STANDARD, extract.GAME_MODE_STREET_BRAWL, None): " --street-brawl",
     (extract.MATCH_MODE_PRIVATE_LOBBY, extract.GAME_MODE_NORMAL, None): " --private-lobby",

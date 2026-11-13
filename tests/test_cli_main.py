@@ -326,6 +326,7 @@ def test_mode_flags_default_and_select_alternatives(tmp_path):
     default = parser.parse_args(["download", "--hero", "Mirage"])
     standard = parser.parse_args(["download", "--hero", "Mirage", "--standard"])
     ranked = parser.parse_args(["download", "--hero", "Mirage", "--ranked"])
+    everything = parser.parse_args(["download", "--hero", "Mirage", "--all"])
     placement = parser.parse_args(["download", "--hero", "Mirage", "--placement"])
     calibration_alias = parser.parse_args(["download", "--hero", "Mirage", "--calibration"])
     brawl = parser.parse_args(["download", "--hero", "Mirage", "--street-brawl"])
@@ -337,7 +338,13 @@ def test_mode_flags_default_and_select_alternatives(tmp_path):
         True,
     )
     assert standard.mode == (extract.MATCH_MODE_STANDARD, extract.GAME_MODE_NORMAL, False)
-    assert ranked.mode == (extract.MATCH_MODE_RANKED, extract.GAME_MODE_NORMAL, None)
+    assert ranked.mode == default.mode
+    assert everything.mode == (
+        (extract.MATCH_MODE_STANDARD, extract.MATCH_MODE_RANKED),
+        extract.GAME_MODE_NORMAL,
+        None,
+    )
+    assert default.season is None
     assert placement.mode == (extract.MATCH_MODE_PLACEMENT, extract.GAME_MODE_NORMAL, None)
     assert calibration_alias.mode == placement.mode
     assert brawl.mode == (extract.MATCH_MODE_STANDARD, extract.GAME_MODE_STREET_BRAWL, None)

@@ -12,6 +12,7 @@ from deadlock_matches import (
     export,
     extract,
     players,
+    queries,
 )
 from deadlock_matches.assets import (
     history,
@@ -631,7 +632,7 @@ def test_leaderboard_command_prints_paste_ready_lines(tmp_path, monkeypatch, cap
     ("mode", "flag"),
     [
         ((extract.MATCH_MODE_STANDARD, extract.GAME_MODE_NORMAL, False), "--standard"),
-        ((extract.MATCH_MODE_RANKED, extract.GAME_MODE_NORMAL, None), "--ranked"),
+        (queries.ALL_PLAY, "--all"),
         ((extract.MATCH_MODE_PLACEMENT, extract.GAME_MODE_NORMAL, None), "--placement"),
         (
             (extract.MATCH_MODE_STANDARD, extract.GAME_MODE_STREET_BRAWL, None),

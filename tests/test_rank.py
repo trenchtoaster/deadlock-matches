@@ -3,7 +3,7 @@ import zoneinfo
 
 import pytest
 
-from deadlock_matches import export, players, schemas
+from deadlock_matches import export, players, schemas, seasons
 from deadlock_matches.cli import rank
 from deadlock_matches.cli.main import main
 from deadlock_matches.extract import pb
@@ -268,10 +268,20 @@ def test_rank_footer_reports_the_rating_record_and_net_points(tmp_path, ranked_p
 
 
 def test_subrank_span_floors_and_widths():
-    assert rank._subrank_span(11) == (0, 1000)
-    assert rank._subrank_span(36) == (19000, 2000)
-    assert rank._subrank_span(74) == (45000, 1000)
-    assert rank._subrank_span(86) == (54000, 2000)
+    one = seasons.SHIPPED[0]
+
+    assert rank._subrank_span(11, one) == (0, 1000)
+    assert rank._subrank_span(36, one) == (19000, 2000)
+    assert rank._subrank_span(74, one) == (45000, 1000)
+    assert rank._subrank_span(86, one) == (54000, 2000)
+
+
+def test_subrank_span_follows_the_season_two_scale():
+    two = seasons.SHIPPED[1]
+
+    assert rank._subrank_span(52, two) == (27000, 1000)
+    assert rank._subrank_span(61, two) == (32500, 1000)
+    assert rank._subrank_span(56, two) == (31000, 1500)
 
 
 def test_rank_footer_measures_from_the_subrank_floor(tmp_path, capsys):
@@ -651,3 +661,74 @@ def test_match_scoreboard_leaves_a_standard_game_alone(tmp_path, unranked_pq, ca
     assert "Rating" not in header
     assert "Points:" not in out
     assert "Placing" not in out
+
+
+def build_season_two_match(match_id, day, *, mine, theirs, won=True):
+    """Build a Ranked match that carries the Beta Season 2 rank interval."""
+    info = build_ranked_match(match_id, day, mine=mine, theirs=theirs, won=won)
+    info.rank_interval = 2
+
+    return info
+
+
+SEASON_TWO_WIN = {
+    **PLAIN_WIN,
+    "initial_display_rank": 56,
+    "initial_flat_progress": 31350,
+    "final_flat_progress": 31700,
+    "desired_progress_change": 350,
+}
+
+
+@pytest.fixture
+def two_season_pq(tmp_path, monkeypatch):
+    monkeypatch.setattr(seasons, "known", lambda: seasons.SHIPPED)
+    monkeypatch.setattr(seasons.time, "time", lambda: 1_794_000_000)
+    monkeypatch.setattr(rank, "season_rules", lambda: dict(SMALL_SEASON))
+    infos = [
+        build_ranked_match(920, 0, mine=PLAIN_LOSS, theirs=PLAIN_WIN, won=False),
+        build_season_two_match(921, 100, mine=SEASON_TWO_WIN, theirs=PLAIN_LOSS),
+    ]
+
+    return write_tables(tmp_path / "pq", infos)
+
+
+def test_rank_defaults_to_the_current_season(tmp_path, two_season_pq, capsys):
+    run(tmp_path, two_season_pq, "rank")
+
+    out = capsys.readouterr().out
+
+    assert "Ranked Beta Season 2" in out
+    assert "31,350 -> 31,700" in out
+    assert "54,300 -> 54,000" not in out
+    assert "at 31,700 points. 700 of 1,500 into the subrank." in out
+    assert "Season record: 1-0." in out
+    assert "Archive gaps" not in out
+
+
+def test_rank_reads_a_previous_season(tmp_path, two_season_pq, capsys):
+    run(tmp_path, two_season_pq, "rank", "--season", "1")
+
+    out = capsys.readouterr().out
+
+    assert "Ranked Beta Season 1" in out
+    assert "54,300 -> 54,000" in out
+    assert "31,350 -> 31,700" not in out
+    assert "Season record: 0-1." in out
+
+
+@pytest.mark.parametrize(
+    ("season", "line"),
+    [
+        ("all", "deadlock rank reads one season at a time"),
+        ("pre", "The Pre-Season has no Rank Points"),
+        ("7", "Unknown season '7'"),
+    ],
+)
+def test_rank_explains_a_season_it_cannot_list(tmp_path, two_season_pq, capsys, season, line):
+    run(tmp_path, two_season_pq, "rank", "--season", season)
+
+    out = capsys.readouterr().out
+
+    assert line in out
+    assert "Season record" not in out

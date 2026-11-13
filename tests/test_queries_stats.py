@@ -4,7 +4,7 @@ import polars as pl
 import pytest
 from builders import LOCAL_DAY, START, add_custom_stats, build_match, build_movement_match
 
-from deadlock_matches import export, extract, queries
+from deadlock_matches import export, extract, queries, seasons
 from deadlock_matches.extract import pb
 
 
@@ -616,3 +616,60 @@ def test_mode_filter_takes_several_match_modes():
     )
 
     assert kept.get_column("match_id").to_list() == [3, 4]
+
+
+def _season_rows():
+    """One ranked row before build 6652, one unranked row, and one row per season."""
+    return pl.LazyFrame(
+        {
+            "match_id": [1, 2, 3, 4],
+            "match_mode": [
+                extract.MATCH_MODE_STANDARD,
+                extract.MATCH_MODE_STANDARD,
+                extract.MATCH_MODE_RANKED,
+                extract.MATCH_MODE_RANKED,
+            ],
+            "game_mode": [extract.GAME_MODE_NORMAL] * 4,
+            "ranked_type": [
+                None,
+                extract.RANKED_TYPE_UNRANKED,
+                extract.RANKED_TYPE_RANKED,
+                extract.RANKED_TYPE_RANKED,
+            ],
+            "rank_interval": [None, 0, 1, 2],
+        },
+        schema_overrides={"ranked_type": pl.Int64, "rank_interval": pl.Int64},
+    )
+
+
+@pytest.mark.parametrize(
+    ("season", "kept"),
+    [
+        (None, [1, 3, 4]),
+        (seasons.PRE_SEASON, [1]),
+        (seasons.SHIPPED[0], [3]),
+        (seasons.SHIPPED[1], [4]),
+    ],
+)
+def test_mode_filter_keeps_ranked_play_to_the_season_in_context(season, kept):
+    with queries.season_context(season):
+        rows = _season_rows().filter(queries.mode_filter(prefix="")).collect()
+
+    assert rows.get_column("match_id").to_list() == kept
+
+
+def test_season_context_leaves_the_other_modes_alone():
+    with queries.season_context(seasons.SHIPPED[1]):
+        unranked = _season_rows().filter(queries.mode_filter(ranked=False, prefix="")).collect()
+        everything = _season_rows().filter(queries.mode_filter(*queries.ALL_PLAY, prefix=""))
+
+    assert unranked.get_column("match_id").to_list() == [2]
+    assert everything.collect().get_column("match_id").to_list() == [1, 2, 3, 4]
+
+
+def test_mode_label_names_the_season_and_the_joined_queues():
+    with queries.season_context(seasons.SHIPPED[1]):
+        assert queries.mode_label() == "Ranked Beta Season 2"
+        assert queries.mode_label(*queries.ALL_PLAY) == "Ranked and Standard"
+
+    assert queries.selected_season() is None

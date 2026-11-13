@@ -370,3 +370,122 @@ def test_unscored_record_empty_when_all_scored(record_pq):
     df = queries.unscored_record(record_pq, accounts=[42], tz="America/Chicago")
 
     assert df.is_empty()
+
+
+def _points_match(match_id, day, *, won, points, assigned, shield=False, rank=15, interval=None):
+    info = build_day_match(match_id, day, won=won)
+    info.match_mode = extract.pb.k_ECitadelMatchMode_Ranked
+    info.ranked_type = extract.pb.k_eCitadelRankedType_Normal
+
+    if interval is not None:
+        info.rank_interval = interval
+
+    rank_data = next(p for p in info.players if p.account_id == 42).player_rank_data
+    rank_data.initial_display_rank = rank
+    rank_data.initial_flat_progress, rank_data.final_flat_progress = points
+    rank_data.desired_progress_change = assigned
+
+    if shield:
+        rank_data.consumed_demotion_protection = True
+
+    return info
+
+
+def _write_points_pq(tmp_path, infos):
+    for name, df in export.build_tables(infos, exclude=("movement",)).items():
+        df.write_parquet(tmp_path / f"{name}.parquet")
+
+    return tmp_path
+
+
+@pytest.fixture
+def points_pq(tmp_path):
+    return _write_points_pq(
+        tmp_path,
+        [
+            _points_match(1, 0, won=True, points=(5000, 5300), assigned=300),
+            _points_match(2, 0, won=True, points=(5300, 5710), assigned=410),
+            _points_match(3, 1, won=False, points=(5710, 5410), assigned=-300),
+            _points_match(4, 1, won=False, points=(5410, 5300), assigned=-300, shield=True),
+            _points_match(5, 1, won=True, points=(0, 0), assigned=125, rank=0),
+        ],
+    )
+
+
+def test_daily_record_splits_the_points_by_day(points_pq):
+    df = queries.daily_record(points_pq, accounts=[42], tz="America/Chicago")
+
+    assert df.get_column("net_points").to_list() == [710, -410]
+    assert df.get_column("streak_points").to_list() == [110, 0]
+    assert df.get_column("shield_points").to_list() == [0, 190]
+
+
+def test_streak_points_measure_from_the_base_grant_of_each_season(tmp_path):
+    pq = _write_points_pq(
+        tmp_path,
+        [
+            _points_match(1, 0, won=True, points=(5000, 5370), assigned=370, interval=1),
+            _points_match(2, 1, won=True, points=(5000, 5350), assigned=350, interval=2),
+            _points_match(3, 2, won=True, points=(5350, 5770), assigned=420, interval=2),
+            _points_match(4, 3, won=True, points=(5770, 6210), assigned=440, interval=3),
+        ],
+    )
+
+    df = queries.daily_record(pq, accounts=[42], tz="America/Chicago", by="day")
+
+    assert df.get_column("streak_points").to_list() == [70, 0, 70, 90]
+
+
+def test_record_games_point_shares_add_up_to_net_points(points_pq):
+    games = queries.view_frame(
+        queries.record_games(accounts=[42], tz="America/Chicago"), parquet_dir=points_pq
+    )
+    row = (
+        queries.summarize(
+            queries.record_games,
+            measures=("net_points", "result_points", "streak_points", "shield_points"),
+            lf=games,
+        )
+        .collect()
+        .row(0, named=True)
+    )
+
+    assert row == {
+        "net_points": 300,
+        "result_points": 0,
+        "streak_points": 110,
+        "shield_points": 190,
+    }
+
+
+def test_record_games_shield_saving_is_what_the_floor_kept(tmp_path):
+    pq = _write_points_pq(
+        tmp_path,
+        [_points_match(1, 0, won=False, points=(5100, 5000), assigned=-300, shield=True)],
+    )
+    games = queries.view_frame(
+        queries.record_games(accounts=[42], tz="America/Chicago"), parquet_dir=pq
+    )
+    row = (
+        queries.summarize(
+            queries.record_games,
+            measures=("net_points", "result_points", "streak_points", "shield_points"),
+            lf=games,
+        )
+        .collect()
+        .row(0, named=True)
+    )
+
+    assert row == {
+        "net_points": -100,
+        "result_points": -300,
+        "streak_points": 0,
+        "shield_points": 200,
+    }
+
+
+def test_record_games_point_shares_stay_null_without_a_points_reading(record_pq):
+    df = queries.daily_record(record_pq, accounts=[42], tz="America/Chicago")
+
+    assert df.get_column("streak_points").to_list() == [None, None]
+    assert df.get_column("shield_points").to_list() == [None, None]

@@ -12,7 +12,7 @@ from typing import TYPE_CHECKING, Literal
 
 import polars as pl
 
-from deadlock_matches import config, export, extract, schemas
+from deadlock_matches import config, export, extract, schemas, seasons
 from deadlock_matches.assets import heroes
 from deadlock_matches.assets import skill_rating as sr
 from deadlock_matches.queries.labels import (
@@ -53,8 +53,14 @@ type Modes = tuple[int | Sequence[int] | None, int | Sequence[int] | None, bool 
 
 RANKED_PLAY: Modes = (RANKED_MODES, extract.GAME_MODE_NORMAL, True)
 
+ALL_PLAY: Modes = (RANKED_MODES, extract.GAME_MODE_NORMAL, None)
+
 _AMBIENT_MODES: contextvars.ContextVar[Modes] = contextvars.ContextVar(
     "deadlock_modes", default=RANKED_PLAY
+)
+
+_AMBIENT_SEASON: contextvars.ContextVar[seasons.Season | None] = contextvars.ContextVar(
+    "deadlock_season", default=None
 )
 
 
@@ -83,6 +89,48 @@ def mode_context(
         yield
     finally:
         _AMBIENT_MODES.reset(token)
+
+
+@contextlib.contextmanager
+def season_context(season: seasons.Season | None) -> Iterator[None]:
+    """Keep ranked play to one season for every view inside the block.
+
+    - None reads every season, which is the standing default of the library
+    - the season narrows ranked play only, so the unranked queue and every
+      explicit mode ignore it
+    - seasons.PRE_SEASON keeps the ranked games from before build 6652
+
+    Args:
+        season: The season to keep, or None for every season.
+    """
+    token = _AMBIENT_SEASON.set(season)
+
+    try:
+        yield
+    finally:
+        _AMBIENT_SEASON.reset(token)
+
+
+def selected_season() -> seasons.Season | None:
+    """Take the season that season_context set, None for every season."""
+    return _AMBIENT_SEASON.get()
+
+
+def _season_clause(season: seasons.Season, prefix: str) -> pl.Expr:
+    """Keep the ranked games of one season by their rank interval.
+
+    - the ranked games before build 6652 carry no rank interval at all
+
+    Args:
+        season: The season to keep.
+        prefix: The joined match-column namespace.
+    """
+    interval = pl.col(f"{prefix}rank_interval")
+
+    if not season.intervals:
+        return interval.fill_null(0) == 0
+
+    return interval.is_in(season.intervals)
 
 
 def _resolved_modes(match_mode: ModeArg, game_mode: ModeArg, ranked: RankedArg) -> Modes:
@@ -356,6 +404,8 @@ def mode_filter(
       on every earlier game, when match_mode 1 was itself the ranked queue, so
       null counts as ranked
     - None on any side lifts that part of the filter
+    - ranked play narrows to the season that season_context set, which is
+      every season unless a report picked one
     - prefix names the joined match-column namespace; use an empty prefix
       after joining a raw matches frame
     """
@@ -374,6 +424,11 @@ def mode_filter(
             extract.RANKED_TYPE_UNRANKED
         )
         clauses.append(~unranked if ranked else unranked)
+
+    season = _AMBIENT_SEASON.get()
+
+    if ranked is True and season is not None:
+        clauses.append(_season_clause(season, prefix))
 
     if not clauses:
         return None
@@ -394,6 +449,8 @@ def mode_label(
     - ranked play reads as Ranked across both queue eras, since its match mode
       is a pair rather than the single mode each explicit selection pins
     - a fully lifted selection has no queue to name and reads as empty
+    - ranked play kept to one season carries the season name
+    - both ranked modes with the ranked check lifted read as Ranked and Standard
     """
     match_mode, game_mode, ranked = _resolved_modes(match_mode, game_mode, ranked)
 
@@ -413,7 +470,12 @@ def mode_label(
         return "Standard"
 
     if ranked:
-        return "Ranked"
+        season = _AMBIENT_SEASON.get()
+
+        return "Ranked" if season is None else f"Ranked {season.name}"
+
+    if match_mode is not None and tuple(match_mode) == RANKED_MODES and ranked is None:
+        return "Ranked and Standard"
 
     return ""
 

@@ -9,7 +9,7 @@ from typing import TYPE_CHECKING
 
 import polars as pl
 
-from deadlock_matches import export, extract, paths, players, queries, schemas
+from deadlock_matches import export, extract, paths, players, queries, schemas, seasons
 from deadlock_matches.cli import cards, compare, data, games, items, match, meta, rank, winrate
 from deadlock_matches.config import (
     config_account_names,
@@ -34,7 +34,11 @@ ACCOUNT_HELP = (
 )
 RANKED_PLAY_MODE = queries.RANKED_PLAY
 STANDARD_MODE = (extract.MATCH_MODE_STANDARD, extract.GAME_MODE_NORMAL, False)
-RANKED_MODE = (extract.MATCH_MODE_RANKED, extract.GAME_MODE_NORMAL, None)
+ALL_MODE = queries.ALL_PLAY
+SEASON_HELP = (
+    "which Ranked season to read: current (the default), a season number like 1, "
+    "pre for the ranked games before Beta Season 1, or all for every season together"
+)
 PLACEMENT_MODE = (extract.MATCH_MODE_PLACEMENT, extract.GAME_MODE_NORMAL, None)
 STREET_BRAWL_MODE = (extract.MATCH_MODE_STANDARD, extract.GAME_MODE_STREET_BRAWL, None)
 PRIVATE_LOBBY_MODE = (extract.MATCH_MODE_PRIVATE_LOBBY, extract.GAME_MODE_NORMAL, None)
@@ -171,23 +175,29 @@ def build_parser(config: str | Path | None = None) -> argparse.ArgumentParser:
         return sub.add_parser(name, description=COMMAND_HELP[name])
 
     def mode_flags(parser: argparse.ArgumentParser) -> None:
-        """Add the explicit alternatives to the ranked-play default."""
+        """Add the season choice and the explicit alternatives to the ranked-play default."""
         modes = parser.add_mutually_exclusive_group()
         modes.add_argument(
             "--standard",
             dest="mode",
             action="store_const",
             const=STANDARD_MODE,
-            help="read or download the unranked Standard queue build 6652 introduced "
-            "instead of ranked games",
+            help="read or download the unranked Standard queue instead of ranked games",
         )
         modes.add_argument(
             "--ranked",
             dest="mode",
             action="store_const",
-            const=RANKED_MODE,
-            help="read or download Ranked Season 1 alone without the ranked games "
-            "played before build 6652 moved the queue",
+            const=RANKED_PLAY_MODE,
+            help=argparse.SUPPRESS,
+        )
+        modes.add_argument(
+            "--all",
+            dest="mode",
+            action="store_const",
+            const=ALL_MODE,
+            help="read or download Ranked and Standard together, every season included, "
+            "instead of ranked games alone",
         )
         modes.add_argument(
             "--placement",
@@ -213,6 +223,7 @@ def build_parser(config: str | Path | None = None) -> argparse.ArgumentParser:
             help="read or download Private Lobby games such as scrims and FACEIT "
             "instead of ranked games",
         )
+        parser.add_argument("--season", default=None, metavar="SEASON", help=SEASON_HELP)
         parser.set_defaults(mode=RANKED_PLAY_MODE)
 
     def account_since_flags(
@@ -571,6 +582,12 @@ def build_parser(config: str | Path | None = None) -> argparse.ArgumentParser:
         rk,
         days="only your last N days of Ranked games",
         since="only Ranked games on or after this date (YYYY-MM-DD), like 2026-07-30",
+    )
+    rk.add_argument(
+        "--season",
+        default=None,
+        metavar="SEASON",
+        help="which Ranked season to list: current (the default) or a season number like 1",
     )
 
     ln = command("laning")
@@ -991,8 +1008,43 @@ def main(argv: Sequence[str] | None = None, config: str | Path | None = None) ->
 
     match_mode, game_mode, ranked = getattr(args, "mode", RANKED_PLAY_MODE)
 
-    with queries.mode_context(match_mode=match_mode, game_mode=game_mode, ranked=ranked):
+    try:
+        season = _selected_season(args)
+
+    except ValueError as err:
+        print(err)
+        return
+
+    with (
+        queries.mode_context(match_mode=match_mode, game_mode=game_mode, ranked=ranked),
+        queries.season_context(season),
+    ):
         _dispatch(args, config)
+
+
+def _selected_season(args: argparse.Namespace) -> seasons.Season | None:
+    """Pick the Ranked season a command reads, None for every season.
+
+    - ranked play reads the current season unless --season names another
+    - a command without the mode flags reads every season
+    - a season next to another mode is an error, because only Ranked has seasons
+
+    Args:
+        args: The parsed command line.
+    """
+    if not hasattr(args, "season"):
+        return None
+
+    _, _, ranked = getattr(args, "mode", RANKED_PLAY_MODE)
+
+    if ranked is not True:
+        if args.season is not None:
+            msg = "--season applies to Ranked games only, remove the mode flag or the season"
+            raise ValueError(msg)
+
+        return None
+
+    return seasons.pick(args.season)
 
 
 def _dispatch(args: argparse.Namespace, config: str | Path | None) -> None:

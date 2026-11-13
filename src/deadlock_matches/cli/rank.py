@@ -7,7 +7,7 @@ from typing import TYPE_CHECKING, Any
 
 import polars as pl
 
-from deadlock_matches import api, extract, queries
+from deadlock_matches import api, extract, queries, seasons
 from deadlock_matches.cli import render
 from deadlock_matches.config import account_labels, config_timezone
 
@@ -16,10 +16,6 @@ if TYPE_CHECKING:
     from collections.abc import Mapping, Sequence
     from pathlib import Path
 
-
-SUBRANK_POINTS = 1_000
-
-TIER_POINTS = 7_000
 
 ETERNUS_TIER = 11
 
@@ -93,7 +89,7 @@ def _mode_matches(parquet_dir: str | Path, modes: Sequence[int]) -> pl.LazyFrame
     return (
         queries.scan("matches", parquet_dir)
         .filter(selected)
-        .select("match_id", pl.col("not_scored").alias("matches.not_scored"))
+        .select("match_id", "rank_interval", pl.col("not_scored").alias("matches.not_scored"))
     )
 
 
@@ -130,16 +126,20 @@ def _ranked_games(parquet_dir: str | Path, accounts: Sequence[int], tz: str) -> 
     )
 
 
-def _subrank_span(badge: int) -> tuple[int, int]:
+def _subrank_span(badge: int, season: seasons.Season) -> tuple[int, int]:
     """Take the point floor and width of the subrank a badge sits in.
 
-    - subranks I to V are 1,000 points wide and VI is 2,000, so every tier
-      spans 7,000 points
+    - subranks I to V are 1,000 points wide and VI is wider by a width the
+      season sets, 2,000 in Beta Season 1 and 1,500 in Beta Season 2
     - Eternus subranks come from percentiles, so the span means nothing there
+
+    Args:
+        badge: The badge level as tier * 10 + subrank.
+        season: The season whose point scale the badge sits on.
     """
     tier, level = divmod(badge, 10)
-    floor = (tier - 1) * TIER_POINTS + (level - 1) * SUBRANK_POINTS
-    width = 2 * SUBRANK_POINTS if level == 6 else SUBRANK_POINTS
+    floor = (tier - 1) * season.tier_points + (level - 1) * seasons.SUBRANK_POINTS
+    width = season.top_subrank_points if level == 6 else seasons.SUBRANK_POINTS
 
     return floor, width
 
@@ -256,7 +256,7 @@ def _game_table(games: pl.DataFrame, names: Mapping[int, str]) -> None:
         print(line.rstrip())
 
 
-def _footer_lines(window: pl.DataFrame, whole: pl.DataFrame) -> list[str]:
+def _footer_lines(window: pl.DataFrame, whole: pl.DataFrame, scale: seasons.Season) -> list[str]:
     """Build the rating, season record, and archive gap lines for one account.
 
     - the net counts the placed games only
@@ -283,7 +283,7 @@ def _footer_lines(window: pl.DataFrame, whole: pl.DataFrame) -> list[str]:
         standing = f"Rating: {rating} at {points:,} points."
 
     else:
-        floor, width = _subrank_span(badge)
+        floor, width = _subrank_span(badge, scale)
         standing = (
             f"Rating: {rating} at {points:,} points. "
             f"{points - floor:,} of {width:,} into the subrank."
@@ -309,7 +309,12 @@ def _footer_lines(window: pl.DataFrame, whole: pl.DataFrame) -> list[str]:
     return lines
 
 
-def _footers(games: pl.DataFrame, season: pl.DataFrame, names: Mapping[int, str]) -> None:
+def _footers(
+    games: pl.DataFrame,
+    season: pl.DataFrame,
+    names: Mapping[int, str],
+    scale: seasons.Season,
+) -> None:
     """Print where every account with Ranked games stands and put the newest last."""
     accounts = (
         games.group_by("account_id")
@@ -322,7 +327,7 @@ def _footers(games: pl.DataFrame, season: pl.DataFrame, names: Mapping[int, str]
     for account_id in accounts:
         window = games.filter(pl.col("account_id") == account_id)
         whole = season.filter(pl.col("account_id") == account_id)
-        lines = _footer_lines(window, whole)
+        lines = _footer_lines(window, whole, scale)
 
         print()
 
@@ -407,7 +412,15 @@ def _eligibility_summary(
 
 
 def rank_report(args: argparse.Namespace, config: str | Path | None = None) -> None:
-    """Print the Ranked games of the season, the rating, and the season record."""
+    """Print the Ranked games of one season, the rating, and the season record.
+
+    - the season is the one that season_context set, the current one by default
+    - with no season known, the games since the start in season_rules are read
+
+    Args:
+        args: The parsed command line.
+        config: The config file to read, or None for the default.
+    """
     tz = config_timezone(config)
     accounts = list(args.account or [])
 
@@ -415,11 +428,24 @@ def rank_report(args: argparse.Namespace, config: str | Path | None = None) -> N
         print("No match tables yet, run deadlock sync first")
         return
 
+    if (getattr(args, "season", None) or "").strip().lower() == seasons.EVERY:
+        print("deadlock rank reads one season at a time, pass a season number like --season 1")
+        return
+
+    chosen = queries.selected_season()
+
+    if chosen is not None and not chosen.intervals:
+        print(f"The {chosen.name} has no Rank Points, Ranked seasons start at Beta Season 1")
+        return
+
     rules = season_rules()
     season = _ranked_games(args.parquet, accounts, tz)
     start = rules.get("start_timestamp")
 
-    if isinstance(start, int):
+    if chosen is not None:
+        season = season.filter(pl.col("rank_interval").is_in(chosen.intervals))
+
+    elif isinstance(start, int):
         season = season.filter(pl.col("start_time") >= dt.datetime.fromtimestamp(start, dt.UTC))
 
     season = _flag_gaps(season)
@@ -437,8 +463,11 @@ def rank_report(args: argparse.Namespace, config: str | Path | None = None) -> N
             print("No Ranked games in that window")
 
         else:
+            if chosen is not None:
+                print(f"Ranked {chosen.name}\n")
+
             _game_table(games, names)
-            _footers(games, season, names)
+            _footers(games, season, names, chosen or seasons.SHIPPED[0])
 
     played = set(season.get_column("account_id").to_list())
     missing = [a for a in accounts if a not in played]

@@ -1,15 +1,15 @@
 ---
 status: active
-scope: the queue split at build 6652, Rank Points, badges, and the Season One rules
+scope: the queue split at build 6652, the seasons, Rank Points, badges, and the season rules
 first_seen: 2026-07-27
-last_confirmed: 2026-10-01
+last_confirmed: 2026-11-14
 ---
 
 # Ranked
 
 ## Why this page exists
 
-Ranked Season One changed what `match_mode 1` means and added a flat point scale that is easy to misread. `deadlock rank`, `deadlock match`, `deadlock winrate --ranked`, and `record_games.net_points` already apply every rule below.
+Ranked Season One changed what `match_mode 1` means and added a flat point scale that is easy to misread. `deadlock rank`, `deadlock match`, `deadlock winrate`, and `record_games.net_points` with its three shares already apply every rule below.
 
 ## `match_mode 1` means two things
 
@@ -19,7 +19,7 @@ First seen 2026-07-27. Extended 2026-08-10.
 
 The standing filter is ranked play. It reads `match_mode in (1, 4)`, `game_mode 1`, and `ranked_type` not `0`. That filter gives one continuous competitive record across both eras. Null `ranked_type` counts as ranked because those games predate the field.
 
-The CLI flags map onto the enums this way. `--standard` selects the unranked queue `(1, 1, ranked_type 0)`. `--ranked` selects Ranked Season One alone `(4, 1)`. `--placement`, `--street-brawl`, and `--private-lobby` select `(8, 1)`, `(1, 4)`, and `(2, 1)`. Storage stays cumulative, and modes never mix unless the filters are explicitly lifted.
+The CLI flags map onto the enums this way. `--standard` selects the unranked queue `(1, 1, ranked_type 0)`. `--all` reads Ranked and Standard together `((1, 4), 1)` with the `ranked_type` check lifted. `--ranked` is a hidden alias of the default. `--placement`, `--street-brawl`, and `--private-lobby` select `(8, 1)`, `(1, 4)`, and `(2, 1)`. Storage stays cumulative, and modes never mix unless the filters are explicitly lifted.
 
 `winrate --by mode` groups by `ranked_type` too. It prints Standard as two rows, `Standard (ranked)` and `Standard (unranked)`, so the two queues never share a win rate.
 
@@ -27,11 +27,27 @@ The download side cannot span the older queue. Match-history rows carry no `rank
 
 Recheck when a new season changes the queue enums.
 
+## Seasons are split by rank interval
+
+First seen 2026-11-14. Verified against 1,262 Pre-Season, 344 Beta Season 1, and 28 Beta Season 2 games.
+
+`matches.rank_interval` is the season discriminator. Beta Season 1 is interval 1 and ran 2026-07-30 17:00 UTC to 2026-11-05 20:00 UTC. Beta Season 2 is interval 2 and started at that moment. The ranked games before build 6652 carry a null interval and are the Pre-Season. An unranked Standard game carries interval 0.
+
+`seasons.known` reads the seasons from `v1/assets/ranked-seasons`, with `seasons.SHIPPED` for a failed request. `queries.season_context` keeps ranked play to one season inside `mode_filter`, and it never narrows another mode. The library default is every season. The CLI default is `seasons.current`, the newest season that has started, so a report without a flag reads the current season alone.
+
+`--season` takes `current`, a season number, `pre`, or `all`. A season next to another mode flag is an error. `deadlock rank` reads one season at a time, because Rank Points and placements reset between seasons.
+
+Season 2 changed three numbers. `base_win_loss_point_grant` is 350, so streaks 2 and 3 are assigned 420 and 440. Subrank VI is 1,500 points wide, so a tier spans 6,500. A placement win banks 175. `seasons.Season` carries the grant and the subrank width, `record_games` reads the grant per game through `queries.records.BASE_POINT_GRANTS`, and the `deadlock rank` footer reads the width.
+
+Unlocking Season 2 needs `min_hero_unlock_points` 35 instead of `min_hero_wins`, and no stored field says what a hero unlock point is. The `deadlock rank` eligibility panel still counts 15 wins per hero. Whether the panel matches the Season 2 rule is an open question as of 2026-11-14.
+
+Recheck when a season starts, and add its row to `seasons.SHIPPED`.
+
 ## Rank Points sit on one flat scale
 
 First seen 2026-08-10. Verified against real Ranked games.
 
-`player_rank_initial_flat_progress` and `player_rank_final_flat_progress` sit on one flat scale. Every tier spans 7,000 points. Subranks I to V are 1,000 points wide and VI is 2,000. A badge floor is `(tier - 1) * 7000 + (level - 1) * 1000`. The formula was verified against the observed point spans of all 42 stored badges. Never use `% 1000`, because it misreads every VI subrank.
+`player_rank_initial_flat_progress` and `player_rank_final_flat_progress` sit on one flat scale. The widths below are the Beta Season 1 scale, and Season 2 narrowed subrank VI. Every tier spans 7,000 points. Subranks I to V are 1,000 points wide and VI is 2,000. A badge floor is `(tier - 1) * 7000 + (level - 1) * 1000`. The formula was verified against the observed point spans of all 42 stored badges. Never use `% 1000`, because it misreads every VI subrank.
 
 Eternus is the exception. Its subranks are percentile based, so no point formula places a player inside tier 11. The `deadlock rank` footer shows points with no subrank progress for Eternus.
 
@@ -44,6 +60,16 @@ Placement games carry `display_rank` 0 and 0 points, and `player_rank_initial_ca
 `record_games.net_points` sums `final_flat_progress - initial_flat_progress` over scored games, so it counts what a game applied and never the assigned change that a floor clamped away.
 
 Recheck when a season changes the subrank widths or the placement bank.
+
+## Net points split three ways
+
+First seen 2026-11-02. Verified against 315 placed Ranked games in interval 1.
+
+A win at streak 0 or 1 is assigned exactly 300, the `base_win_loss_point_grant` in the season asset. Streaks 2 to 5 are assigned 370, 390, 410, and 430 at every rank from Acolyte to Mystic. Every loss is assigned -300 except one reduced to -150. Every gap between the applied and the assigned change falls on a game with `player_rank_consumed_demotion_protection` true.
+
+`record_games` splits `net_points` on those facts. `streak_points` sums what wins were assigned above the base grant of their season, 300 in interval 1 and 350 in interval 2. `shield_points` sums the applied minus the assigned change on the shield games. `result_points` is the remainder, so the three always add up to the net. `deadlock winrate` prints Streak and Shields columns and a Points line under Overall. It dropped the Cumulative net column to keep the row width.
+
+Recheck when a season changes `base_win_loss_point_grant`, or when a win or a game without a shield shows a gap between the applied and the assigned change.
 
 ## Season One rules
 
@@ -63,9 +89,7 @@ First seen 2026-10-01.
 
 The `v1/assets/ranked-seasons` payload fetched 2026-10-01 splits `season_1` into two intervals. Interval 1 runs 2026-07-30 17:00 UTC to 2026-10-08 21:00 UTC with `leaderboard_id` 1001. Interval 2 runs 2026-10-08 21:00 UTC to 2028-01-01 08:00 UTC with `leaderboard_id` 1002. A new field `base_win_loss_point_grant` is 300. `calibration_matches` is 8 and `valid_party_sizes` is [1, 2].
 
-`cli.rank.season_rules` takes the earliest interval start, so `deadlock rank` treats both intervals as one season. Whether points or placements reset at the boundary is an open question as of 2026-10-01. `matches.rank_interval` is stored and can split the two.
-
-Recheck when interval 2 games exist.
+The payload fetched 2026-11-14 replaced that layout. Interval 2 now belongs to a separate `season_2` entry that started 2026-11-05 20:00 UTC, and Season 1 keeps interval 1 alone. Points and placements did reset at the boundary. See the section on seasons above.
 
 ## Leaderboard badges stopped
 

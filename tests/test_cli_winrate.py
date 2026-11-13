@@ -5,6 +5,7 @@ from cli_helpers import run_main, split_era_cache, write_cache_entry
 
 from deadlock_matches import (
     extract,
+    seasons,
 )
 from deadlock_matches.assets import (
     heroes,
@@ -39,7 +40,8 @@ def test_winrate_prints_weekly_table_by_default(capsys, tmp_path):
     out = capsys.readouterr().out
 
     assert "grouped by America/Chicago week" in out
-    assert "Cumulative net" in out
+    assert "Net wins" in out
+    assert "Cumulative net" not in out
     assert "Overall: 3 games, 2-1, 66.7% win rate, +1 net wins, 0 MVP, 0 Key Player." in out
 
 
@@ -137,14 +139,89 @@ def test_winrate_standard_flag_keeps_only_the_unranked_queue(capsys, tmp_path):
     assert "Overall: 1 games, 0-1, 0.0% win rate" in out
 
 
-def test_winrate_ranked_flag_leaves_out_the_older_ranked_queue(capsys, tmp_path):
-    split_era_cache(tmp_path)
+@pytest.fixture
+def shipped_seasons(monkeypatch):
+    monkeypatch.setattr(seasons, "known", lambda: seasons.SHIPPED)
+    monkeypatch.setattr(seasons.time, "time", lambda: 1_794_000_000)
 
-    run_main(tmp_path, "winrate", "--account", "42", "--ranked")
+
+def test_winrate_defaults_to_the_current_season(capsys, tmp_path, shipped_seasons):
+    cache = split_era_cache(tmp_path)
+    write_cache_entry(
+        cache,
+        match_id=103,
+        start_time=1794000000,
+        won=False,
+        match_mode=pb.k_ECitadelMatchMode_Ranked,
+        ranked_type=extract.RANKED_TYPE_RANKED,
+        rank_interval=2,
+        stats=[(300, 5000)],
+    )
+
+    run_main(tmp_path, "winrate", "--account", "42")
 
     out = capsys.readouterr().out
 
-    assert "Overall: 1 games, 1-0, 100.0% win rate" in out
+    assert out.startswith("Ranked Beta Season 2.")
+    assert "Overall: 1 games, 0-1, 0.0% win rate" in out
+
+
+def test_winrate_names_the_season_that_came_back_empty(capsys, tmp_path, shipped_seasons):
+    split_era_cache(tmp_path)
+
+    run_main(tmp_path, "winrate", "--account", "42")
+
+    assert "No Ranked Beta Season 2 games for accounts you" in capsys.readouterr().out
+
+
+@pytest.mark.parametrize(
+    ("flags", "overall"),
+    [
+        (("--season", "1"), "Overall: 1 games, 1-0, 100.0% win rate"),
+        (("--season", "pre"), "Overall: 1 games, 1-0, 100.0% win rate"),
+        (("--season", "all"), "Overall: 2 games, 2-0, 100.0% win rate"),
+        (("--all",), "Overall: 3 games, 2-1, 66.7% win rate"),
+        (("--ranked", "--season", "1"), "Overall: 1 games, 1-0, 100.0% win rate"),
+    ],
+)
+def test_winrate_reads_the_season_asked_for(capsys, tmp_path, shipped_seasons, flags, overall):
+    split_era_cache(tmp_path)
+
+    run_main(tmp_path, "winrate", "--account", "42", *flags)
+
+    assert overall in capsys.readouterr().out
+
+
+def test_winrate_season_one_and_pre_season_read_different_games(capsys, tmp_path, shipped_seasons):
+    split_era_cache(tmp_path)
+
+    run_main(tmp_path, "winrate", "--account", "42", "--season", "1", "--by", "day")
+    one = capsys.readouterr().out
+    run_main(tmp_path, "winrate", "--account", "42", "--season", "pre", "--by", "day")
+    pre = capsys.readouterr().out
+
+    assert "2026-07-15" in one
+    assert "2026-07-15" not in pre
+    assert "2026-07-02" in pre
+
+
+def test_winrate_rejects_a_season_next_to_another_mode(capsys, tmp_path, shipped_seasons):
+    split_era_cache(tmp_path)
+
+    run_main(tmp_path, "winrate", "--account", "42", "--standard", "--season", "1")
+
+    out = capsys.readouterr().out
+
+    assert "--season applies to Ranked games only" in out
+    assert "Overall" not in out
+
+
+def test_winrate_rejects_an_unknown_season(capsys, tmp_path, shipped_seasons):
+    split_era_cache(tmp_path)
+
+    run_main(tmp_path, "winrate", "--account", "42", "--season", "9")
+
+    assert "Unknown season '9', use current, all, pre, or one of: 1, 2" in capsys.readouterr().out
 
 
 def test_winrate_by_mode_splits_standard_on_the_queue_split(capsys, tmp_path):
@@ -306,11 +383,11 @@ def test_winrate_by_account_prints_ids_without_config_names(capsys, tmp_path):
 def test_winrate_by_account_honors_a_mode_flag(capsys, tmp_path):
     split_era_cache(tmp_path)
 
-    run_main(tmp_path, "winrate", "--by", "account", "--account", "42", "--ranked")
+    run_main(tmp_path, "winrate", "--by", "account", "--account", "42", "--standard")
 
     out = capsys.readouterr().out
 
-    assert re.search(r"you\s+1\s+1\s+0\s+100\.0%", out)
+    assert re.search(r"you\s+1\s+0\s+1\s+0\.0%", out)
 
 
 def test_winrate_by_account_points_column_follows_the_games(capsys, tmp_path):
@@ -376,9 +453,86 @@ def test_winrate_ranked_table_totals_the_applied_points(capsys, tmp_path):
     header = next(line for line in out.splitlines() if "Games" in line)
 
     assert "Net points" in header
-    assert rows[0].endswith("+250")
-    assert rows[1].endswith("-150")
+    assert re.search(r"\+250\s+\+0\s+\+0$", rows[0])
+    assert re.search(r"-150\s+\+0\s+\+0$", rows[1])
     assert "+100 net points." in out
+    assert "Points: +100 from results, +0 win-streak bonuses, +0 saved by shields." in out
+
+
+def _write_split_games(cache):
+    """Write a base win, a streak win, a full loss, and a loss a shield stopped at the floor."""
+    ranked = pb.k_ECitadelMatchMode_Ranked
+    write_cache_entry(
+        cache, match_id=100, match_mode=ranked, rank_points=(5000, 5300), rank_assigned=300
+    )
+    write_cache_entry(
+        cache,
+        match_id=101,
+        start_time=1783000000 + 3600,
+        match_mode=ranked,
+        rank_points=(5300, 5690),
+        rank_assigned=390,
+    )
+    write_cache_entry(
+        cache,
+        match_id=102,
+        start_time=1783000000 + 7200,
+        won=False,
+        match_mode=ranked,
+        rank_points=(5690, 5390),
+        rank_assigned=-300,
+    )
+    write_cache_entry(
+        cache,
+        match_id=103,
+        start_time=1783000000 + 10800,
+        won=False,
+        match_mode=ranked,
+        rank_points=(5390, 5300),
+        rank_assigned=-300,
+        shield_used=True,
+    )
+
+
+def test_winrate_overall_splits_the_points_into_results_streaks_and_shields(capsys, tmp_path):
+    cache = tmp_path / "cache"
+    cache.mkdir()
+    _write_split_games(cache)
+
+    run_main(tmp_path, "winrate", "--ranked", "--account", "42")
+
+    out = capsys.readouterr().out
+
+    assert "+300 net points." in out
+    assert "Points: +0 from results, +90 win-streak bonuses, +210 saved by shields." in out
+
+
+def test_winrate_weekly_table_splits_the_points_columns(capsys, tmp_path):
+    cache = tmp_path / "cache"
+    cache.mkdir()
+    _write_split_games(cache)
+
+    run_main(tmp_path, "winrate", "--ranked", "--account", "42")
+
+    out = capsys.readouterr().out
+    header = next(line for line in out.splitlines() if "Games" in line)
+    rows = [line for line in out.splitlines() if line.startswith("  2026-")]
+
+    assert header.split()[-3:] == ["points", "Streak", "Shields"]
+    assert re.search(r"\+300\s+\+90\s+\+210$", rows[0])
+
+
+def test_winrate_points_line_stays_out_without_ranked_games(capsys, tmp_path):
+    cache = tmp_path / "cache"
+    cache.mkdir()
+    write_cache_entry(cache, match_id=100)
+
+    run_main(tmp_path, "winrate", "--account", "42")
+
+    out = capsys.readouterr().out
+
+    assert "Points:" not in out
+    assert "Streak" not in out
 
 
 def test_winrate_ranked_thousands_separator(capsys, tmp_path):
@@ -416,9 +570,9 @@ def test_winrate_standard_table_leaves_the_points_column_out(capsys, tmp_path):
 def test_winrate_ranked_without_ranked_games(capsys, tmp_path):
     cache = tmp_path / "cache"
     cache.mkdir()
-    write_cache_entry(cache, match_id=100)
+    write_cache_entry(cache, match_id=100, ranked_type=extract.RANKED_TYPE_UNRANKED)
 
-    run_main(tmp_path, "winrate", "--ranked", "--account", "42")
+    run_main(tmp_path, "winrate", "--account", "42")
 
     out = capsys.readouterr().out
 

@@ -8,6 +8,7 @@ from typing import TYPE_CHECKING
 
 import polars as pl
 
+from deadlock_matches import seasons
 from deadlock_matches.queries.core import (
     INHERIT,
     SCORED,
@@ -39,6 +40,12 @@ if TYPE_CHECKING:
 _SCORED_BY_FLAG = ~pl.col("not_scored").fill_null(value=False)
 
 _MIN_PLACED = 6
+
+BASE_POINT_GRANT = seasons.SHIPPED[0].base_point_grant
+
+BASE_POINT_GRANTS = {
+    interval: season.base_point_grant for season in seasons.SHIPPED for interval in season.intervals
+}
 
 
 def daily_record(
@@ -73,6 +80,8 @@ def daily_record(
     - net_points is the applied Rank Point change over the scored games
     - placements move no points and a bucket without a points reading stays
       null instead of zero
+    - streak_points and shield_points are the shares of net_points that win
+      streaks paid and demotion protection kept
     """
     if by not in ("day", "week", "month"):
         msg = f"Unknown bucket {by!r}, use day, week, or month"
@@ -124,6 +133,8 @@ def daily_record(
             "lobby_badge",
             "last_rated_at",
             "net_points",
+            "streak_points",
+            "shield_points",
         ),
         lf=games.lazy(),
     )
@@ -164,6 +175,8 @@ def daily_record(
         "net",
         "cum_net",
         "net_points",
+        "streak_points",
+        "shield_points",
         "lobby",
     ).collect()
 
@@ -251,9 +264,67 @@ def _points_change() -> pl.Expr:
     return pl.when(pl.col("player_rank_initial_display_rank") > 0).then(change).otherwise(None)
 
 
+def _assigned_change() -> pl.Expr:
+    """Take the Rank Point change the matchmaker assigned a placed Ranked game.
+
+    - null wherever _points_change is null, so the two always pair up
+    """
+    return (
+        pl.when(pl.col("player_rank_initial_display_rank") > 0)
+        .then(pl.col("player_rank_desired_progress_change"))
+        .otherwise(None)
+    )
+
+
+def _base_grant() -> pl.Expr:
+    """Take the base point grant of the season a game was played in.
+
+    - an interval newer than the shipped seasons takes the newest known grant
+    - a game without an interval takes the grant of the first season
+    """
+    interval = pl.col("matches.rank_interval")
+    newest = seasons.SHIPPED[-1]
+    known = interval.replace_strict(
+        BASE_POINT_GRANTS, default=BASE_POINT_GRANT, return_dtype=pl.Int64
+    )
+
+    return (
+        pl.when(interval > max(newest.intervals))
+        .then(pl.lit(newest.base_point_grant, dtype=pl.Int64))
+        .otherwise(known)
+    )
+
+
 def _scored_points() -> pl.Expr:
     """Take the points reading of each scored game."""
     return pl.when(_SCORED_BY_FLAG).then(pl.col("points_change"))
+
+
+def _scored_streak_points() -> pl.Expr:
+    """Take what a scored win paid above the base grant, zero for every other reading."""
+    bonus = pl.col("assigned_change") - pl.col("base_grant")
+
+    return pl.when(_SCORED_BY_FLAG & pl.col("points_change").is_not_null()).then(
+        pl.when(pl.col("won")).then(bonus).otherwise(0)
+    )
+
+
+def _scored_shield_points() -> pl.Expr:
+    """Take the points a shield kept on a scored game, zero for every other reading."""
+    saved = pl.col("points_change") - pl.col("assigned_change")
+
+    return pl.when(_SCORED_BY_FLAG & pl.col("points_change").is_not_null()).then(
+        pl.when(pl.col("shield_used")).then(saved).otherwise(0)
+    )
+
+
+def _points_part(part: pl.Expr) -> pl.Expr:
+    """Sum one share of net_points, null where net_points is null.
+
+    Args:
+        part: The per-game share to sum.
+    """
+    return pl.when(_scored_points().is_not_null().any()).then(part.sum()).otherwise(None)
 
 
 def badge_from_subrank(subrank: pl.Expr) -> pl.Expr:
@@ -335,7 +406,7 @@ RECORD_GAMES_MEASURES = {
         direction="maximize",
     ),
     "net_points": Measure(
-        pl.when(_scored_points().is_not_null().any()).then(_scored_points().sum()).otherwise(None),
+        _points_part(_scored_points()),
         "points",
         comment="Rank Points won minus lost over scored games, summing the change the game "
         "applied and never the change the matchmaker assigned. A loss that stopped at a subrank "
@@ -343,6 +414,30 @@ RECORD_GAMES_MEASURES = {
         "points reading stays null rather than zero.",
         direction="maximize",
         missing="zero",
+    ),
+    "streak_points": Measure(
+        _points_part(_scored_streak_points()),
+        "points",
+        comment="The share of net_points that wins paid above the base grant of their season, "
+        "the win-streak bonus. The base is 300 in Beta Season 1 and 350 in Beta Season 2, and "
+        "the season asset records it as base_win_loss_point_grant.",
+        direction="maximize",
+        missing="zero",
+    ),
+    "shield_points": Measure(
+        _points_part(_scored_shield_points()),
+        "points",
+        comment="The share of net_points that demotion protection kept, the applied change "
+        "minus the assigned change on the games that consumed a shield.",
+        direction="maximize",
+        missing="zero",
+    ),
+    "result_points": Measure(
+        lambda measure: measure["net_points"] - measure["streak_points"] - measure["shield_points"],
+        "points",
+        comment="The share of net_points left after the streak bonus and the shield savings, "
+        "the base grant won and lost.",
+        direction="maximize",
     ),
     "mvps": Measure(
         ((pl.col("mvp_rank") == 1) & _SCORED_BY_FLAG).sum(),
@@ -460,6 +555,11 @@ def _record_game_rows(
             (~SCORED).alias("not_scored"),
             pl.coalesce(_lobby_subrank(), pl.col("placed_subrank")).alias("lobby_subrank"),
             _points_change().alias("points_change"),
+            _assigned_change().alias("assigned_change"),
+            _base_grant().alias("base_grant"),
+            pl.col("player_rank_consumed_demotion_protection")
+            .fill_null(value=False)
+            .alias("shield_used"),
         )
     )
 

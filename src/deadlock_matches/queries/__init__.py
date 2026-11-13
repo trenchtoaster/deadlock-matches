@@ -5,6 +5,7 @@
 """
 
 from deadlock_matches.queries.core import (
+    ALL_PLAY,
     MY_GAMES_DIMENSIONS,
     MY_GAMES_MEASURES,
     RANKED_MODES,
@@ -20,6 +21,8 @@ from deadlock_matches.queries.core import (
     parquet_dir_context,
     player_rows,
     scan,
+    season_context,
+    selected_season,
     since_days_filter,
     skill_rating,
     skill_rating_asof,
@@ -211,6 +214,7 @@ from deadlock_matches.queries.stats import (
 )
 
 __all__ = [
+    "ALL_PLAY",
     "BUFF_GAME_DIMENSIONS",
     "BUFF_GAME_MEASURES",
     "BUFF_INTERVAL_SCHEMA",
@@ -354,6 +358,8 @@ __all__ = [
     "resolve_view",
     "rift_minute",
     "scan",
+    "season_context",
+    "selected_season",
     "semantic_spec",
     "since_days_filter",
     "skill_rating",

@@ -27,9 +27,9 @@ First seen 2026-07-27.
 
 The trap is `game_mode`. Street Brawl is a different map and ruleset, and it still carries `match_mode == 1`. A filter on `match_mode` alone mixes Street Brawl into Standard.
 
-The own-game views and `players.pool_games`, `pool_members`, and `pool_builds` apply ranked play at read time by default. That default spans both queue eras. See [Ranked](ranked.md) for the build 6652 split and `ranked_type`.
+The own-game views and `players.pool_games`, `pool_members`, and `pool_builds` apply ranked play at read time by default. That default spans both queue eras in the library, and the CLI narrows it to the current Ranked season. See [Ranked](ranked.md) for the build 6652 split and `ranked_type`.
 
-`queries.mode_context`, `my_games(match_mode=, game_mode=, ranked=)`, and the CLI flags `--standard`, `--ranked`, `--placement`, `--street-brawl`, and `--private-lobby` select one mode without merging. `--calibration` remains an alias for `--placement`. Storage retains every mode. `None` on `match_mode` or `game_mode` lifts that half of the filter, and `ranked=None` lifts the queue split.
+`queries.mode_context`, `my_games(match_mode=, game_mode=, ranked=)`, and the CLI flags `--standard`, `--all`, `--placement`, `--street-brawl`, and `--private-lobby` select one mode without merging. `--calibration` remains an alias for `--placement`. Storage retains every mode. `None` on `match_mode` or `game_mode` lifts that half of the filter, and `ranked=None` lifts the queue split.
 
 Readable names come off the compiled protobuf enum through `queries.match_mode_name`, `queries.game_mode_name`, `extract.MATCH_MODES`, and `extract.GAME_MODES`. Never hardcode a dict of names.
 

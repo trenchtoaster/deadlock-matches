@@ -20,7 +20,7 @@ from builders import (
     build_upgrade_match,
 )
 
-from deadlock_matches import config, export, players, schemas
+from deadlock_matches import config, export, players, schemas, seasons
 
 
 @pytest.fixture(autouse=True)
@@ -29,6 +29,12 @@ def isolated_user_state(tmp_path, monkeypatch):
     monkeypatch.setattr(config.paths, "config_dir", lambda: tmp_path / "user-config")
     monkeypatch.setattr(export, "PARQUET_DIR", tmp_path / "user-parquet")
     monkeypatch.setattr(players, "PLAYERS_PARQUET_DIR", tmp_path / "user-parquet-players")
+
+
+@pytest.fixture(autouse=True)
+def no_known_seasons(monkeypatch):
+    """Keep the season asset off the network, so a report reads every season by default."""
+    monkeypatch.setattr(seasons, "known", tuple)
 
 
 @pytest.fixture

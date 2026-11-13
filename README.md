@@ -178,7 +178,7 @@ A few flags repeat across commands:
 - `--days N` filters your last N days of games (`--days 7`)
 - `--since YYYY-MM-DD` filters for data since a date (`--since 2026-07-01`)
 - `--hero Mirage` filters a report to one hero (required for the tracked player commands since players are tracked per hero). Quote names with spaces: `--hero "Mo & Krill"`, though capitals and punctuation are optional (`--hero "mo krill"` works too)
-- reports default to your ranked games. Build 6652 moved ranked play out of the Standard queue on 2026-07-30, so the default reads Standard before that date and Ranked after it, keeping one continuous record. `--standard` selects the unranked queue that build introduced, `--ranked` selects Ranked Season 1 alone, and `--placement`, `--street-brawl`, and `--private-lobby` select those modes; `--calibration` remains an alias for `--placement`. Tracked-player downloads default to Ranked, since match history carries no marker to split the older queue by. Stored matches are retained across modes, but modes never mix in a report or comparison
+- reports default to your Ranked games of the current season, Beta Season 2 as of 2026-11-05. `--season 1` reads a previous season, `--season pre` reads the Pre-Season (the ranked games in the Standard queue before build 6652 moved ranked play on 2026-07-30), and `--season all` reads every season as one record. `--standard` selects the unranked queue, `--all` reads Ranked and Standard together, and `--placement`, `--street-brawl`, and `--private-lobby` select those modes; `--calibration` remains an alias for `--placement`. A season applies to Ranked only, so `--season` next to another mode flag is an error. Tracked-player downloads default to Ranked, since match history carries no marker to split the older queue by. Stored matches are retained across modes, but modes never mix in a report or comparison
 - `--min-rating Oracle` limits public stats to lobbies at that average skill rating or higher. `winrate` and `item` default to Eternus, `meta` counts every rating, and `all` disables the filter
 
 ### Command index
@@ -325,15 +325,16 @@ Lobby average: The Hidden King Oracle I, The Archmother Archon VI
    35:00  your team delivers the Soul Urn (Venator, +2,128 souls)
 ```
 
-`deadlock winrate` prints your wins and losses per week, with MVP and Key Player awards and the average lobby skill rating. Ranked games in the window add a Net points column with the Rank Points each row moved. `--by day` breaks the table into daily rows, `--by month` rolls it into monthly ones instead. `--by mode` instead prints one total Games/W/L/Win rate row for every stored mode; `--account`, `--hero`, `--days`, and `--since` still filter that table. `--by account` prints one total row per configured account instead, keeping the same mode selection as the date table.
+`deadlock winrate` prints your wins and losses per week, with MVP and Key Player awards and the average lobby skill rating. Ranked games in the window add a Net points column with the Rank Points each row moved, then Streak and Shields columns with the share that win streaks paid and demotion shields kept. `--by day` breaks the table into daily rows, and `--by month` rolls it into monthly ones. `--by mode` instead prints one total Games/W/L/Win rate row for every stored mode; `--account`, `--hero`, `--days`, and `--since` still filter that table. `--by account` prints one total row per configured account instead, keeping the same mode selection as the date table.
 
 ```
-  Week          Games    W    L   Win rate         Lobby   MVP   Key  Abandons   Net wins   Cumulative net  Net points
-  2026-07-20       18   10    8      55.6%    Phantom II     1     2         1         +2               +2           -
-  2026-07-27       14    9    5      64.3%    Phantom IV     0     0         2         +4               +6           -
-  2026-08-03       17   10    7      58.8%    Phantom VI     1     1         1         +3               +9        +640
+  Week          Games    W    L   Win rate         Lobby   MVP   Key  Abandons   Net wins  Net points   Streak  Shields
+  2026-07-20       18   10    8      55.6%    Phantom II     1     2         1         +2           -        -        -
+  2026-07-27       14    9    5      64.3%    Phantom IV     0     0         2         +4           -        -        -
+  2026-08-03       17   10    7      58.8%    Phantom VI     1     1         1         +3        +640     +160     +180
 
 Overall: 49 games, 29-20, 59.2% win rate, +9 net wins, 2 MVP, 3 Key Player, Phantom IV lobbies, +640 net points.
+Points: +300 from results, +160 win-streak bonuses, +180 saved by shields.
 
 Abandons: 4 games. An ally left 1 (0-1), an enemy left 3 (2-1).
   1 leaver reconnected and finished.

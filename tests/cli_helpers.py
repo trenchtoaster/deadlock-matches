@@ -35,8 +35,11 @@ def write_cache_entry(
     game_mode=None,
     match_mode=None,
     ranked_type=None,
+    rank_interval=None,
     hero_id=52,
     rank_points=None,
+    rank_assigned=None,
+    shield_used=False,
     corrupted_penalty_seed=None,
 ):
     contents = pb.CMsgMatchMetaDataContents()
@@ -51,6 +54,9 @@ def write_cache_entry(
 
     if ranked_type is not None:
         info.ranked_type = ranked_type
+
+    if rank_interval is not None:
+        info.rank_interval = rank_interval
 
     if corrupted_penalty_seed is not None:
         info.corrupted_penalty_seed = corrupted_penalty_seed
@@ -71,6 +77,12 @@ def write_cache_entry(
         p.player_rank_data.initial_flat_progress, p.player_rank_data.final_flat_progress = (
             rank_points
         )
+
+        if rank_assigned is not None:
+            p.player_rank_data.desired_progress_change = rank_assigned
+
+        if shield_used:
+            p.player_rank_data.consumed_demotion_protection = True
 
     mates = []
 
@@ -320,6 +332,7 @@ def split_era_cache(tmp_path):
         start_time=1784100000,
         match_mode=pb.k_ECitadelMatchMode_Ranked,
         ranked_type=extract.RANKED_TYPE_RANKED,
+        rank_interval=1,
         stats=[(300, 5000)],
     )
 
